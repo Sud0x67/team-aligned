@@ -11,14 +11,12 @@ export function ChatConversationList({
   onSelectConversation,
   search,
   onSearchChange,
-  formatKindLabel,
 }: {
   conversations: ConversationRecord[];
   activeConversationId: string;
   onSelectConversation: (conversationId: string) => void;
   search: string;
   onSearchChange: (value: string) => void;
-  formatKindLabel: (kind: ConversationRecord["kind"]) => string;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const agents = useAppStore((state) => state.agents);
@@ -30,20 +28,6 @@ export function ChatConversationList({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
       <div className="border-b border-[var(--border)] p-3">
-        <div className="mb-3 flex items-center justify-between gap-3 px-1">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--muted-foreground)]">
-              {t.common("conversations")}
-            </p>
-            <h3 className="mt-1 text-base font-semibold text-[var(--foreground)]">
-              {t.common("recentConversations")}
-            </h3>
-          </div>
-          <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
-            {conversations.length}
-          </span>
-        </div>
-
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <input
@@ -114,9 +98,6 @@ export function ChatConversationList({
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-[var(--text)]">
                         {conversation.title}
-                      </p>
-                      <p className="mt-1 text-xs text-[var(--muted-text)]">
-                        {formatKindLabel(conversation.kind)}
                       </p>
                     </div>
                     {conversation.unread > 0 ? (

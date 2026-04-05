@@ -1,5 +1,5 @@
 import { Bot, ShieldAlert } from "lucide-react";
-import type { AgentRecord, MessageRecord, RunRecord, TeamRecord } from "@shared";
+import type { MessageRecord, RunRecord } from "@shared";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
 import { getConversationVisibleMessages } from "./chat-utils";
@@ -27,8 +27,6 @@ export function ChatMessageThread({
   messages: MessageRecord[];
   run: RunRecord | null;
   showInternalMessages: boolean;
-  team: TeamRecord | null;
-  agent: AgentRecord | null;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);

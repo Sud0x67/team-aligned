@@ -10,11 +10,8 @@ import { getLatestActiveRun } from "../components/chat/chat-utils";
 export function ChatPage() {
   const {
     conversations,
-    agents,
-    teams,
     messages,
     runs,
-    commandSuggestions,
     sendInput,
     controlRun,
     settings,
@@ -52,23 +49,8 @@ export function ChatPage() {
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const activeMessages = activeConversation ? messages[activeConversation.id] ?? [] : [];
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
-  const team =
-    activeConversation?.kind === "team"
-      ? teams.find((item) => item.id === activeConversation.targetId) ?? null
-      : null;
-  const agent =
-    activeConversation?.kind === "agent"
-      ? agents.find((item) => item.id === activeConversation.targetId) ?? null
-      : null;
   const isTeamConversation = activeConversation?.kind === "team";
   const showInternal = activeConversation ? internalVisible[activeConversation.id] ?? false : false;
-  const commandHint = useMemo(() => {
-    if (!activeConversation) return null;
-    return commandSuggestions;
-  }, [activeConversation, commandSuggestions]);
-
-  const kindLabel = (kind: "agent" | "team") =>
-    kind === "team" ? t.chat("groupCollaboration") : t.chat("singleAgent");
 
   const handleSend = async (input: string) => {
     if (!activeConversation) return;
@@ -103,7 +85,6 @@ export function ChatPage() {
             onSelectConversation={setActiveConversationId}
             search={search}
             onSearchChange={setSearch}
-            formatKindLabel={kindLabel}
           />
         </div>
       </aside>
@@ -129,14 +110,6 @@ export function ChatPage() {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-[var(--foreground)]">
                     {activeConversation.title}
-                  </p>
-                  <p className="truncate text-[11px] text-[var(--muted-foreground)]">
-                    {activeConversation.kind === "team"
-                      ? team?.memberIds
-                          .map((memberId) => agents.find((item) => item.id === memberId)?.name)
-                          .filter(Boolean)
-                          .join("、") || t.chat("groupCollaboration")
-                      : agent?.role ?? t.chat("singleAgent")}
                   </p>
                 </div>
               </div>
@@ -175,8 +148,6 @@ export function ChatPage() {
                 messages={activeMessages}
                 run={activeRun}
                 showInternalMessages={showInternal}
-                team={team}
-                agent={agent}
               />
             </div>
 
@@ -196,10 +167,6 @@ export function ChatPage() {
               ) : null}
 
               <ChatComposer
-                conversationKind={activeConversation.kind}
-                suggestions={commandHint ?? []}
-                activeSkill={activeConversation.meta.activeSkill}
-                pinnedMcp={activeConversation.meta.pinnedMcp}
                 onSend={handleSend}
               />
             </div>
