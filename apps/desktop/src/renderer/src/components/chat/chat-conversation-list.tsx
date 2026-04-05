@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { Bot, Hash, Search } from "lucide-react";
 import type { ConversationRecord } from "@shared";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
+import { AvatarBadge } from "../avatar-badge";
 
 export function ChatConversationList({
   conversations,
@@ -19,7 +21,11 @@ export function ChatConversationList({
   formatKindLabel: (kind: ConversationRecord["kind"]) => string;
 }) {
   const language = useAppStore((state) => state.settings.language);
+  const agents = useAppStore((state) => state.agents);
+  const teams = useAppStore((state) => state.teams);
   const t = createTranslator(language);
+  const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+  const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
@@ -52,6 +58,10 @@ export function ChatConversationList({
       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2">
         {conversations.map((conversation) => {
           const active = conversation.id === activeConversationId;
+          const target =
+            conversation.kind === "agent"
+              ? agentMap.get(conversation.targetId)
+              : teamMap.get(conversation.targetId);
           return (
             <button
               key={conversation.id}
@@ -63,15 +73,41 @@ export function ChatConversationList({
               }`}
             >
               <div className="flex items-start gap-3">
-                <div
-                  className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
-                    conversation.kind === "agent"
-                      ? "bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] text-[var(--primary)]"
-                      : "bg-[color-mix(in_srgb,#06b6d4_12%,transparent)] text-[#06b6d4]"
-                  }`}
-                >
-                  {conversation.kind === "agent" ? <Bot className="h-5 w-5" /> : <Hash className="h-5 w-5" />}
-                </div>
+                {target ? (
+                  <AvatarBadge
+                    src={target.avatarPath}
+                    fallback={target.avatar}
+                    alt={target.name}
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                    style={
+                      conversation.kind === "agent"
+                        ? { backgroundColor: target.avatarColor }
+                        : {
+                            backgroundColor: `${target.avatarColor}20`,
+                            color: target.avatarColor,
+                          }
+                    }
+                    textClassName={
+                      conversation.kind === "agent"
+                        ? "text-sm font-semibold text-white"
+                        : "text-sm font-semibold"
+                    }
+                  />
+                ) : (
+                  <div
+                    className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
+                      conversation.kind === "agent"
+                        ? "bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] text-[var(--primary)]"
+                        : "bg-[color-mix(in_srgb,#06b6d4_12%,transparent)] text-[#06b6d4]"
+                    }`}
+                  >
+                    {conversation.kind === "agent" ? (
+                      <Bot className="h-5 w-5" />
+                    ) : (
+                      <Hash className="h-5 w-5" />
+                    )}
+                  </div>
+                )}
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">

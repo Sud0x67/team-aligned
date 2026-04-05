@@ -1,144 +1,124 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Plus, Search } from "lucide-react";
+import {
+  Blocks,
+  CheckCircle2,
+  DownloadCloud,
+  Globe,
+  Plus,
+  Puzzle,
+  Search,
+} from "lucide-react";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
-import { Badge } from "../components/pages/badge";
-import { EmptyState } from "../components/pages/empty-state";
-import { PageShell } from "../components/pages/page-shell";
-import { SectionCard } from "../components/pages/section-card";
 
 type TabKey = "skills" | "mcp";
-type CommandKey = "/skills" | "/command" | "/mcp" | "/pause" | "/resume" | "/cancel";
+
+function getExtensionIcon(name: string, installed: boolean) {
+  if (/web search/i.test(name)) {
+    return installed ? Search : Globe;
+  }
+
+  if (/github/i.test(name)) {
+    return installed ? CheckCircle2 : DownloadCloud;
+  }
+
+  return installed ? CheckCircle2 : Plus;
+}
 
 export function ExtensionsPage() {
-  const { extensions, toggleExtension, commandSuggestions, settings } = useAppStore();
+  const { extensions, toggleExtension, settings } = useAppStore();
   const t = createTranslator(settings.language);
   const [tab, setTab] = useState<TabKey>("skills");
-  const [query, setQuery] = useState("");
 
   const visible = useMemo(() => {
     const type = tab === "skills" ? "skill" : "mcp";
-    return extensions
-      .filter((extension) => extension.type === type)
-      .filter((extension) =>
-        [extension.name, extension.description, extension.source].join(" ").toLowerCase().includes(query.trim().toLowerCase()),
-      );
-  }, [extensions, query, tab]);
+    return extensions.filter((extension) => extension.type === type);
+  }, [extensions, tab]);
 
   return (
-    <PageShell title={t.extensions("title")} description={t.extensions("description")}>
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-        <SectionCard
-          title={t.extensions("centerTitle")}
-          subtitle={t.extensions("centerDesc")}
-          actions={
-            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
-              <button
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                  tab === "skills" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
-                }`}
-                onClick={() => setTab("skills")}
-              >
-                {t.extensions("skills")}
-              </button>
-              <button
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                  tab === "mcp" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"
-                }`}
-                onClick={() => setTab("mcp")}
-              >
-                {t.extensions("mcp")}
-              </button>
-            </div>
-          }
-        >
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t.extensions("searchPlaceholder")}
-              className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm outline-none"
-            />
-          </div>
+    <div className="h-full overflow-y-auto bg-[var(--background)] px-6 py-6 text-[var(--foreground)]">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div>
+          <h1 className="text-[20px] font-medium text-[var(--foreground)]">{t.extensions("title")}</h1>
+          <p className="mt-1 text-[14px] text-[var(--muted-foreground)]">
+            {t.extensions("description")}
+          </p>
+        </div>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {visible.length > 0 ? (
-              visible.map((extension) => (
-                <article
-                  key={extension.id}
-                  className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm"
+        <div className="flex items-center gap-6 border-b border-[var(--border)]">
+          <button
+            onClick={() => setTab("skills")}
+            className={`flex items-center gap-2 border-b-2 pb-3 text-[14px] font-medium transition-colors ${
+              tab === "skills"
+                ? "border-[var(--primary)] text-[var(--primary)]"
+                : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            <Puzzle className="h-4 w-4" />
+            {t.extensions("skills")}
+          </button>
+          <button
+            onClick={() => setTab("mcp")}
+            className={`flex items-center gap-2 border-b-2 pb-3 text-[14px] font-medium transition-colors ${
+              tab === "mcp"
+                ? "border-[var(--primary)] text-[var(--primary)]"
+                : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            <Blocks className="h-4 w-4" />
+            {t.extensions("mcp")}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {visible.map((extension) => {
+            const Icon = getExtensionIcon(extension.name, extension.installed);
+            return (
+              <div
+                key={extension.id}
+                className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-all hover:shadow-sm"
+              >
+                <div
+                  className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                    extension.installed
+                      ? "bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] text-[var(--primary)]"
+                      : "bg-[var(--muted)] text-[var(--muted-foreground)]"
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="text-base font-semibold text-slate-950">{extension.name}</h3>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">{extension.description}</p>
-                    </div>
-                    <Badge tone={extension.installed ? "emerald" : "slate"}>
-                      {extension.installed ? t.extensions("installed") : t.extensions("notInstalled")}
-                    </Badge>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Badge tone="indigo">{extension.source}</Badge>
-                    <Badge tone={extension.enabled ? "emerald" : "amber"}>
-                      {extension.enabled ? t.extensions("enabled") : t.extensions("disabled")}
-                    </Badge>
-                    <Badge tone="cyan">{extension.type === "skill" ? t.extensions("skills") : t.extensions("mcp")}</Badge>
-                  </div>
-                  <button
-                    onClick={() => toggleExtension(extension.id)}
-                    className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium transition ${
-                      extension.installed
-                        ? "border border-slate-200 bg-slate-50 text-slate-700"
-                        : "bg-slate-950 text-white"
-                    }`}
-                  >
-                    {extension.installed ? (
-                      <>
-                        <CheckCircle2 className="h-4 w-4" />
-                        {t.extensions("toggleEnabled")}
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-4 w-4" />
-                        {t.extensions("installAndEnable")}
-                      </>
-                    )}
-                  </button>
-                </article>
-              ))
-            ) : (
-              <div className="md:col-span-2">
-                <EmptyState title={t.extensions("noMatchTitle")} description={t.extensions("noMatchDesc")} />
-              </div>
-            )}
-          </div>
-        </SectionCard>
-
-        <div className="space-y-4">
-          <SectionCard title={t.extensions("commandSuggestions")} subtitle={t.extensions("commandSuggestionsDesc")}>
-            <div className="space-y-3">
-              {commandSuggestions.map((item) => (
-                <div key={item.name} className="rounded-2xl bg-slate-50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-mono text-sm font-semibold text-slate-950">{item.name}</p>
-                    <Badge tone="slate">{t.extensions("commandBadge")}</Badge>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{t.command(item.name as CommandKey)}</p>
+                  <Icon className="h-5 w-5" />
                 </div>
-              ))}
-            </div>
-          </SectionCard>
 
-          <SectionCard title={t.extensions("extensionNotes")} subtitle={t.extensions("extensionNotesDesc")}>
-            <div className="space-y-2 text-sm leading-7 text-slate-600">
-              <p>{t.extensions("skillNote1")}</p>
-              <p>{t.extensions("skillNote2")}</p>
-              <p>{t.extensions("skillNote3")}</p>
-            </div>
-          </SectionCard>
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-[15px] font-medium text-[var(--foreground)]">{extension.name}</h3>
+                    {extension.installed ? (
+                      <button
+                        onClick={() => toggleExtension(extension.id)}
+                        className="flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-medium text-[var(--primary)] transition hover:opacity-80"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        {t.extensions("installed")}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleExtension(extension.id)}
+                        className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[color-mix(in_srgb,var(--muted)_88%,white)]"
+                      >
+                        <DownloadCloud className="h-3.5 w-3.5" />
+                        {t.extensions("installAndEnable")}
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="pr-8 text-[13px] leading-relaxed text-[var(--muted-foreground)]">
+                    {extension.description}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-    </PageShell>
+    </div>
   );
 }

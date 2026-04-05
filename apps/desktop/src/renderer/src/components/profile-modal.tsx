@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
+import { AvatarPicker } from "./avatar-picker";
 
 export function ProfileModal({
   open,
@@ -39,6 +40,17 @@ export function ProfileModal({
         </div>
 
         <div className="grid gap-4 px-6 py-5 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <AvatarPicker
+              label={t.profile("avatar")}
+              value={draft.avatarPath}
+              fallback={draft.name.slice(0, 1).toUpperCase() || "A"}
+              color="var(--primary)"
+              uploadLabel={draft.avatarPath ? t.common("changeAvatar") : t.common("uploadAvatar")}
+              removeLabel={t.common("removeAvatar")}
+              onChange={(avatarPath) => setDraft((current) => ({ ...current, avatarPath }))}
+            />
+          </div>
           <label className="space-y-2 md:col-span-1">
             <span className="text-sm text-[var(--muted-text)]">{t.profile("name")}</span>
             <input

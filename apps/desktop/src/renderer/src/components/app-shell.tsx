@@ -214,7 +214,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               onClick={() => setProfileOpen(true)}
             >
               <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full bg-white/15 text-sm font-semibold text-white">
-                {profile.name.slice(0, 1) || "A"}
+                {profile.avatarPath ? (
+                  <img src={profile.avatarPath} alt={profile.name} className="h-full w-full object-cover" />
+                ) : (
+                  profile.name.slice(0, 1) || "A"
+                )}
               </div>
               <div className="hidden text-left md:block">
                 <p className="text-sm font-medium">{profile.name}</p>

@@ -64,6 +64,7 @@ export interface AgentRecord {
   name: string;
   role: string;
   avatar: string;
+  avatarPath: string | null;
   avatarColor: string;
   status: AgentStatus;
   description: string;
@@ -77,6 +78,7 @@ export interface TeamRecord {
   name: string;
   description: string;
   avatar: string;
+  avatarPath: string | null;
   avatarColor: string;
   objective: string;
   workspacePath: string;
@@ -198,6 +200,7 @@ export interface CreateAgentInput {
   description: string;
   capabilities: string[];
   workspacePath?: string;
+  avatarPath?: string | null;
 }
 
 export interface CreateTeamInput {
@@ -206,6 +209,7 @@ export interface CreateTeamInput {
   objective: string;
   memberIds: string[];
   workspacePath?: string;
+  avatarPath?: string | null;
 }
 
 export interface SendInputPayload {
