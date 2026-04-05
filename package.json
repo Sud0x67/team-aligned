@@ -1,0 +1,18 @@
+{
+  "name": "teamaligned",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first AI team chat desktop app.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/desktop",
+    "build": "npm run build -w apps/desktop",
+    "typecheck": "npm run typecheck -w apps/desktop",
+    "lint": "npm run lint -w apps/desktop",
+    "docs:status": "echo 'teamaligned has moved beyond docs-first mode'"
+  }
+}
+

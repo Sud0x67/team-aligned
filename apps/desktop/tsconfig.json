@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/renderer/src/*"],
+      "@shared": ["../../packages/shared/src/index.ts"],
+      "@shared/*": ["../../packages/shared/src/*"],
+      "@runtime": ["../../packages/agent-runtime/src/index.ts"],
+      "@runtime/*": ["../../packages/agent-runtime/src/*"],
+      "@teamaligned/shared": ["../../packages/shared/src/index.ts"],
+      "@teamaligned/shared/*": ["../../packages/shared/src/*"],
+      "@teamaligned/agent-runtime": ["../../packages/agent-runtime/src/index.ts"],
+      "@teamaligned/agent-runtime/*": ["../../packages/agent-runtime/src/*"]
+    },
+    "types": ["node"]
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
+    "../../packages/shared/src/**/*.ts",
+    "../../packages/agent-runtime/src/**/*.ts"
+  ]
+}

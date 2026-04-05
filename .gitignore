@@ -1,0 +1,15 @@
+.DS_Store
+node_modules
+dist
+dist-electron
+out
+coverage
+.turbo
+.vite
+.idea
+.vscode
+*.log
+.env
+.env.local
+*.tsbuildinfo
+.omx

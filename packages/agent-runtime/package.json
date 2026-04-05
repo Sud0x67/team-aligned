@@ -1,0 +1,13 @@
+{
+  "name": "@teamaligned/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@teamaligned/shared": "0.1.0",
+    "nanoid": "^5.1.5"
+  }
+}
