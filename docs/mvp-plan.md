@@ -18,15 +18,16 @@ MVP 要证明三件事：
 - 对话、管理、扩展、仪表盘、设置五个页面已落地
 - 单聊与群聊可以切换并交互
 - `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel` 已接入消息流
+- 单聊已接入真实 Qwen / OpenAI 模型调用
 - 本地 run 状态、通知、资料弹窗、头像上传、本地 workspace 打开已可体验
 - SQLite、JSONL transcript、artifact / memory / shared-memory 已开始落盘
 
 当前还没有完全完成的部分主要是：
 
-- 真实模型调用链
+- 群聊真实模型调用链
 - 真实 Skills 执行链
 - 真实 MCP 调用链
-- DeepAgents / LangGraph 运行时替换
+- DeepAgents / LangGraph 在群聊与完整工具链中的替换
 - 更完整的数据 schema 与导出审计能力
 
 ## MVP 目标

@@ -51,6 +51,7 @@
 - 可启动的 Electron 桌面应用壳
 - 聊天主界面、管理、扩展、仪表盘、设置页面
 - 单 Agent 私聊与 Team 群聊
+- 单 Agent 私聊已接入真实 Qwen / OpenAI 模型调用
 - `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel`
 - 群聊中的共享上下文、内部消息与 Agent `@` 协作
 - 本地 run 状态机与暂停/恢复/取消控制
@@ -63,7 +64,8 @@
 
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
-- DeepAgents、LangChain、LangGraph、真实 MCP 调用、真实 Skills 执行和真实模型接线仍在后续版本中逐步替换接入。
+- 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
+- 群聊真实调度、真实 MCP 调用和真实 Skills 执行仍在后续版本中继续替换接入。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 
 ## 运行方式

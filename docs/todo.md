@@ -18,16 +18,16 @@
 
 ### 1. 模型供应商接线
 
-- [ ] 接入真实 OpenAI API 调用
-- [ ] 接入真实 Qwen / DashScope API 调用
-- [ ] 让设置页中的 provider 配置直接驱动运行时
+- [x] 接入真实 OpenAI API 调用
+- [x] 接入真实 Qwen / DashScope API 调用
+- [x] 让设置页中的 provider 配置直接驱动运行时
 - [ ] 增加 provider 连接校验与错误提示
 
 ### 2. Agent Runtime 接线
 
-- [ ] 引入 DeepAgents
-- [ ] 引入 LangGraph 作为 runtime
-- [ ] 让单聊消息进入真实 Agent 调度
+- [x] 引入 DeepAgents
+- [x] 引入 LangGraph 作为 runtime
+- [x] 让单聊消息进入真实 Agent 调度
 - [ ] 让群聊进入 manager + specialist 的真实协作链
 - [ ] 把 run 状态与真实执行过程同步
 

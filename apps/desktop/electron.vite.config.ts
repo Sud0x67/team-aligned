@@ -4,7 +4,11 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ["@teamaligned/shared", "@teamaligned/agent-runtime"],
+      }),
+    ],
     resolve: {
       alias: {
         "@shared": resolve(__dirname, "../../packages/shared/src"),
@@ -15,7 +19,11 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ["@teamaligned/shared"],
+      }),
+    ],
     resolve: {
       alias: {
         "@shared": resolve(__dirname, "../../packages/shared/src"),

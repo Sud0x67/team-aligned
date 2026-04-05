@@ -33,6 +33,12 @@
 - 用 DeepAgents / LangGraph 替换当前 mock runtime
 - 让群组中的 manager / specialist 协作进入真实调度
 
+当前进展：
+
+- 单聊场景的 Qwen / OpenAI 真实调用已接入
+- 当前默认仍建议优先使用 Qwen 做测试
+- 群聊真实调度、Skills、MCP 仍待接入
+
 验收：
 
 - 单聊与群聊不再依赖 mock 回复

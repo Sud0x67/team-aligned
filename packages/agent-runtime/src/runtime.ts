@@ -8,8 +8,8 @@ import type {
   AgentRecord,
   AppSnapshot,
   ConversationRecord,
-  ExtensionRecord,
   MessageVisibility,
+  ProviderConfig,
   RunControlPayload,
   RunRecord,
   RunStatus,
@@ -21,6 +21,7 @@ import type {
   UpdateSettingsInput,
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
+import { invokeSingleChatDeepAgent, validateProviderForSingleChat } from "./deep-agent.ts";
 
 type RunStep = {
   label: string;
@@ -82,6 +83,14 @@ function chooseSpecialists(team: TeamRecord, agents: AgentRecord[], input: strin
 export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
+  private readonly singleChatSessions = new Map<
+    string,
+    {
+      signature: string;
+      agent: ReturnType<typeof import("deepagents").createDeepAgent>;
+      initialized: boolean;
+    }
+  >();
 
   constructor(private readonly dataDir: string) {
     super();
@@ -331,26 +340,32 @@ export class TeamalignedRuntime extends EventEmitter {
     const snapshot = this.storage.getSnapshot();
     const agent = snapshot.agents.find((item) => item.id === conversation.targetId);
     if (!agent) return;
+    const provider = this.resolveActiveProvider(snapshot);
+    const providerIssue = validateProviderForSingleChat(provider);
+    if (providerIssue) {
+      this.addSystemMessage(conversation.id, providerIssue);
+      return;
+    }
 
     const workspacePath = agent.workspacePath;
     const runId = `run-${nanoid(8)}`;
     const activeSkill = conversation.meta.activeSkill;
     const steps: RunStep[] = [
       {
-        label: "理解需求",
-        delayMs: 800,
+        label: "准备上下文",
+        delayMs: 300,
         execute: () => {
           this.addRunMessage(
             conversation.id,
             runId,
-            `${agent.name} 正在理解你的需求，并结合当前 workspace 组织执行步骤。`,
+            `${agent.name} 正在准备上下文，并将使用 ${provider?.label} / ${provider?.defaultModel} 处理这次请求。`,
             "system",
           );
         },
       },
       {
         label: "检查技能与上下文",
-        delayMs: 1200,
+        delayMs: 300,
         execute: () => {
           const skillText = activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前使用默认技能栈。";
           this.addRunMessage(
@@ -362,10 +377,24 @@ export class TeamalignedRuntime extends EventEmitter {
         },
       },
       {
-        label: "生成回复",
-        delayMs: 600,
-        execute: () => {
-          const response = this.composeAgentReply(agent, input, activeSkill);
+        label: "调用真实模型",
+        execute: async () => {
+          const response = await invokeSingleChatDeepAgent({
+            sessions: this.singleChatSessions,
+            conversationId: conversation.id,
+            provider: provider!,
+            agent,
+            profile: snapshot.profile,
+            activeSkill,
+            workspacePath,
+            history: this.storage.listMessages(conversation.id),
+            latestInput: input,
+          });
+
+          if (this.storage.getRun(runId)?.status === "cancelled") {
+            return;
+          }
+
           const artifactPath = this.writeAgentArtifact(workspacePath, runId, agent, input, response, activeSkill);
           const memoryPath = this.appendMemory(
             workspacePath,
@@ -718,6 +747,11 @@ export class TeamalignedRuntime extends EventEmitter {
       const latest = this.storage.getRun(runId);
       if (!latest) return;
 
+      if (["cancelled", "failed", "completed"].includes(latest.status)) {
+        this.emitSnapshot();
+        return;
+      }
+
       if (latest.status === "pausing") {
         this.storage.updateRun(runId, { status: "paused" });
         this.addRunMessage(latest.conversationId, runId, "任务已暂停。", "system");
@@ -830,13 +864,6 @@ export class TeamalignedRuntime extends EventEmitter {
 
     return artifactPath;
   }
-
-  private composeAgentReply(agent: AgentRecord, input: string, activeSkill: string | null) {
-    const skillPrefix = activeSkill ? `我会优先按 ${activeSkill} 的方式来组织这次输出。` : "";
-    const capabilityHint = agent.capabilities.slice(0, 3).join("、");
-    return `${skillPrefix}${agent.name} 已处理你的请求：${input}\n\n基于我的职责（${agent.role}）和当前能力栈（${capabilityHint}），我建议先完成核心闭环，再继续细化扩展。需要的话我可以继续帮你拆步骤、整理执行计划，或者直接用 /command 在 workspace 中执行命令。`;
-  }
-
   private composeSpecialistReply(agent: AgentRecord, context: TeamContext, input: string) {
     const contextHint = context.activeTasks.slice(0, 2).join("、");
     return `${agent.name}：我已经结合群组上下文开始处理“${input}”。\n当前重点会参考：${contextHint}。\n接下来我会从 ${agent.role} 的角度给出可落地方案，并在需要时 @ 其他成员协作。`;
@@ -986,6 +1013,14 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     return teams.find((team) => team.id === conversation.targetId)?.workspacePath ?? this.dataDir;
+  }
+
+  private resolveActiveProvider(snapshot: AppSnapshot): ProviderConfig | null {
+    return (
+      snapshot.providers.find((provider) => provider.id === snapshot.settings.activeProviderId) ??
+      snapshot.providers.find((provider) => provider.isActive) ??
+      null
+    );
   }
 
   private recoverInterruptedRuns() {
