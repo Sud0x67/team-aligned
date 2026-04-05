@@ -11,6 +11,7 @@
 - 不复用旧的 `x-team` 代码
 - 已提供 Electron + React 的本地桌面原型
 - 已提供本地 mock Agent runtime、SQLite 持久化和多页面交互
+- 已根据 Figma 原型完成首版 UI 对齐，并做了聊天页简化
 
 ## 当前路线
 
@@ -43,6 +44,7 @@
 - [原型对齐说明](./docs/prototype-spec.md)
 - [MVP 计划](./docs/mvp-plan.md)
 - [路线与 TODO](./docs/roadmap.md)
+- [开发 TODO](./docs/todo.md)
 
 ## 当前已实现
 
@@ -54,11 +56,14 @@
 - 本地 run 状态机与暂停/恢复/取消控制
 - 本地 SQLite 持久化、JSONL transcript 与 workspace 产物落盘
 - Workspace 打开入口、通知、Provider/Profile/Settings 编辑
+- Agent、群组、个人资料头像上传与本地保存
+- 扩展中心、管理页、设置页的 Figma 对齐首版
 
 ## 当前说明
 
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
-- DeepAgents、LangChain、LangGraph、真实 MCP 调用和真实模型接线仍在后续版本中逐步替换接入。
+- 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
+- DeepAgents、LangChain、LangGraph、真实 MCP 调用、真实 Skills 执行和真实模型接线仍在后续版本中逐步替换接入。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 
 ## 运行方式
@@ -75,3 +80,11 @@ npm run typecheck
 npm run lint
 npm run build
 ```
+
+macOS 安装包：
+
+```bash
+npm run dist:mac
+```
+
+图标资源位于 `apps/desktop/build/icon.svg`，可通过 `npm run generate:icons:mac -w apps/desktop` 重新生成 `icon.png` 和 `icon.icns`。

@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "npm run dev -w apps/desktop",
     "build": "npm run build -w apps/desktop",
+    "dist:mac": "npm run dist:mac -w apps/desktop",
     "typecheck": "npm run typecheck -w apps/desktop",
     "lint": "npm run lint -w apps/desktop",
     "docs:status": "echo 'teamaligned has moved beyond docs-first mode'"
   }
 }
-

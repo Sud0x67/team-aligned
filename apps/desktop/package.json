@@ -3,13 +3,38 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "Local-first AI team chat desktop app.",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "generate:icons:mac": "sh ./scripts/generate-icons-mac.sh",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx"
+  },
+  "build": {
+    "appId": "com.teamaligned.desktop",
+    "productName": "teamaligned",
+    "asar": true,
+    "electronVersion": "37.3.1",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "icon": "build/icon.icns"
+    }
   },
   "dependencies": {
     "@teamaligned/agent-runtime": "0.1.0",
@@ -28,6 +53,7 @@
     "@vitejs/plugin-react": "^5.0.2",
     "autoprefixer": "^10.4.21",
     "electron": "^37.3.1",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^4.0.0",
     "eslint": "^9.34.0",
     "eslint-plugin-react-hooks": "^5.2.0",

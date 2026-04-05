@@ -10,6 +10,25 @@ MVP 要证明三件事：
 2. Agent 可以在本地执行任务，并且支持暂停、继续和取消
 3. Skills、MCP、workspace、memory 这些能力能以清晰的产品方式接入
 
+## 当前状态（2026-04-05）
+
+当前仓库已经完成了 MVP 的“可体验骨架”部分：
+
+- Electron 桌面应用壳可运行
+- 对话、管理、扩展、仪表盘、设置五个页面已落地
+- 单聊与群聊可以切换并交互
+- `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel` 已接入消息流
+- 本地 run 状态、通知、资料弹窗、头像上传、本地 workspace 打开已可体验
+- SQLite、JSONL transcript、artifact / memory / shared-memory 已开始落盘
+
+当前还没有完全完成的部分主要是：
+
+- 真实模型调用链
+- 真实 Skills 执行链
+- 真实 MCP 调用链
+- DeepAgents / LangGraph 运行时替换
+- 更完整的数据 schema 与导出审计能力
+
 ## MVP 目标
 
 第一版要做到的是“可持续迭代的本地桌面骨架”，而不是静态原型。
@@ -26,6 +45,8 @@ MVP 要证明三件事：
 - 配置 OpenAI / Qwen
 - 浏览并安装基础扩展
 - 查看本地保存的会话历史和运行记录
+
+从当前实现状态看，上面这些目标里，UI 和本地骨架已经基本达成；下一阶段重点是把 mock 行为替换为真实运行时。
 
 ## MVP 范围
 
@@ -108,6 +129,26 @@ MVP 不做：
 - 可配置 OpenAI 或 Qwen
 - 会话、设置、运行状态能持久化到本地
 
+## 当前验收结论
+
+截至当前版本，下面这些项已经达到：
+
+- 默认进入对话页
+- 可切换 Agent 会话与群组会话
+- 单聊可执行 `/skills`、`/command`、`/mcp`
+- 单聊复杂任务支持暂停、继续、取消
+- 群聊可以看到 Agent 间的协作与 `@` 行为
+- 可创建 Agent 与群组
+- 可切换语言和主题
+- 可配置 OpenAI 或 Qwen
+- 会话、设置、运行状态已开始持久化到本地
+
+仍需要进一步加强的项：
+
+- 群组上下文对真实模型输出的影响还需要真实运行时接入来验证
+- Skills、MCP、Provider 当前仍有一部分是 mock 或半 mock
+- 运行状态与 artifact 需要更强的结构化展示和检索能力
+
 ## 分阶段实施建议
 
 ### 阶段 1：文档与仓库骨架
@@ -180,12 +221,10 @@ MVP 不做：
 
 ## 当前推荐的下一步
 
-如果继续推进开发，推荐顺序是：
+如果继续推进开发，推荐顺序已经更新为：
 
-1. 初始化 Electron + Vite + React 桌面壳
-2. 先把 Figma 原型对应页面做成真实路由
-3. 设计单聊命令解析和群聊上下文模型
-4. 接入 SQLite + Drizzle 基础数据层
-5. 用本地 mock data 跑通完整交互
-6. 再接入真实 Agent Runtime
-
+1. 接入真实 Provider Registry 与 OpenAI / Qwen 请求链路
+2. 把 `/skills`、`/command`、`/mcp` 从 mock 行为替换为真实执行链
+3. 引入 DeepAgents / LangGraph，替换当前 mock runtime
+4. 用 Drizzle 把 SQLite 数据层整理成正式 schema 和 migration
+5. 增强 run / artifact / transcript 的结构化展示与可审计能力
