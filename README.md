@@ -41,6 +41,7 @@
 - [运行时与存储](./docs/runtime-and-storage.md)
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)
+- [群组运行时设计](./docs/group-runtime-design.md)
 - [原型对齐说明](./docs/prototype-spec.md)
 - [MVP 计划](./docs/mvp-plan.md)
 - [路线与 TODO](./docs/roadmap.md)
@@ -66,6 +67,7 @@
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
 - 群聊真实调度、真实 MCP 调用和真实 Skills 执行仍在后续版本中继续替换接入。
+- 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 
 ## 运行方式

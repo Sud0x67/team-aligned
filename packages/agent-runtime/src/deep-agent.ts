@@ -18,7 +18,7 @@ function isPlaceholderApiKey(value: string) {
   );
 }
 
-function normalizeMessageContent(content: unknown): string {
+export function normalizeMessageContent(content: unknown): string {
   if (typeof content === "string") {
     return content.trim();
   }
@@ -54,7 +54,7 @@ function normalizeMessageContent(content: unknown): string {
   return "";
 }
 
-function extractAgentText(result: unknown): string {
+export function extractAgentText(result: unknown): string {
   if (typeof result === "string") {
     return result.trim();
   }
@@ -123,7 +123,7 @@ function buildSystemPrompt(input: {
     .join("\n");
 }
 
-function createModel(provider: ProviderConfig) {
+export function createProviderModel(provider: ProviderConfig) {
   return new ChatOpenAI({
     model: provider.defaultModel,
     apiKey: provider.apiKey,
@@ -232,7 +232,7 @@ export async function invokeSingleChatDeepAgent(input: {
           initialized: false,
           agent: createDeepAgent({
             name: agent.name,
-            model: createModel(provider),
+            model: createProviderModel(provider),
             systemPrompt: buildSystemPrompt({
               agent,
               provider,

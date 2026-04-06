@@ -72,7 +72,11 @@ export function ChatMessageThread({
                     {isNotification ? (
                       <div className="mb-1 flex items-center gap-1.5 text-[11px] text-[var(--primary)]">
                         <Bot className="h-3.5 w-3.5" />
-                        {t.chat("notificationLabel")}
+                        {message.metadata?.directFromSpecialist
+                          ? `${t.chat("notificationLabel")} · ${t.chat("specialistDirectQuestion")}`
+                          : message.metadata?.relayedByManager
+                            ? `${t.chat("notificationLabel")} · ${t.chat("managerRelayQuestion")}`
+                            : t.chat("notificationLabel")}
                       </div>
                     ) : null}
                     <p className="whitespace-pre-wrap">{message.content}</p>

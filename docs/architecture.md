@@ -237,6 +237,18 @@ Team 群聊由 manager agent 对外统一发言，并在内部：
 
 同时，群组模式需要比单聊更强的通信能力。
 
+### 群聊后端的设计原则
+
+群聊后端不应被设计成传统聊天室服务，而应被设计成本地优先的任务编排后端。
+
+建议坚持：
+
+- local-first
+- manager 中心化调度
+- 主线程与内部线程分离
+- 所有关键事件可审计、可恢复、可回放
+- 工具、MCP、memory、artifact 全部纳入统一运行时
+
 ### 群组内多 Agent 交互模型
 
 群组中的 Agent 不只是“被动执行者”，而应该能够：
@@ -258,6 +270,98 @@ Team 群聊由 manager agent 对外统一发言，并在内部：
 - Agent 在群里 `@` 另一个 Agent
 - Agent 汇报阶段性进展
 - manager 汇总团队结论
+
+#### 受控的 specialist -> user 升级
+
+specialist 允许直接 `@用户`，但不应是默认行为。
+
+建议运行时中把它当作一次升级动作处理：
+
+- specialist 先提交 `needs_user_input`
+- manager 决定是否转述
+- 只有在确有必要时，manager 才授权 specialist 直接对用户发言
+
+这样既保留真实团队协作感，也避免主线程失控。
+
+#### 内部线程通信
+
+对用户默认折叠，只在 run 详情中展开。
+
+适合：
+
+- manager 分派 specialist
+- specialist 互相同步
+- tool call / MCP call 结果传递
+- 澄清问题的内部汇总
+
+## 群组运行时建议结构
+
+建议把群组运行时拆成下面几个本地模块：
+
+```text
+Team Ingress
+├─ 接收用户消息
+├─ 创建 team run
+└─ 路由到 team orchestrator
+
+Team Orchestrator
+├─ 读取共享上下文
+├─ 运行 manager 规划
+├─ 分派 specialist
+├─ 调用工具 / MCP
+└─ 汇总最终回复
+
+Context Services
+├─ shared context
+├─ conversation summary
+└─ agent private memory
+
+Execution Services
+├─ tool layer
+├─ skills loader
+├─ MCP client layer
+└─ run controller
+
+Persistence Services
+├─ messages
+├─ team_runs
+├─ run_steps
+├─ assignments
+├─ artifacts
+└─ context snapshots
+```
+
+### 建议执行流程
+
+```text
+用户消息
+→ Team Ingress
+→ Context Builder
+→ Manager 规划
+→ Specialist / Tool / MCP
+→ Manager 汇总
+→ 主线程回复用户
+→ 持久化消息、状态、产物、记忆
+```
+
+### 建议存储边界
+
+至少应明确区分：
+
+- public messages
+- internal messages
+- run records
+- run steps
+- assignments
+- artifacts
+- context snapshots
+
+这样后续才能稳定支持：
+
+- 暂停 / 恢复 / 取消
+- run 回放
+- artifact 浏览
+- 群组上下文摘要
 
 #### 内部协调通信
 

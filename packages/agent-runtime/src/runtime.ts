@@ -22,6 +22,13 @@ import type {
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
 import { invokeSingleChatDeepAgent, validateProviderForSingleChat } from "./deep-agent.ts";
+import {
+  type TeamSpecialistOutput,
+  type TeamFinalResponse,
+  planTeamConversation,
+  runSpecialistAssignment,
+  summarizeTeamConversation,
+} from "./team-runtime.ts";
 
 type RunStep = {
   label: string;
@@ -447,11 +454,18 @@ export class TeamalignedRuntime extends EventEmitter {
     if (!team) return;
 
     const manager = chooseManager(team, snapshot.agents);
-    const specialists = chooseSpecialists(team, snapshot.agents, input);
+    const availableSpecialists = chooseSpecialists(team, snapshot.agents, input);
+    const explicitMentions = extractAgentMentions(input, snapshot.agents).map((agent) => agent.id);
     if (!manager) return;
+    const provider = this.resolveActiveProvider(snapshot);
+    const providerIssue = validateProviderForSingleChat(provider);
+    if (providerIssue) {
+      this.addSystemMessage(conversation.id, providerIssue);
+      return;
+    }
 
     const runId = `run-${nanoid(8)}`;
-    const updatedContext: TeamContext = {
+    let updatedContext: TeamContext = {
       ...team.context,
       activeTasks: Array.from(
         new Set([`${input.slice(0, 24)}${input.length > 24 ? "..." : ""}`, ...team.context.activeTasks]),
@@ -459,32 +473,116 @@ export class TeamalignedRuntime extends EventEmitter {
     };
     this.storage.updateTeamContext(team.id, updatedContext);
     const workspacePath = team.workspacePath;
+    const specialistOutputs: TeamSpecialistOutput[] = [];
+    let plan: Awaited<ReturnType<typeof planTeamConversation>> | null = null;
+    let finalResponse: TeamFinalResponse | null = null;
 
     const steps: RunStep[] = [
       {
         label: "同步群组上下文",
-        delayMs: 600,
+        delayMs: 300,
         execute: () => {
-          this.storage.addMessage({
-            conversationId: conversation.id,
-            senderId: manager.id,
-            senderName: manager.name,
-            senderKind: "agent",
-            messageType: "agent",
-            visibility: "public",
-            content: `${manager.name}：我已读取群组上下文，当前目标是“${team.objective}”。接下来我会协调成员处理这个请求。`,
-            mentions: ["user"],
+          this.addRunMessage(
+            conversation.id,
             runId,
-            metadata: { phase: updatedContext.phase },
-            createdAt: Date.now(),
-          });
+            `${manager.name} 正在读取群组上下文，并检查是否需要协调 specialist。`,
+            "system",
+          );
         },
       },
       {
-        label: "分派协作",
-        delayMs: 1000,
-        execute: () => {
-          for (const specialist of specialists) {
+        label: "manager 规划",
+        execute: async () => {
+          plan = await planTeamConversation({
+            provider: provider!,
+            profile: snapshot.profile,
+            team: {
+              ...team,
+              context: updatedContext,
+            },
+            manager,
+            specialists: availableSpecialists,
+            context: updatedContext,
+            history: this.storage.listMessages(conversation.id).map((message) => ({
+              senderName: message.senderName,
+              visibility: message.visibility,
+              content: message.content,
+            })),
+            userInput: input,
+            explicitMentionIds: explicitMentions,
+          });
+
+          updatedContext = {
+            ...updatedContext,
+            phase: plan.nextPhase || updatedContext.phase,
+            activeTasks: plan.activeTask
+              ? Array.from(new Set([plan.activeTask, ...updatedContext.activeTasks])).slice(0, 5)
+              : updatedContext.activeTasks,
+            recentDecisions: plan.decision
+              ? Array.from(new Set([plan.decision, ...updatedContext.recentDecisions])).slice(0, 5)
+              : updatedContext.recentDecisions,
+          };
+          this.storage.updateTeamContext(team.id, updatedContext);
+
+          if (plan.strategy === "manager_direct") {
+            this.addRunMessage(
+              conversation.id,
+              runId,
+              `${manager.name} 将直接处理本轮请求，不调度 specialist。`,
+              "system",
+            );
+            return;
+          }
+
+          if (plan.kickoffReply) {
+            this.storage.addMessage({
+              conversationId: conversation.id,
+              senderId: manager.id,
+              senderName: manager.name,
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content: plan.kickoffReply,
+              mentions: ["user"],
+              runId,
+              metadata: {
+                phase: updatedContext.phase,
+                strategy: plan.strategy,
+              },
+              createdAt: Date.now(),
+            });
+          }
+
+          if (plan.strategy === "specialist_question") {
+            this.addRunMessage(
+              conversation.id,
+              runId,
+              `${plan.speaker.name} 需要先向用户确认一项关键信息。`,
+              "system",
+            );
+            return;
+          }
+
+          this.addRunMessage(
+            conversation.id,
+            runId,
+            `${manager.name} 已分派 ${plan.assignments
+              .map((assignment) => assignment.specialist.name)
+              .join("、")} 参与协作。`,
+            "system",
+          );
+        },
+      },
+      {
+        label: "specialist 协作",
+        execute: async () => {
+          if (!plan || plan.strategy === "manager_direct" || plan.assignments.length === 0) {
+            return;
+          }
+
+          for (const assignment of plan.assignments) {
+            const specialist = assignment.specialist;
+
             this.storage.addMessage({
               conversationId: conversation.id,
               senderId: manager.id,
@@ -492,47 +590,59 @@ export class TeamalignedRuntime extends EventEmitter {
               senderKind: "agent",
               messageType: "agent",
               visibility: "internal",
-              content: `@${specialist.name} 我把这个子任务交给你，请基于群组上下文先给出执行建议。`,
+              content: `@${specialist.name} 我把这个子任务交给你：${assignment.task}`,
               mentions: [specialist.id],
               runId,
-              metadata: { internal: true, fromManager: true },
+              metadata: {
+                internal: true,
+                fromManager: true,
+                task: assignment.task,
+              },
               createdAt: Date.now(),
             });
-          }
 
-          if (specialists.length >= 2) {
-            this.storage.addMessage({
+            const output = await runSpecialistAssignment({
+              provider: provider!,
+              profile: snapshot.profile,
+              team: {
+                ...team,
+                context: updatedContext,
+              },
+              manager,
+              assignment,
+              context: updatedContext,
+              userInput: input,
+              workspacePath,
               conversationId: conversation.id,
-              senderId: specialists[0].id,
-              senderName: specialists[0].name,
-              senderKind: "agent",
-              messageType: "agent",
-              visibility: "public",
-              content: `@${specialists[1].name} 我先处理结构和方案，你帮我准备实现细节，我们统一在群里同步结果。`,
-              mentions: [specialists[1].id],
               runId,
-              metadata: { collaboration: true },
-              createdAt: Date.now(),
             });
-          }
-        },
-      },
-      {
-        label: "专家协作输出",
-        delayMs: 1200,
-        execute: () => {
-          for (const specialist of specialists) {
+            specialistOutputs.push(output);
+
             this.storage.addMessage({
               conversationId: conversation.id,
-              senderId: specialist.id,
-              senderName: specialist.name,
+              senderId: output.specialist.id,
+              senderName: output.specialist.name,
               senderKind: "agent",
-              messageType: "agent",
-              visibility: "public",
-              content: this.composeSpecialistReply(specialist, updatedContext, input),
-              mentions: [],
+              messageType: output.userContactMode === "specialist_direct" ? "notification" : "agent",
+              visibility: output.userContactMode === "specialist_direct" ? "public" : output.visibility,
+              content:
+                output.userContactMode === "specialist_direct"
+                  ? `@你 ${output.userQuestionDraft || output.content}`
+                  : output.content,
+              mentions:
+                output.userContactMode === "specialist_direct" || output.visibility === "public"
+                  ? ["user"]
+                  : [],
               runId,
-              metadata: { teamId: team.id },
+              metadata: {
+                teamId: team.id,
+                task: output.task,
+                reason: output.reason,
+                visibility: output.userContactMode === "specialist_direct" ? "public" : output.visibility,
+                userContactMode: output.userContactMode,
+                directFromSpecialist: output.userContactMode === "specialist_direct",
+                managerRelayCandidate: output.userContactMode === "manager_relay",
+              },
               createdAt: Date.now(),
             });
           }
@@ -540,49 +650,147 @@ export class TeamalignedRuntime extends EventEmitter {
       },
       {
         label: "经理汇总",
-        delayMs: 500,
+        execute: async () => {
+          if (!plan) {
+            return;
+          }
+
+          if (plan.strategy === "manager_direct") {
+            finalResponse = {
+              speaker: manager,
+              content:
+                plan.directReply || `${manager.name}：我已经收到你的请求，会先给出一个清晰的处理建议。`,
+              summary: trimHeadline(plan.intentSummary || input),
+            };
+          } else if (plan.strategy === "specialist_question") {
+            const directQuestion =
+              specialistOutputs.find((output) => output.userContactMode === "specialist_direct")
+                ?.userQuestionDraft ||
+              specialistOutputs.find((output) => output.userContactMode === "manager_relay")
+                ?.userQuestionDraft ||
+              plan.userQuestion ||
+              "为了继续推进，我还需要你补充一项关键信息。";
+            finalResponse = {
+              speaker: plan.questionMode === "specialist_direct" ? plan.speaker : manager,
+              content:
+                plan.questionMode === "specialist_direct"
+                  ? `@你 ${directQuestion}`
+                  : `${manager.name}：我先替 ${plan.speaker.name} 确认一个关键信息：${directQuestion}`,
+              summary: trimHeadline(directQuestion || input),
+            };
+            updatedContext = {
+              ...updatedContext,
+              phase: plan.nextPhase || "等待用户确认",
+              recentDecisions: Array.from(
+                new Set([
+                  trimHeadline(`${plan.speaker.name} 需要用户确认关键输入`),
+                  ...updatedContext.recentDecisions,
+                ]),
+              ).slice(0, 5),
+            };
+            this.storage.updateTeamContext(team.id, updatedContext);
+          } else {
+            finalResponse = await summarizeTeamConversation({
+              provider: provider!,
+              profile: snapshot.profile,
+              team: {
+                ...team,
+                context: updatedContext,
+              },
+              manager,
+              context: updatedContext,
+              userInput: input,
+              intentSummary: plan.intentSummary,
+              specialistOutputs,
+              workspacePath,
+              conversationId: conversation.id,
+              runId,
+            });
+          }
+
+          const specialistAlreadySpoke =
+            plan.strategy === "specialist_question" &&
+            specialistOutputs.some((output) => output.userContactMode === "specialist_direct");
+
+          if (!specialistAlreadySpoke) {
+            this.storage.addMessage({
+              conversationId: conversation.id,
+              senderId: finalResponse.speaker.id,
+              senderName: finalResponse.speaker.name,
+              senderKind: "agent",
+              messageType:
+                plan.strategy === "specialist_question" && finalResponse.speaker.id !== manager.id
+                  ? "notification"
+                  : "agent",
+              visibility: "public",
+              content: finalResponse.content,
+              mentions: ["user"],
+              runId,
+              metadata: {
+                summary: plan.strategy === "collaborate",
+                strategy: plan.strategy,
+                specialistCount: specialistOutputs.length,
+                userContactMode: plan.questionMode,
+                relayedByManager:
+                  plan.strategy === "specialist_question" && plan.questionMode === "manager_relay",
+                directFromSpecialist:
+                  plan.strategy === "specialist_question" &&
+                  plan.questionMode === "specialist_direct" &&
+                  finalResponse.speaker.id !== manager.id,
+              },
+              createdAt: Date.now(),
+            });
+          }
+
+          this.storage.createNotification({
+            type: "mention",
+            title: `${finalResponse.speaker.name} 在群组中 @ 了你`,
+            body: `${team.name} 中有新的阶段总结。`,
+            relatedConversationId: conversation.id,
+            relatedRunId: runId,
+          });
+        },
+      },
+      {
+        label: "落盘产物",
         execute: () => {
-          const specialistSummary = specialists.map((agent) => agent.name).join("、");
+          const effectiveFinalResponse =
+            finalResponse ??
+            ({
+              speaker: manager,
+              content: plan?.directReply ?? `${manager.name} 已完成当前群组处理。`,
+              summary: trimHeadline(plan?.intentSummary || input),
+            } satisfies TeamFinalResponse);
+          const effectiveSpecialists =
+            specialistOutputs.length > 0
+              ? specialistOutputs.map((item) => item.specialist)
+              : plan?.assignments.map((assignment) => assignment.specialist) ?? [];
+          const specialistSummary =
+            effectiveSpecialists.map((agent) => agent.name).join("、") || "无";
           const artifactPath = this.writeTeamArtifact(
             workspacePath,
             runId,
             team,
             manager,
-            specialists,
+            effectiveSpecialists,
             input,
             updatedContext,
+            specialistOutputs,
+            effectiveFinalResponse,
           );
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
             "shared-memory.md",
-            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 协作：${specialistSummary} | 阶段：${updatedContext.phase}`,
+            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 协作：${specialistSummary} | 输出：${trimHeadline(
+              effectiveFinalResponse.content,
+            )}`,
           );
-          this.storage.addMessage({
-            conversationId: conversation.id,
-            senderId: manager.id,
-            senderName: manager.name,
-            senderKind: "agent",
-            messageType: "notification",
-            visibility: "public",
-            content: `@你 我已经综合 ${specialistSummary} 的反馈，当前建议是：\n1. 先完成核心交互闭环\n2. 保持群组上下文持续更新\n3. 对复杂任务保留暂停/恢复控制\n\n如果你同意，我会继续推动下一步执行。`,
-            mentions: ["user"],
-            runId,
-            metadata: { summary: true },
-            createdAt: Date.now(),
-          });
           this.addRunMessage(
             conversation.id,
             runId,
             `群组协作产物已写入：${artifactPath}\n共享记忆已更新：${sharedMemoryPath}`,
             "system",
           );
-          this.storage.createNotification({
-            type: "mention",
-            title: `${manager.name} 在群组中 @ 了你`,
-            body: `${team.name} 中有新的阶段总结。`,
-            relatedConversationId: conversation.id,
-            relatedRunId: runId,
-          });
         },
       },
     ];
@@ -864,11 +1072,6 @@ export class TeamalignedRuntime extends EventEmitter {
 
     return artifactPath;
   }
-  private composeSpecialistReply(agent: AgentRecord, context: TeamContext, input: string) {
-    const contextHint = context.activeTasks.slice(0, 2).join("、");
-    return `${agent.name}：我已经结合群组上下文开始处理“${input}”。\n当前重点会参考：${contextHint}。\n接下来我会从 ${agent.role} 的角度给出可落地方案，并在需要时 @ 其他成员协作。`;
-  }
-
   private addSystemMessage(conversationId: string, content: string) {
     this.storage.addMessage({
       conversationId,
@@ -975,6 +1178,8 @@ export class TeamalignedRuntime extends EventEmitter {
     specialists: AgentRecord[],
     input: string,
     context: TeamContext,
+    specialistOutputs: TeamSpecialistOutput[],
+    finalResponse: TeamFinalResponse,
   ) {
     this.ensureWorkspaceFolders(workspacePath);
     const artifactPath = this.getArtifactPath(workspacePath, `team-${runId}.md`);
@@ -993,6 +1198,25 @@ export class TeamalignedRuntime extends EventEmitter {
         "",
         `- 目标：${team.objective}`,
         `- 当前任务：${context.activeTasks.join("、") || "暂无"}`,
+        "",
+        "## Specialist 协作",
+        "",
+        specialistOutputs.length > 0
+          ? specialistOutputs
+              .map(
+                (item) =>
+                  `### ${item.specialist.name}\n\n- 任务：${item.task}\n- 可见性：${item.userContactMode === "specialist_direct" ? "public" : item.visibility}\n- 用户交互方式：${item.userContactMode}\n${
+                    item.userQuestionDraft ? `- 问题草案：${item.userQuestionDraft}\n` : ""
+                  }- 输出：${item.content}\n`,
+              )
+              .join("\n")
+          : "本轮没有 specialist 协作。",
+        "",
+        "## 最终回复",
+        "",
+        `- 发言人：${finalResponse.speaker.name}`,
+        "",
+        finalResponse.content,
         "",
       ].join("\n"),
     );
