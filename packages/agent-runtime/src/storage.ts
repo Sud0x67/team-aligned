@@ -23,6 +23,7 @@ import {
 import type {
   AgentRecord,
   AttachmentAssetRecord,
+  ArtifactRecord,
   AppSettings,
   AppSnapshot,
   ConversationMeta,
@@ -37,9 +38,11 @@ import type {
   NotificationRecord,
   ProviderConfig,
   RunRecord,
+  RunStepRecord,
   SkillCatalogRecord,
   TeamContext,
   TeamRecord,
+  ToolInvocationRecord,
   UpdateAgentSkillsInput,
   UpdateProfileInput,
   UpdateProviderInput,
@@ -96,46 +99,11 @@ type StoredAttachmentRecord = AttachmentAssetRecord & {
   createdAt: number;
 };
 
-type StoredArtifactRecord = {
-  id: string;
-  conversationId: string;
-  runId: string | null;
-  artifactKind: "agent_output" | "team_output" | "command_output";
-  title: string;
-  path: string;
-  workspacePath: string;
-  createdAt: number;
-  metadata: Record<string, unknown> | null;
-};
+type StoredArtifactRecord = ArtifactRecord;
 
-type StoredToolInvocationRecord = {
-  id: string;
-  conversationId: string;
-  runId: string | null;
-  serverId: string;
-  serverName: string;
-  toolName: string;
-  status: "running" | "completed" | "failed";
-  inputJson: string;
-  outputText: string | null;
-  errorText: string | null;
-  createdAt: number;
-  completedAt: number | null;
-  metadata: Record<string, unknown> | null;
-};
+type StoredToolInvocationRecord = ToolInvocationRecord;
 
-type StoredRunStepRecord = {
-  id: string;
-  runId: string;
-  conversationId: string;
-  stepIndex: number;
-  label: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  startedAt: number | null;
-  completedAt: number | null;
-  errorText: string | null;
-  metadata: Record<string, unknown> | null;
-};
+type StoredRunStepRecord = RunStepRecord;
 
 function now() {
   return Date.now();
@@ -230,6 +198,12 @@ export class AppStorage {
       conversations,
       messages,
       runs: this.listRuns(),
+      attachments: [...this.state.attachments].sort((a, b) => a.createdAt - b.createdAt),
+      artifacts: [...this.state.artifacts].sort((a, b) => b.createdAt - a.createdAt),
+      toolInvocations: [...this.state.toolInvocations].sort((a, b) => a.createdAt - b.createdAt),
+      runSteps: [...this.state.runSteps].sort((a, b) =>
+        a.runId === b.runId ? a.stepIndex - b.stepIndex : a.runId.localeCompare(b.runId, "en")
+      ),
       notifications: this.listNotifications(),
       extensions: this.listExtensions(),
       skillCatalog: this.listSkillCatalog(),

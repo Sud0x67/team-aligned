@@ -174,25 +174,57 @@
 
 SQLite 用于承担结构化实体、索引与统计能力。
 
-第一版建议覆盖这些表：
+当前版本已经实际落地的核心表包括：
 
 - `agents`
 - `teams`
-- `team_members`
 - `conversations`
 - `messages`
 - `runs`
+- `attachments`
 - `artifacts`
+- `tool_invocations`
+- `run_steps`
 - `notifications`
-- `mcp_servers`
+- `skill_catalog`
+- `mcp_catalog`
 - `mcp_connections`
-- `installed_skills`
-- `installed_extensions`
+
+当前仓库也已经补上了 Drizzle 基线：
+
+- `packages/agent-runtime/src/db/schema.ts`
+  维护正式 schema 定义
+- `packages/agent-runtime/drizzle/`
+  保存基线 migration 与快照
+- `npm run db:generate`
+  生成新的 migration
+- `npm run db:migrate`
+  对 `~/teamaligned/app.db` 应用 migration；如果检测到已有历史数据库，会先把当前基线标记为已应用，避免覆盖现有数据
+
+其中：
+
+- `conversations / messages / runs`
+  已经具备结构化字段列和索引，同时保留 `payload` 作为兼容字段
+- `attachments / artifacts / tool_invocations / run_steps`
+  已经进入正式结构化表，后续可直接支撑 run 详情、审计和导出
+
+当前聊天页已经直接消费这些表对应的数据，用于展示：
+
+- run 详情
+- 步骤时间线
+- artifact 列表
+- attachment 列表
+- 工具与 MCP 调用记录
+
+后续仍建议继续补的表或规范化对象包括：
+
+- `team_members`
 - `workspace_metadata`
-- `run_checkpoints`
 - `conversation_context_snapshots`
 - `message_mentions`
 - `slash_command_history`
+- `installed_skills`
+- `installed_extensions`
 
 这里刻意不把 `settings / providers / profile` 作为主存储放进 SQLite。
 

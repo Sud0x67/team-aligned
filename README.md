@@ -4,13 +4,13 @@
 
 它的目标不是做成一个沉重的控制台，而是让用户像使用聊天软件一样，与单个 Agent 私聊，或者与一个 Agent 团队群聊，同时保留本地执行、可审计、可扩展的能力。
 
-当前仓库已经从“纯文档初始化”推进到“可体验的 MVP 原型”阶段：
+当前仓库已经从“纯文档初始化”推进到“可体验且可继续开发的 Alpha 前版本”阶段：
 
 - 产品正式名称统一为 `teamaligned`
 - 当前工作目录保持为 `/Users/bobo/code/team-aligned`
 - 不复用旧的 `x-team` 代码
 - 已提供 Electron + React 的本地桌面原型
-- 已提供本地 mock Agent runtime、SQLite 持久化和多页面交互
+- 已提供本地 Agent runtime、SQLite 持久化和多页面交互
 - 已根据 Figma 原型完成首版 UI 对齐，并做了聊天页简化
 
 ## 当前路线
@@ -54,24 +54,34 @@
 - 聊天主界面、管理、扩展、仪表盘、设置页面
 - 单 Agent 私聊与 Team 群聊
 - 单 Agent 私聊已接入真实 Qwen / OpenAI 模型调用
+- Team 群聊已接入真实 manager / specialist 模型协作链路
 - `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel`
 - 群聊中的共享上下文、内部消息与 Agent `@` 协作
 - 本地 run 状态机与暂停/恢复/取消控制
 - 本地 SQLite 持久化、JSONL transcript 与 workspace 产物落盘
+- `settings.json` 作为用户配置主文件
+- `attachments / artifacts / tool_invocations / run_steps` 已进入正式 SQLite 表
+- 消息附件上传、落盘与消息流展示
 - Workspace 打开入口、通知、Provider/Profile/Settings 编辑
 - Agent、群组、个人资料头像上传与本地保存
 - 扩展中心、管理页、设置页的 Figma 对齐首版
 - Skills registry 同步、全局安装与 Agent Skill 白名单
 - MCP registry 同步、本地连接配置、健康检查、Agent/Team 白名单和 `/mcp use/tools`
+- MCP tool calls 已接入 runtime 审计落盘
 
 ## 当前说明
 
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
 - 当前桌面端本地数据目录统一使用 `~/teamaligned`；如果旧版本数据还在 `~/.teamaligned` 或 Electron `userData` 目录中，启动时会自动迁移。
-- 持久层设计正在收敛为三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
+- 持久层当前采用三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
-- `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP、Skill 脚本执行和更完整的 MCP run 可视化仍在后续版本中继续补齐。
+- `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP 暂不支持。
+- Skills 当前已经完成 registry、安装、白名单和 prompt 注入，但还没有把 skill 目录中的脚本能力统一接成 runtime tool。
+- Skills 当前已经完成 registry、安装、白名单、prompt 注入，以及 skill bundle / scripts 作为 runtime tools 的接入。
+- 单聊与群聊现在都已接入 workspace 文件、ripgrep 搜索、shell 命令与 MCP 工具的统一 agent tool layer。
+- 聊天页现在已经提供 run 详情、产物、附件与工具调用的可视化卡片。
+- 数据层已经有正式的 `attachments / artifacts / tool_invocations / run_steps` 表以及 `messages / conversations / runs` 的结构化列和索引，并补上了 Drizzle schema 与基线 migration。
 - 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 
@@ -88,6 +98,8 @@ npm run dev
 npm run typecheck
 npm run lint
 npm run build
+npm run db:generate
+npm run db:migrate
 ```
 
 macOS 安装包：

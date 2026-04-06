@@ -10,7 +10,7 @@ MVP 要证明三件事：
 2. Agent 可以在本地执行任务，并且支持暂停、继续和取消
 3. Skills、MCP、workspace、memory 这些能力能以清晰的产品方式接入
 
-## 当前状态（2026-04-05）
+## 当前状态（2026-04-06）
 
 当前仓库已经完成了 MVP 的“可体验骨架”部分：
 
@@ -19,16 +19,20 @@ MVP 要证明三件事：
 - 单聊与群聊可以切换并交互
 - `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel` 已接入消息流
 - 单聊已接入真实 Qwen / OpenAI 模型调用
+- 群聊已接入真实 manager / specialist 协作链路
+- Skills 已支持 registry、安装、白名单和 prompt 注入
+- MCP 已支持 stdio / HTTP、健康检查、白名单和 runtime 注入
 - 本地 run 状态、通知、资料弹窗、头像上传、本地 workspace 打开已可体验
 - SQLite、JSONL transcript、artifact / memory / shared-memory 已开始落盘
+- `settings.json`、附件上传、`attachments / artifacts / tool_invocations / run_steps` 已落到持久层
 
 当前还没有完全完成的部分主要是：
 
-- 群聊真实模型调用链
-- 真实 Skills 执行链
-- 真实 MCP 调用链
-- DeepAgents / LangGraph 在群聊与完整工具链中的替换
-- 更完整的数据 schema 与导出审计能力
+- Skill 脚本执行链
+- 文件 / 搜索 / 命令工具层的完整接线
+- MCP / run / artifact 的可视化
+- Drizzle migration 与更完整的数据层工程化
+- 导出、全文检索与发布能力
 
 ## MVP 目标
 
@@ -47,7 +51,7 @@ MVP 要证明三件事：
 - 浏览并安装基础扩展
 - 查看本地保存的会话历史和运行记录
 
-从当前实现状态看，上面这些目标里，UI 和本地骨架已经基本达成；下一阶段重点是把 mock 行为替换为真实运行时。
+从当前实现状态看，上面这些目标里，UI 和本地骨架已经基本达成；下一阶段重点是把“能跑通”继续升级成“可长期维护和可观察”。
 
 ## MVP 范围
 
@@ -146,9 +150,10 @@ MVP 不做：
 
 仍需要进一步加强的项：
 
-- 群组上下文对真实模型输出的影响还需要真实运行时接入来验证
-- Skills、MCP、Provider 当前仍有一部分是 mock 或半 mock
-- 运行状态与 artifact 需要更强的结构化展示和检索能力
+- Skill 脚本与附属文件能力还没有真正接入 runtime
+- 本地工具还没有完整统一到 agent tool layer
+- 运行状态、artifact、MCP 调用虽然已经结构化落盘，但 UI 展示还不够
+- 数据层还缺 Drizzle migration、导出和检索能力
 
 ## 分阶段实施建议
 
@@ -224,8 +229,7 @@ MVP 不做：
 
 如果继续推进开发，推荐顺序已经更新为：
 
-1. 接入真实 Provider Registry 与 OpenAI / Qwen 请求链路
-2. 把 `/skills`、`/command`、`/mcp` 从 mock 行为替换为真实执行链
-3. 引入 DeepAgents / LangGraph，替换当前 mock runtime
-4. 用 Drizzle 把 SQLite 数据层整理成正式 schema 和 migration
-5. 增强 run / artifact / transcript 的结构化展示与可审计能力
+1. 把 Skill 脚本、文件工具、搜索工具继续接进真实 runtime
+2. 增强 run / artifact / transcript / MCP 调用的 UI 展示
+3. 用 Drizzle 把 SQLite 数据层整理成正式 schema 和 migration
+4. 增加导出、检索、测试和发布链路

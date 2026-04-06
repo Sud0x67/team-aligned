@@ -21,7 +21,7 @@
 
 ## 版本 0.2：真实运行时接线
 
-状态：进行中
+状态：大部分完成
 
 目标：把当前“能体验”的产品变成“能真实执行”的产品。
 
@@ -37,48 +37,55 @@
 
 - 单聊场景的 Qwen / OpenAI 真实调用已接入
 - 当前默认仍建议优先使用 Qwen 做测试
-- 群聊真实调度、Skills、MCP 仍待接入
+- 群聊 manager / specialist 真实协作已接入
+- Skills registry、安装、白名单和 prompt 注入已接入
+- MCP registry、健康检查、白名单和 runtime 注入已接入
+- 剩余主要是 Skill 脚本执行、工具层接线和 UI 可视化
 
 验收：
 
-- 单聊与群聊不再依赖 mock 回复
-- 运行状态与真实执行同步
-- provider 切换能真实生效
+- [x] 单聊与群聊不再依赖 mock 回复
+- [x] 运行状态与真实执行同步
+- [x] provider 切换能真实生效
 
 ## 版本 0.3：扩展与本地能力增强
 
-状态：未开始
+状态：基本完成
 
 目标：让 Agent 可以稳定调用本地工具和外部能力。
 
 核心任务：
 
-- 文件工具
-- 终端工具
-- 本地搜索工具
-- `SKILL.md` 加载与启用
-- stdio MCP
-- HTTP MCP
-- MCP 配置与健康检查
+- [x] `SKILL.md` catalog、安装与启用
+- [x] stdio MCP
+- [x] HTTP MCP
+- [x] MCP 配置与健康检查
+- [x] Agent / Team 白名单
+- [x] 文件工具
+- [x] 终端工具统一并入 agent tool layer
+- [x] 本地搜索工具
+- [x] Skill 脚本执行
+- [x] run / MCP / artifact 可视化
 
 验收：
 
-- Agent 可稳定调用本地工具
-- Skills 和 MCP 能在 UI 中看到真实生效结果
+- [x] Agent 可稳定调用本地工具
+- [x] Skills 和 MCP 能在 UI 中看到真实生效结果
 
 ## 版本 0.4：正式数据层与审计
 
-状态：未开始
+状态：大部分完成
 
 目标：把现有持久化升级为正式可维护的数据层。
 
 核心任务：
 
-- Drizzle schema 与 migration
-- conversations / messages / runs / artifacts 正式表结构
-- transcript / artifact / memory 的索引与关联
-- 导出与审计能力
-- 本地全文检索
+- [x] `attachments / artifacts / tool_invocations / run_steps` 正式表结构
+- [x] `conversations / messages / runs` 结构化字段与索引
+- [x] Drizzle schema 与 migration
+- [ ] transcript / artifact / memory 的索引与关联
+- [ ] 导出与审计能力
+- [ ] 本地全文检索
 
 验收：
 
@@ -94,7 +101,7 @@
 
 核心任务：
 
-- run 详情和 artifact 浏览
+- [x] run 详情和 artifact 浏览
 - 群组上下文抽屉或详情面板
 - Agent / 群组编辑与删除
 - 扩展配置详情页

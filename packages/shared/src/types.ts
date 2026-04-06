@@ -40,6 +40,55 @@ export interface AttachmentAssetRecord {
   sizeBytes: number;
 }
 
+export interface StoredAttachmentRecord extends AttachmentAssetRecord {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  runId: string | null;
+  createdAt: number;
+}
+
+export interface ArtifactRecord {
+  id: string;
+  conversationId: string;
+  runId: string | null;
+  artifactKind: "agent_output" | "team_output" | "command_output";
+  title: string;
+  path: string;
+  workspacePath: string;
+  createdAt: number;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface ToolInvocationRecord {
+  id: string;
+  conversationId: string;
+  runId: string | null;
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  status: "running" | "completed" | "failed";
+  inputJson: string;
+  outputText: string | null;
+  errorText: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface RunStepRecord {
+  id: string;
+  runId: string;
+  conversationId: string;
+  stepIndex: number;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  startedAt: number | null;
+  completedAt: number | null;
+  errorText: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
 export interface UserProfile {
   name: string;
   role: string;
@@ -273,6 +322,10 @@ export interface AppSnapshot {
   conversations: ConversationRecord[];
   messages: Record<string, MessageRecord[]>;
   runs: RunRecord[];
+  attachments: StoredAttachmentRecord[];
+  artifacts: ArtifactRecord[];
+  toolInvocations: ToolInvocationRecord[];
+  runSteps: RunStepRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
   skillCatalog: SkillCatalogRecord[];

@@ -1,6 +1,7 @@
 import { createDeepAgent, FilesystemBackend } from "deepagents";
 import { MemorySaver } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
+import type { StructuredToolInterface } from "@langchain/core/tools";
 import type {
   AgentRecord,
   McpCatalogRecord,
@@ -112,9 +113,19 @@ function buildSystemPrompt(input: {
   activeSkill: string | null;
   activeSkillDefinition: string | null;
   activeMcpServers: McpCatalogRecord[];
+  runtimeToolSummary: string;
   workspacePath: string;
 }) {
-  const { agent, provider, profile, activeSkill, activeSkillDefinition, activeMcpServers, workspacePath } =
+  const {
+    agent,
+    provider,
+    profile,
+    activeSkill,
+    activeSkillDefinition,
+    activeMcpServers,
+    runtimeToolSummary,
+    workspacePath,
+  } =
     input;
   const capabilities = agent.capabilities.join("、") || "未设置";
   const mcpServerNames = activeMcpServers.map((server) => server.name).join("、");
@@ -135,6 +146,7 @@ function buildSystemPrompt(input: {
     `当前用户资料：姓名 ${profile.name}，角色 ${profile.role || "未设置"}，团队 ${profile.team || "未设置"}。`,
     "请优先使用与用户相同的语言回复。",
     "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
+    runtimeToolSummary,
     "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
   ]
     .filter(Boolean)
@@ -229,6 +241,8 @@ export async function invokeSingleChatDeepAgent(input: {
   history: MessageRecord[];
   latestInput: string;
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  additionalTools?: StructuredToolInterface[];
+  runtimeToolSummary?: string;
 }) {
   const {
     sessions,
@@ -243,6 +257,8 @@ export async function invokeSingleChatDeepAgent(input: {
     workspacePath,
     history,
     latestInput,
+    additionalTools,
+    runtimeToolSummary,
   } = input;
 
   const mcpConnectionMap = new Map(mcpConnections.map((connection) => [connection.serverId, connection]));
@@ -252,6 +268,7 @@ export async function invokeSingleChatDeepAgent(input: {
     workspacePath,
     onInvocation: input.onMcpInvocation,
   });
+  const tools = [...(additionalTools ?? []), ...mcpTools];
   const mcpToolSignature = JSON.stringify(
     mcpServers.map((server) => ({
       id: server.id,
@@ -287,12 +304,13 @@ export async function invokeSingleChatDeepAgent(input: {
               agent,
               provider,
               profile,
-              activeSkill,
-              activeSkillDefinition,
-              activeMcpServers: mcpServers,
-              workspacePath,
-            }),
-            tools: mcpTools,
+      activeSkill,
+      activeSkillDefinition,
+      activeMcpServers: mcpServers,
+      runtimeToolSummary: runtimeToolSummary ?? "",
+      workspacePath,
+    }),
+    tools,
             backend: new FilesystemBackend({
               rootDir: workspacePath,
               virtualMode: true,

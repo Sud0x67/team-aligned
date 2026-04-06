@@ -6,6 +6,7 @@ import { createTranslator } from "../i18n";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
 import { ChatComposer } from "../components/chat/chat-composer";
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
+import { ChatRunDetails } from "../components/chat/chat-run-details";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 
 export function ChatPage() {
@@ -13,6 +14,10 @@ export function ChatPage() {
     conversations,
     messages,
     runs,
+    attachments,
+    artifacts,
+    toolInvocations,
+    runSteps,
     sendInput,
     controlRun,
     settings,
@@ -50,8 +55,44 @@ export function ChatPage() {
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
   const activeMessages = activeConversation ? messages[activeConversation.id] ?? [] : [];
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
+  const latestConversationRun = useMemo(() => {
+    if (!activeConversation) return null;
+    return [...runs]
+      .filter((run) => run.conversationId === activeConversation.id)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+  }, [activeConversation, runs]);
   const isTeamConversation = activeConversation?.kind === "team";
   const showInternal = activeConversation ? internalVisible[activeConversation.id] ?? false : false;
+  const detailRun = activeRun ?? latestConversationRun;
+  const detailRunId = detailRun?.id ?? null;
+
+  const conversationRunSteps = useMemo(() => {
+    if (!activeConversation || !detailRunId) return [];
+    return runSteps.filter((step) => step.conversationId === activeConversation.id && step.runId === detailRunId);
+  }, [activeConversation, detailRunId, runSteps]);
+
+  const conversationArtifacts = useMemo(() => {
+    if (!activeConversation) return [];
+    return artifacts.filter(
+      (artifact) =>
+        artifact.conversationId === activeConversation.id &&
+        (!detailRunId || artifact.runId === detailRunId),
+    );
+  }, [activeConversation, artifacts, detailRunId]);
+
+  const conversationAttachments = useMemo(() => {
+    if (!activeConversation) return [];
+    return attachments.filter((attachment) => attachment.conversationId === activeConversation.id);
+  }, [activeConversation, attachments]);
+
+  const conversationToolInvocations = useMemo(() => {
+    if (!activeConversation) return [];
+    return toolInvocations.filter(
+      (invocation) =>
+        invocation.conversationId === activeConversation.id &&
+        (!detailRunId || invocation.runId === detailRunId),
+    );
+  }, [activeConversation, detailRunId, toolInvocations]);
 
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
@@ -154,6 +195,14 @@ export function ChatPage() {
             </div>
 
             <div className="border-t border-[var(--border)] bg-[var(--card)] px-5 pb-4 pt-3">
+              <ChatRunDetails
+                run={detailRun}
+                runSteps={conversationRunSteps}
+                artifacts={conversationArtifacts}
+                attachments={conversationAttachments}
+                toolInvocations={conversationToolInvocations}
+              />
+
               {activeRun ? (
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <button className="button-secondary !px-4 !py-2 text-sm" onClick={handlePause}>

@@ -42,6 +42,7 @@ import {
 } from "./mcp-registry.ts";
 import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts";
 import type { McpInvocationEvent } from "./mcp-tools.ts";
+import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
 import {
   generateManagerDirectReply,
   type TeamSpecialistOutput,
@@ -563,20 +564,20 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.storage.saveAttachmentAsset(input);
   }
 
-  private createMcpInvocationObserver(conversationId: string, runId: string) {
-    return async (event: McpInvocationEvent) => {
+  private createToolInvocationObserver(conversationId: string, runId: string) {
+    return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
       if (event.phase === "start") {
         this.storage.createToolInvocation({
           id: event.invocationId,
           conversationId,
           runId,
-          serverId: event.server.id,
-          serverName: event.server.name,
+          serverId: "server" in event ? event.server.id : event.serverId,
+          serverName: "server" in event ? event.server.name : event.serverName,
           toolName: event.toolName,
           status: "running",
           inputJson: JSON.stringify(event.args),
           metadata: {
-            transport: event.server.transport,
+            transport: "server" in event ? event.server.transport : "local",
           },
           createdAt: event.startedAt,
         });
@@ -823,6 +824,12 @@ export class TeamalignedRuntime extends EventEmitter {
       activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id)
         ? readInstalledSkillDefinition(activeSkillRecord)
         : null;
+    const runtimeTools = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentsRoot: this.storage.attachmentsRoot,
+      activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
+      onInvocation: this.createToolInvocationObserver(conversation.id, runId),
+    });
     const steps: RunStep[] = [
       {
         label: "准备上下文",
@@ -865,7 +872,9 @@ export class TeamalignedRuntime extends EventEmitter {
             workspacePath,
             history: this.storage.listMessages(conversation.id),
             latestInput: input,
-            onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
+            onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+            additionalTools: runtimeTools.tools,
+            runtimeToolSummary: runtimeTools.summary,
           });
 
           if (this.storage.getRun(runId)?.status === "cancelled") {
@@ -953,6 +962,12 @@ export class TeamalignedRuntime extends EventEmitter {
     const workspacePath = team.workspacePath;
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
+    const runtimeTools = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentsRoot: this.storage.attachmentsRoot,
+      activeSkill: null,
+      onInvocation: this.createToolInvocationObserver(conversation.id, runId),
+    });
     const specialistOutputs: TeamSpecialistOutput[] = [];
     let plan: Awaited<ReturnType<typeof planTeamConversation>> | null = null;
     let finalResponse: TeamFinalResponse | null = null;
@@ -1099,7 +1114,8 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
+              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              additionalTools: runtimeTools.tools,
             });
             specialistOutputs.push(output);
 
@@ -1156,7 +1172,8 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
+              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              additionalTools: runtimeTools.tools,
             });
           } else if (plan.strategy === "specialist_question") {
             const directQuestion =
@@ -1203,7 +1220,8 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
+              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              additionalTools: runtimeTools.tools,
             });
           }
 
