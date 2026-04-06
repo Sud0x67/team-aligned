@@ -30,7 +30,7 @@
 当前仓库已经包含以下可运行模块：
 
 - `apps/desktop`：Electron + React + Vite + Tailwind 的桌面端 MVP
-- `packages/agent-runtime`：本地 mock Agent runtime、run 控制与持久化
+- `packages/agent-runtime`：本地真实 Agent runtime、run 控制、工具层与持久化
 - `packages/shared`：共享类型、协议、命令解析与默认种子数据
 - `docs`：产品、架构、运行时、原型对齐与 MVP 文档
 
@@ -39,6 +39,7 @@
 - [产品定位](./docs/product.md)
 - [系统架构](./docs/architecture.md)
 - [Beta 计划](./docs/beta-plan.md)
+- [维护指南](./docs/maintenance-guidelines.md)
 - [运行时与存储](./docs/runtime-and-storage.md)
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)

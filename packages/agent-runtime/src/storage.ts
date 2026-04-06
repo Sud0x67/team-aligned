@@ -1325,19 +1325,19 @@ export class AppStorage {
       conversations: this.readConversations(),
       messages: this.readMessages(),
       runs: this.readRuns(),
-      attachments: this.readStructuredCollection<StoredAttachmentRecord>(
+      attachments: this.readCollection<StoredAttachmentRecord>(
         "attachments",
         "ORDER BY created_at ASC",
       ),
-      artifacts: this.readStructuredCollection<StoredArtifactRecord>(
+      artifacts: this.readCollection<StoredArtifactRecord>(
         "artifacts",
         "ORDER BY created_at DESC",
       ),
-      toolInvocations: this.readStructuredCollection<StoredToolInvocationRecord>(
+      toolInvocations: this.readCollection<StoredToolInvocationRecord>(
         "tool_invocations",
         "ORDER BY created_at ASC",
       ),
-      runSteps: this.readStructuredCollection<StoredRunStepRecord>(
+      runSteps: this.readCollection<StoredRunStepRecord>(
         "run_steps",
         "ORDER BY run_id ASC, step_index ASC",
       ),
@@ -1403,11 +1403,39 @@ export class AppStorage {
     const rows = this.db
       .prepare(`SELECT payload FROM ${tableName} ${orderClause}`.trim())
       .all() as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as T);
+    return rows.map((row) => this.parseStoredPayload<T>(row.payload));
   }
 
-  private readStructuredCollection<T>(tableName: string, orderClause = "") {
-    return this.readCollection<T>(tableName, orderClause);
+  private parseStoredPayload<T>(payload: string): T {
+    return JSON.parse(payload) as T;
+  }
+
+  private preferStructuredValue<T>(value: T | null | undefined, fallback: T) {
+    return value ?? fallback;
+  }
+
+  private preferBooleanFlag(value: number | null, fallback: boolean) {
+    return value === null ? fallback : value === 1;
+  }
+
+  private mergeRunMetadataPaths(
+    metadata: RunRecord["metadata"],
+    row: {
+      artifact_path: string | null;
+      transcript_path: string | null;
+      workspace_transcript_path: string | null;
+      memory_path: string | null;
+    },
+  ): RunRecord["metadata"] {
+    return {
+      ...(metadata ?? {}),
+      ...(row.artifact_path ? { artifactPath: row.artifact_path } : {}),
+      ...(row.transcript_path ? { transcriptPath: row.transcript_path } : {}),
+      ...(row.workspace_transcript_path
+        ? { workspaceTranscriptPath: row.workspace_transcript_path }
+        : {}),
+      ...(row.memory_path ? { memoryPath: row.memory_path } : {}),
+    };
   }
 
   private readProviders() {
@@ -1429,20 +1457,22 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as ProviderConfig;
+      const payload = this.parseStoredPayload<ProviderConfig>(row.payload);
       return {
         ...payload,
         id: (row.id || payload.id) as ProviderConfig["id"],
-        label: row.label ?? payload.label,
-        baseUrl: row.base_url ?? payload.baseUrl,
-        defaultModel: row.default_model ?? payload.defaultModel,
-        supportsToolCalling:
-          row.supports_tool_calling === null
-            ? payload.supportsToolCalling
-            : row.supports_tool_calling === 1,
-        supportsStreaming:
-          row.supports_streaming === null ? payload.supportsStreaming : row.supports_streaming === 1,
-        isActive: row.is_active === null ? payload.isActive : row.is_active === 1,
+        label: this.preferStructuredValue(row.label, payload.label),
+        baseUrl: this.preferStructuredValue(row.base_url, payload.baseUrl),
+        defaultModel: this.preferStructuredValue(row.default_model, payload.defaultModel),
+        supportsToolCalling: this.preferBooleanFlag(
+          row.supports_tool_calling,
+          payload.supportsToolCalling,
+        ),
+        supportsStreaming: this.preferBooleanFlag(
+          row.supports_streaming,
+          payload.supportsStreaming,
+        ),
+        isActive: this.preferBooleanFlag(row.is_active, payload.isActive),
       } satisfies ProviderConfig;
     });
   }
@@ -1466,16 +1496,16 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as AgentRecord;
+      const payload = this.parseStoredPayload<AgentRecord>(row.payload);
       return {
         ...payload,
         id: row.id || payload.id,
-        name: row.name ?? payload.name,
-        role: row.role ?? payload.role,
-        status: row.status ?? payload.status,
-        workspacePath: row.workspace_path ?? payload.workspacePath,
-        avatarPath: row.avatar_path ?? payload.avatarPath,
-        modelId: row.model_id ?? payload.modelId,
+        name: this.preferStructuredValue(row.name, payload.name),
+        role: this.preferStructuredValue(row.role, payload.role),
+        status: this.preferStructuredValue(row.status, payload.status),
+        workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
+        avatarPath: this.preferStructuredValue(row.avatar_path, payload.avatarPath),
+        modelId: this.preferStructuredValue(row.model_id, payload.modelId),
       } satisfies AgentRecord;
     });
   }
@@ -1497,14 +1527,14 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as TeamRecord;
+      const payload = this.parseStoredPayload<TeamRecord>(row.payload);
       return {
         ...payload,
         id: row.id || payload.id,
-        name: row.name ?? payload.name,
-        objective: row.objective ?? payload.objective,
-        workspacePath: row.workspace_path ?? payload.workspacePath,
-        avatarPath: row.avatar_path ?? payload.avatarPath,
+        name: this.preferStructuredValue(row.name, payload.name),
+        objective: this.preferStructuredValue(row.objective, payload.objective),
+        workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
+        avatarPath: this.preferStructuredValue(row.avatar_path, payload.avatarPath),
       } satisfies TeamRecord;
     });
   }
@@ -1529,17 +1559,20 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as NotificationRecord;
+      const payload = this.parseStoredPayload<NotificationRecord>(row.payload);
       return {
         ...payload,
         id: row.id || payload.id,
-        type: row.type ?? payload.type,
-        title: row.title ?? payload.title,
-        body: row.body ?? payload.body,
-        read: row.read === null ? payload.read : row.read === 1,
-        createdAt: row.created_at ?? payload.createdAt,
-        relatedConversationId: row.related_conversation_id ?? payload.relatedConversationId,
-        relatedRunId: row.related_run_id ?? payload.relatedRunId,
+        type: this.preferStructuredValue(row.type, payload.type),
+        title: this.preferStructuredValue(row.title, payload.title),
+        body: this.preferStructuredValue(row.body, payload.body),
+        read: this.preferBooleanFlag(row.read, payload.read),
+        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
+        relatedConversationId: this.preferStructuredValue(
+          row.related_conversation_id,
+          payload.relatedConversationId,
+        ),
+        relatedRunId: this.preferStructuredValue(row.related_run_id, payload.relatedRunId),
       } satisfies NotificationRecord;
     });
   }
@@ -1566,24 +1599,24 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as ConversationRecord;
+      const payload = this.parseStoredPayload<ConversationRecord>(row.payload);
       return {
         ...payload,
         id: row.id || payload.id,
-        kind: row.kind ?? payload.kind,
-        targetId: row.target_id ?? payload.targetId,
-        title: row.title ?? payload.title,
-        unread: row.unread ?? payload.unread,
-        lastMessage: row.last_message ?? payload.lastMessage,
-        lastActivityAt: row.last_activity_at ?? payload.lastActivityAt,
+        kind: this.preferStructuredValue(row.kind, payload.kind),
+        targetId: this.preferStructuredValue(row.target_id, payload.targetId),
+        title: this.preferStructuredValue(row.title, payload.title),
+        unread: this.preferStructuredValue(row.unread, payload.unread),
+        lastMessage: this.preferStructuredValue(row.last_message, payload.lastMessage),
+        lastActivityAt: this.preferStructuredValue(row.last_activity_at, payload.lastActivityAt),
         meta: {
           ...payload.meta,
-          activeSkill: row.active_skill ?? payload.meta.activeSkill,
-          pinnedMcp: row.pinned_mcp ?? payload.meta.pinnedMcp,
-          showInternalMessages:
-            row.show_internal_messages === null
-              ? payload.meta.showInternalMessages
-              : row.show_internal_messages === 1,
+          activeSkill: this.preferStructuredValue(row.active_skill, payload.meta.activeSkill),
+          pinnedMcp: this.preferStructuredValue(row.pinned_mcp, payload.meta.pinnedMcp),
+          showInternalMessages: this.preferBooleanFlag(
+            row.show_internal_messages,
+            payload.meta.showInternalMessages,
+          ),
         },
       } satisfies ConversationRecord;
     });
@@ -1612,20 +1645,20 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as MessageRecord;
+      const payload = this.parseStoredPayload<MessageRecord>(row.payload);
       return {
         ...payload,
         id: row.id || payload.id,
-        conversationId: row.conversation_id ?? payload.conversationId,
-        senderId: row.sender_id ?? payload.senderId,
-        senderName: row.sender_name ?? payload.senderName,
-        senderKind: row.sender_kind ?? payload.senderKind,
-        messageType: row.message_type ?? payload.messageType,
-        visibility: row.visibility ?? payload.visibility,
-        content: row.content ?? payload.content,
+        conversationId: this.preferStructuredValue(row.conversation_id, payload.conversationId),
+        senderId: this.preferStructuredValue(row.sender_id, payload.senderId),
+        senderName: this.preferStructuredValue(row.sender_name, payload.senderName),
+        senderKind: this.preferStructuredValue(row.sender_kind, payload.senderKind),
+        messageType: this.preferStructuredValue(row.message_type, payload.messageType),
+        visibility: this.preferStructuredValue(row.visibility, payload.visibility),
+        content: this.preferStructuredValue(row.content, payload.content),
         mentions: row.mentions_json ? (JSON.parse(row.mentions_json) as string[]) : payload.mentions,
-        createdAt: row.created_at ?? payload.createdAt,
-        runId: row.run_id ?? payload.runId,
+        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
+        runId: this.preferStructuredValue(row.run_id, payload.runId),
       } satisfies MessageRecord;
     });
   }
@@ -1657,32 +1690,24 @@ export class AppStorage {
     }>;
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload) as RunRecord;
+      const payload = this.parseStoredPayload<RunRecord>(row.payload);
       const metadata =
         row.last_error && !payload.metadata?.error
           ? { ...(payload.metadata ?? {}), error: row.last_error }
           : payload.metadata;
-      const normalizedMetadata = {
-        ...(metadata ?? {}),
-        ...(row.artifact_path ? { artifactPath: row.artifact_path } : {}),
-        ...(row.transcript_path ? { transcriptPath: row.transcript_path } : {}),
-        ...(row.workspace_transcript_path
-          ? { workspaceTranscriptPath: row.workspace_transcript_path }
-          : {}),
-        ...(row.memory_path ? { memoryPath: row.memory_path } : {}),
-      };
+      const normalizedMetadata = this.mergeRunMetadataPaths(metadata, row);
       return {
         ...payload,
         id: row.id || payload.id,
-        conversationId: row.conversation_id ?? payload.conversationId,
-        title: row.title ?? payload.title,
-        kind: row.kind ?? payload.kind,
-        status: row.status ?? payload.status,
-        actorId: row.actor_id ?? payload.actorId,
-        stepIndex: row.step_index ?? payload.stepIndex,
-        totalSteps: row.total_steps ?? payload.totalSteps,
-        createdAt: row.created_at ?? payload.createdAt,
-        updatedAt: row.updated_at ?? payload.updatedAt,
+        conversationId: this.preferStructuredValue(row.conversation_id, payload.conversationId),
+        title: this.preferStructuredValue(row.title, payload.title),
+        kind: this.preferStructuredValue(row.kind, payload.kind),
+        status: this.preferStructuredValue(row.status, payload.status),
+        actorId: this.preferStructuredValue(row.actor_id, payload.actorId),
+        stepIndex: this.preferStructuredValue(row.step_index, payload.stepIndex),
+        totalSteps: this.preferStructuredValue(row.total_steps, payload.totalSteps),
+        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
+        updatedAt: this.preferStructuredValue(row.updated_at, payload.updatedAt),
         metadata: normalizedMetadata,
       } satisfies RunRecord;
     });

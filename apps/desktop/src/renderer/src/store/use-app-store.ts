@@ -88,98 +88,70 @@ const emptySnapshot: AppSnapshot = {
   },
 };
 
-export const useAppStore = create<AppStore>((set) => ({
-  ...emptySnapshot,
-  bootstrapped: false,
-  loading: false,
-  commandSuggestions,
-  applySnapshot: (snapshot) => set({ ...snapshot, bootstrapped: true, loading: false }),
-  bootstrap: async () => {
+export const useAppStore = create<AppStore>((set) => {
+  const applySnapshot = (snapshot: AppSnapshot) =>
+    set({ ...snapshot, bootstrapped: true, loading: false });
+
+  const runSnapshotAction = async (action: () => Promise<AppSnapshot | undefined>) => {
+    const snapshot = await action();
+    if (snapshot) {
+      applySnapshot(snapshot);
+    } else {
+      set({ loading: false });
+    }
+  };
+
+  const runLoadingSnapshotAction = async (action: () => Promise<AppSnapshot | undefined>) => {
     set({ loading: true });
-    const snapshot = await window.teamaligned.bootstrap();
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  sendInput: async (payload) => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.sendInput(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  controlRun: async (payload) => {
-    const snapshot = await window.teamaligned.controlRun(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  createAgent: async (payload) => {
-    const snapshot = await window.teamaligned.createAgent(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  createTeam: async (payload) => {
-    const snapshot = await window.teamaligned.createTeam(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  refreshSkillCatalog: async () => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.refreshSkillCatalog();
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  installSkill: async (skillId) => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.installSkill(skillId);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  refreshMcpCatalog: async () => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.refreshMcpCatalog();
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  connectMcp: async (payload) => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.connectMcp(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  checkMcpHealth: async (serverId) => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.checkMcpHealth(serverId);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  disconnectMcp: async (serverId) => {
-    set({ loading: true });
-    const snapshot = await window.teamaligned.disconnectMcp(serverId);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  toggleExtension: async (extensionId) => {
-    const snapshot = await window.teamaligned.toggleExtension(extensionId);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateAgentSkills: async (payload) => {
-    const snapshot = await window.teamaligned.updateAgentSkills(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateAgentMcps: async (payload) => {
-    const snapshot = await window.teamaligned.updateAgentMcps(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateTeamMcps: async (payload) => {
-    const snapshot = await window.teamaligned.updateTeamMcps(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateSettings: async (payload) => {
-    const snapshot = await window.teamaligned.updateSettings(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateProfile: async (payload) => {
-    const snapshot = await window.teamaligned.updateProfile(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  updateProvider: async (payload) => {
-    const snapshot = await window.teamaligned.updateProvider(payload);
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
-  markNotificationsRead: async () => {
-    const snapshot = await window.teamaligned.markNotificationsRead();
-    set({ ...snapshot, bootstrapped: true, loading: false });
-  },
-  openWorkspace: async (path) => {
-    await window.teamaligned.openWorkspace(path);
-  },
-}));
+    await runSnapshotAction(action);
+  };
+
+  return {
+    ...emptySnapshot,
+    bootstrapped: false,
+    loading: false,
+    commandSuggestions,
+    applySnapshot,
+    bootstrap: async () => runLoadingSnapshotAction(() => window.teamaligned.bootstrap()),
+    sendInput: async (payload) =>
+      runLoadingSnapshotAction(() => window.teamaligned.sendInput(payload)),
+    controlRun: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.controlRun(payload)),
+    createAgent: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.createAgent(payload)),
+    createTeam: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.createTeam(payload)),
+    refreshSkillCatalog: async () =>
+      runLoadingSnapshotAction(() => window.teamaligned.refreshSkillCatalog()),
+    installSkill: async (skillId) =>
+      runLoadingSnapshotAction(() => window.teamaligned.installSkill(skillId)),
+    refreshMcpCatalog: async () =>
+      runLoadingSnapshotAction(() => window.teamaligned.refreshMcpCatalog()),
+    connectMcp: async (payload) =>
+      runLoadingSnapshotAction(() => window.teamaligned.connectMcp(payload)),
+    checkMcpHealth: async (serverId) =>
+      runLoadingSnapshotAction(() => window.teamaligned.checkMcpHealth(serverId)),
+    disconnectMcp: async (serverId) =>
+      runLoadingSnapshotAction(() => window.teamaligned.disconnectMcp(serverId)),
+    toggleExtension: async (extensionId) =>
+      runSnapshotAction(() => window.teamaligned.toggleExtension(extensionId)),
+    updateAgentSkills: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateAgentSkills(payload)),
+    updateAgentMcps: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateAgentMcps(payload)),
+    updateTeamMcps: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateTeamMcps(payload)),
+    updateSettings: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateSettings(payload)),
+    updateProfile: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateProfile(payload)),
+    updateProvider: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateProvider(payload)),
+    testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
+    markNotificationsRead: async () =>
+      runSnapshotAction(() => window.teamaligned.markNotificationsRead()),
+    openWorkspace: async (path) => {
+      await window.teamaligned.openWorkspace(path);
+    },
+  };
+});
