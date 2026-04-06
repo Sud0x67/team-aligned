@@ -1,538 +1,492 @@
 # 系统架构
 
-## 总体目标
+## 文档范围
 
-`teamaligned` 要做成一套本地可运行、结构清晰、方便维护的桌面应用架构：
+这份文档以当前仓库中的真实实现为准，不再描述“计划中的理想架构”。
 
-- 前台是聊天式桌面应用
-- 中台是本地 Agent 运行时
-- 底层是本地文件系统与 SQLite
+当前 `teamaligned` 已经是一套可运行的本地优先桌面应用，整体由四层组成：
 
-## 总体结构
+- Electron 桌面壳
+- React 渲染层
+- 本地 Agent Runtime
+- 本地持久层
+
+## 当前总览
 
 ```text
-Electron App
-├─ Renderer
-│  └─ React + Vite 聊天应用
-├─ Main Process
-│  ├─ 窗口与应用生命周期
-│  ├─ IPC 权限边界
-│  ├─ 本地能力代理
-│  └─ Runtime 管理
-└─ Local Runtime
-   ├─ DeepAgents / LangGraph Runtime
-   ├─ Provider Registry
-   ├─ Tool Layer
-   ├─ Skills Loader
-   ├─ MCP Client Layer
-   ├─ Session / Memory Services
-   └─ Persistence Services
+teamaligned
+├─ apps/desktop
+│  ├─ Electron Main
+│  ├─ Preload IPC Bridge
+│  └─ React Renderer
+├─ packages/agent-runtime
+│  ├─ TeamalignedRuntime
+│  ├─ DeepAgents / LangGraph 集成
+│  ├─ Team Runtime
+│  ├─ Skills / MCP Registry
+│  ├─ Tool Layer
+│  ├─ SQLite + Drizzle
+│  └─ File-backed Assets / Transcript / Workspace
+└─ packages/shared
+   ├─ 领域类型
+   ├─ 默认种子数据
+   ├─ slash command 解析
+   └─ IPC 共享协议
 ```
 
-## 仓库模块规划
+## 目录与职责
 
 ### `apps/desktop`
 
-负责桌面端壳层与用户界面：
+负责桌面端外壳与全部产品界面。
 
-- Electron main
-- preload bridge
+当前已包含：
+
+- Electron 主进程
+- preload IPC 桥接
 - React renderer
-- 页面路由与 UI 状态
-- 消息流渲染
+- 对话、管理、扩展、仪表盘、设置页面
+- 通知面板与个人资料弹窗
+- 聊天附件上传、图片预览、`@` 选择器、`/` 自动补全
 
 ### `packages/agent-runtime`
 
-负责 AI 运行时：
+负责本地运行时、工具接入和持久化。
 
-- DeepAgents 集成
-- LangChain 模型适配
-- LangGraph 执行流
-- 团队调度
-- 工具调用
-- run 生命周期
+当前已包含：
+
+- `TeamalignedRuntime` 主编排器
+- 单聊 DeepAgents 调用链
+- 群聊 manager / specialist 编排
+- Skills registry / 安装 / 激活 / 脚本执行
+- MCP registry / 连接 / 健康检查 / tool discovery
+- 本地工具层：文件、搜索、命令
+- SQLite 持久层与 Drizzle schema / migration
 
 ### `packages/shared`
 
-负责跨层共享定义：
+负责跨层共享的类型、默认值和协议。
 
-- 领域模型
-- IPC 协议
-- 配置 schema
-- 事件类型
-- 存储实体定义
+当前主要承载：
 
-## 结合原型后的前端信息架构
+- `AgentRecord`、`TeamRecord`、`ConversationRecord`、`RunRecord`
+- MCP / Skill / Provider / Attachment / Artifact 类型
+- 默认种子数据
+- slash command 解析与共享输入协议
 
-Figma 原型已经明确了第一版页面结构：
+## 前端信息架构
 
-- `/`：对话
+当前应用的主页面与 Figma 原型保持一致，已经落成以下结构：
+
+- `/`：会话
 - `/manage`：管理
 - `/extensions`：扩展
 - `/dashboard`：仪表盘
 - `/settings`：设置
 
-同时存在两个全局 UI 能力：
+同时存在两个全局浮层能力：
 
-- 通知下拉面板
+- 通知面板
 - 个人资料弹窗
 
-因此前端建议采用“两层结构”：
+### 当前聊天页结构
 
-### 第一层：全局应用壳
+聊天页当前采用两栏主布局：
+
+- 左侧：会话搜索 + 会话列表
+- 右侧：消息线程 + run 详情 + 输入区
+
+当前没有常驻右侧上下文面板。
+
+与旧文档不同的是，run 详情已经以卡片形式直接出现在聊天页中，而不是“后续再做”的规划项。
+
+### 当前管理页结构
+
+管理页已拆成两个子视图：
+
+- Agent 管理
+- 群组管理
+
+支持：
+
+- 创建 Agent
+- 创建群组
+- 配置头像
+- 配置 Agent Skill 白名单
+- 配置 Agent / Team MCP 白名单
+
+### 当前扩展页结构
+
+扩展页当前只保留扩展中心，分成两个 tab：
+
+- Skills
+- MCP
+
+支持：
+
+- 同步远端 catalog
+- 安装 Skill 到本地全局目录
+- 配置 MCP 连接
+- 健康检查
+- 查看 MCP 发现到的 tools
+
+### 当前设置页结构
+
+设置页当前承载四类配置：
+
+- 外观
+- 语言
+- 通知
+- 模型配置
+
+模型配置当前已支持：
+
+- OpenAI
+- Qwen（通过 DashScope OpenAI-compatible 接口）
+
+并且已经具备：
+
+- 参数校验
+- API Key 显隐
+- 连通性测试
+- 保存并启用反馈
+
+## 运行时总结构
+
+运行时入口是 `packages/agent-runtime/src/runtime.ts` 中的 `TeamalignedRuntime`。
+
+它负责：
+
+- 加载快照
+- 接收用户输入
+- 路由 slash command
+- 启动单聊 run / 群聊 run
+- 调度工具与 MCP
+- 写入持久层
+- 向 UI 推送最新 snapshot
+
+### 运行时分层
+
+```text
+TeamalignedRuntime
+├─ Snapshot / State Assembly
+├─ Single Chat Runtime
+│  ├─ DeepAgents
+│  ├─ LangChain ChatOpenAI
+│  ├─ LangGraph MemorySaver
+│  ├─ Skill Prompt Injection
+│  ├─ Skill Script Tools
+│  ├─ Workspace Tools
+│  └─ MCP Tools
+├─ Team Runtime
+│  ├─ Manager Planning
+│  ├─ Specialist Assignment
+│  ├─ User Contact Control
+│  └─ Final Summarization
+├─ Slash Command Router
+├─ Provider Validation / Connection Test
+├─ Skill Registry
+├─ MCP Registry + Runtime
+└─ Storage
+```
+
+## 单聊架构
+
+### 当前真实链路
+
+单聊不是 mock，而是已经接上真实模型调用链：
+
+- Provider 配置来自 `settings.json`
+- `deep-agent.ts` 负责创建 `ChatOpenAI`
+- `createDeepAgent` 负责 agent runtime
+- `MemorySaver` 提供 LangGraph 级别的短期状态保存
+- 会话历史会被裁剪后注入模型
+- 当前激活 Skill 的 `SKILL.md` 会进入 system prompt
+- 当前可用 MCP tools 与本地工具层会一并注入 agent
+
+### 单聊工具层
+
+当前单聊已经可用的工具包括：
+
+- workspace 列目录
+- 读取文本文件
+- 写入文本文件
+- `ripgrep` 搜索
+- 本地 shell 命令执行
+- Skill bundle 读取
+- Skill `scripts/` 执行
+- MCP discovered tools
+
+### 单聊交互能力
+
+当前单聊已支持：
+
+- 自然语言消息
+- 附件上传
+- 图片附件预览
+- slash command
+- `@` 选择器
+- `/` 自动补全
+- 流式输出
+- pause / resume / cancel
+
+## 群聊架构
+
+### 当前真实链路
+
+群聊已经不是脚本化演示，而是基于真实模型做的本地编排。
+
+当前流程：
+
+1. 用户消息进入 `TeamalignedRuntime`
+2. `team-runtime.ts` 生成 manager 规划
+3. 规划决定：
+   - `manager_direct`
+   - `specialist_question`
+   - `collaborate`
+4. specialist 被真实分配任务
+5. manager 汇总 specialist 结果后再对外回复
+
+### 群聊发言控制
+
+当前群聊已实现三种用户接触模式：
+
+- `none`
+- `manager_relay`
+- `specialist_direct`
+
+这意味着当前已经支持：
+
+- manager 默认对外发言
+- specialist 默认内部协作
+- manager 授权 specialist 直接 `@用户`
+
+### 群聊上下文
+
+当前群聊会综合这些信息进入规划与总结：
+
+- 群组目标
+- 当前阶段
+- 最近决策
+- 活跃任务
+- workspace 摘要
+- pinned artifacts
+- 最近公开消息
+
+### 群聊当前边界
+
+当前群聊已具备真实协作链路，但仍有边界：
+
+- 单聊流式输出已接入，群聊还不是完整逐 token 流式
+- 工具级权限仍是下一阶段能力
+- 更强的 checkpoint / failure recovery 仍待加强
+
+## Skills 架构
+
+### 当前实现
+
+Skills 已经采用“远端 registry + 本地全局安装 + Agent 白名单”的模式。
+
+当前能力包括：
+
+- 从 GitHub skills 仓库同步 catalog
+- 安装整个 skill 目录到 `~/teamaligned/skills`
+- 读取 `SKILL.md`
+- 允许 Agent 配置 skill 白名单
+- `/skills` 查看和切换当前会话 skill
+- 将 Skill 定义注入到单聊 prompt
+- 将 Skill `scripts/` 转成 runtime tools
+
+### 当前边界
+
+当前 Skill 已经参与 runtime，但还没有独立的“Skill 执行过程 UI”。
+
+## MCP 架构
+
+### 当前支持范围
+
+第一版 MCP 当前明确支持：
+
+- `stdio npx` 型 MCP
+- `HTTP + headers` 型 MCP
+
+当前明确不支持：
+
+- OAuth 型 MCP
+
+### 当前能力
+
+MCP 当前已经具备：
+
+- 从 GitHub MCP registry 同步 catalog
+- 本地保存连接配置
+- 本地连接健康检查
+- tool discovery
+- Agent / Team 白名单
+- 将 discovered tools 注入 DeepAgents runtime
+- `/mcp`、`/mcp use`、`/mcp tools`
+
+### 当前边界
+
+MCP 当前尚未完成：
+
+- tool 级白名单
+- OAuth 远端授权流
+- 更强的服务模板与专用适配
+
+## 持久层架构
+
+当前持久层已经明确拆成三层：
+
+### 1. 配置层
+
+路径：`~/teamaligned/settings.json`
 
 负责：
 
-- 左侧主导航
-- 顶部标题栏
-- 通知入口
-- 个人资料入口
-- 主题切换
-- 语言切换相关状态注入
+- 外观
+- 语言
+- 通知开关
+- 当前激活 provider
+- provider 列表
+- 个人资料
 
-### 第二层：页面级功能区
+### 2. 结构化运行态
 
-不同页面承载不同任务：
+路径：`~/teamaligned/app.db`
 
-- 对话页：会话列表 + 聊天主线程
-- 管理页：Agent 管理 / 群组管理
-- 扩展页：Skills / MCP
-- 仪表盘：概览统计
-- 设置页：偏好与模型配置
+当前主要表包括：
 
-## 与原始产品设想的差异与统一
+- `settings_entries`
+- `providers`
+- `agents`
+- `teams`
+- `conversations`
+- `messages`
+- `runs`
+- `notifications`
+- `extensions`
+- `skill_catalog`
+- `mcp_catalog`
+- `mcp_connections`
+- `attachments`
+- `artifacts`
+- `tool_invocations`
+- `run_steps`
 
-我们之前定义过“三栏主布局：会话列表 / 主线程 / 右侧上下文”。
+其中 `agents / teams / providers / notifications / conversations / messages / runs`
+都已经具备正式结构化列与索引，不再只是纯 payload 存储。
 
-而当前 Figma 原型落地出来的是：
+### 3. 文件层
 
-- 左侧全局导航
-- 中左会话列表
-- 中右聊天线程
+路径位于 `~/teamaligned` 下的多个目录：
 
-右侧常驻上下文栏暂时没有出现在主稿中。
+- `transcripts/`
+- `workspaces/agents/*`
+- `workspaces/teams/*`
+- `avatars/profile`
+- `avatars/agents`
+- `avatars/teams`
+- `artifacts/attachments`
+- `skills/*`
 
-为了兼顾原型和长期产品方向，建议这样统一：
+### 历史对话存储方式
 
-- 当前实现阶段以原型的两级聊天布局为准
-- 右侧上下文能力改成可折叠抽屉、面板或详情页
-- 当会话复杂度上升时，再升级为可停靠的上下文侧栏
+当前历史对话有两份：
 
-这样不会破坏原型已有的简洁度，也保留了未来扩展空间。
+- SQLite `messages` 作为主查询源
+- JSONL transcript 作为审计流水
 
-## 运行时边界
+也就是说：
 
-### Renderer
+- UI 加载历史消息主要读 SQLite
+- 导出、审计、人工检查依赖 transcript 文件
 
-Renderer 负责：
+## 数据与页面的映射
 
-- 会话展示与输入
-- 设置与管理页面
-- 通知与状态展示
-- 流式消息呈现
-- 结构化事件渲染
+### 会话页
 
-Renderer 不应直接访问：
+依赖：
 
-- 文件系统
-- shell
-- 密钥
-- 原生 Node 权限
+- `conversations`
+- `messages`
+- `runs`
+- `run_steps`
+- `attachments`
+- `artifacts`
+- `tool_invocations`
 
-### Electron Main Process
+### 管理页
 
-Main Process 负责：
+依赖：
 
-- 创建窗口
-- 安全 IPC
-- 本地系统能力访问
-- Runtime 生命周期
-- 秘钥读写
+- `agents`
+- `teams`
+- Skill 白名单
+- MCP 白名单
 
-### Local Runtime
+### 扩展页
 
-Runtime 负责：
+依赖：
 
-- 加载 Agent / Team
-- 选择 provider / model
-- 调用工具
-- 调度 subagent
-- 执行技能
-- 接入 MCP
-- 记录运行与产物
+- `skill_catalog`
+- `mcp_catalog`
+- `mcp_connections`
+- 本地 `skills/` 安装目录
 
-## Agent 运行模型
+### 仪表盘
 
-### 单 Agent 私聊
+依赖：
 
-当前选中的 Agent 作为主执行入口，直接响应用户请求。
+- `runs`
+- `conversations`
+- `agents`
+- `teams`
+- `notifications`
 
-在单聊中，系统需要同时支持两类输入：
+### 设置页
 
-- 自然语言请求
-- 结构化命令输入
+依赖：
 
-### 单聊命令式交互
+- `settings.json`
+- provider 连通性测试接口
 
-为了支持更高效率的专业操作，单聊线程需要支持 slash command 风格输入。
+## 当前已经具备的能力
 
-第一批命令建议包括：
+截至当前版本，项目已经具备以下核心能力：
 
-- `/skills`
-- `/command`
-- `/mcp`
-- `/pause`
-- `/resume`
-- `/cancel`
+- Electron 桌面应用可运行
+- Figma 对齐后的核心 UI 已落成
+- 单聊真实模型调用
+- 群聊真实 manager / specialist 编排
+- slash command：`/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel`
+- Skills registry / 安装 / 激活 / 脚本执行
+- MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入
+- workspace 文件 / 搜索 / 命令工具层
+- 附件上传与图片预览
+- run 详情、artifact、attachment、tool invocation 可视化
+- `settings.json` + `app.db` + 文件层三层持久化
+- Drizzle schema 与 migration
 
-这些命令不应完全依赖大模型解析，而应优先进入本地命令路由层。
+## 当前明确尚未完成的能力
 
-建议语义如下：
+当前还没有完成，或仅完成一部分的能力包括：
 
-#### `/skills`
+- MCP tool 级白名单
+- OAuth 型 MCP 授权流
+- 更完整的导出与备份
+- 全文搜索
+- 更强的群聊失败恢复与 checkpoint
+- 更系统的测试体系
+- 打包、签名、发布链路
 
-用于列出、选择或显式调用某个 skill。
+## 近期建议
 
-示例：
+如果后续继续开发，建议优先顺序是：
 
-- `/skills`
-- `/skills summarize`
-- `/skills planner 请为这个项目拆解任务`
+1. MCP tool 级白名单
+2. 导出 / transcript / artifact 打包
+3. 全文搜索
+4. 测试与发布链路
 
-#### `/command`
-
-用于让当前 Agent 在本地 workspace 中执行终端命令。
-
-示例：
-
-- `/command pwd`
-- `/command npm test`
-- `/command rg "TODO" src`
-
-#### `/mcp`
-
-用于列出 MCP 服务、选择服务，或调用某个 MCP tool。
-
-示例：
-
-- `/mcp`
-- `/mcp github`
-- `/mcp github list_issues`
-
-#### `/pause` / `/resume` / `/cancel`
-
-用于控制当前复杂任务的运行状态。
-
-这些命令本质上是 run controller 的显式控制接口。
-
-### Team 群聊
-
-Team 群聊由 manager agent 对外统一发言，并在内部：
-
-- 自己回答
-- 调用 specialist subagent
-- 调用工具
-- 访问 workspace
-- 调用 MCP
-
-同时，群组模式需要比单聊更强的通信能力。
-
-### 群聊后端的设计原则
-
-群聊后端不应被设计成传统聊天室服务，而应被设计成本地优先的任务编排后端。
-
-建议坚持：
-
-- local-first
-- manager 中心化调度
-- 主线程与内部线程分离
-- 所有关键事件可审计、可恢复、可回放
-- 工具、MCP、memory、artifact 全部纳入统一运行时
-
-### 群组内多 Agent 交互模型
-
-群组中的 Agent 不只是“被动执行者”，而应该能够：
-
-- 互相发送消息
-- 互相 `@`
-- 感知当前群组共享上下文
-- 在必要时向用户同步中间结论
-
-建议把群组通信拆成两层：
-
-#### 公开线程通信
-
-对用户可见，展示在群聊主线程中。
-
-适合：
-
-- Agent 回应用户
-- Agent 在群里 `@` 另一个 Agent
-- Agent 汇报阶段性进展
-- manager 汇总团队结论
-
-#### 受控的 specialist -> user 升级
-
-specialist 允许直接 `@用户`，但不应是默认行为。
-
-建议运行时中把它当作一次升级动作处理：
-
-- specialist 先提交 `needs_user_input`
-- manager 决定是否转述
-- 只有在确有必要时，manager 才授权 specialist 直接对用户发言
-
-这样既保留真实团队协作感，也避免主线程失控。
-
-#### 内部线程通信
-
-对用户默认折叠，只在 run 详情中展开。
-
-适合：
-
-- manager 分派 specialist
-- specialist 互相同步
-- tool call / MCP call 结果传递
-- 澄清问题的内部汇总
-
-## 群组运行时建议结构
-
-建议把群组运行时拆成下面几个本地模块：
-
-```text
-Team Ingress
-├─ 接收用户消息
-├─ 创建 team run
-└─ 路由到 team orchestrator
-
-Team Orchestrator
-├─ 读取共享上下文
-├─ 运行 manager 规划
-├─ 分派 specialist
-├─ 调用工具 / MCP
-└─ 汇总最终回复
-
-Context Services
-├─ shared context
-├─ conversation summary
-└─ agent private memory
-
-Execution Services
-├─ tool layer
-├─ skills loader
-├─ MCP client layer
-└─ run controller
-
-Persistence Services
-├─ messages
-├─ team_runs
-├─ run_steps
-├─ assignments
-├─ artifacts
-└─ context snapshots
-```
-
-### 建议执行流程
-
-```text
-用户消息
-→ Team Ingress
-→ Context Builder
-→ Manager 规划
-→ Specialist / Tool / MCP
-→ Manager 汇总
-→ 主线程回复用户
-→ 持久化消息、状态、产物、记忆
-```
-
-### 建议存储边界
-
-至少应明确区分：
-
-- public messages
-- internal messages
-- run records
-- run steps
-- assignments
-- artifacts
-- context snapshots
-
-这样后续才能稳定支持：
-
-- 暂停 / 恢复 / 取消
-- run 回放
-- artifact 浏览
-- 群组上下文摘要
-
-#### 内部协调通信
-
-默认不在主线程完整展开，但可在 run 详情中查看。
-
-适合：
-
-- 子任务交接
-- 中间推理
-- 工具结果转发
-- manager 与 specialist 的内部协调
-
-这样既保留复杂协作能力，又不让主线程过度噪声化。
-
-### 群组上下文装配
-
-每个加入群组会话的 Agent 在执行前都应收到统一的 group context bundle，至少包含：
-
-- 群组名称与目标
-- 群组成员列表与角色
-- 当前会话最近消息
-- pinned 决策与共享记忆
-- 当前活跃任务
-- 当前 workspace 摘要
-- 当前运行中的 run 简述
-
-在此基础上，每个 Agent 再叠加自己的：
-
-- 私有 memory
-- 私有 skills
-- 私有 MCP 可用范围
-- 私有 workspace
-
-## Provider 架构
-
-第一版只支持两个 provider：
-
-- OpenAI
-- Qwen
-
-每个 provider 通过统一注册结构接入：
-
-- `id`
-- `label`
-- `apiKey`
-- `baseURL`
-- `defaultModel`
-- `supportsToolCalling`
-- `supportsStreaming`
-
-结合原型中的设置页，建议把 provider 配置拆成：
-
-- 供应商
-- Base URL
-- API Key
-- 默认模型
-
-## 工具体系
-
-第一版工具层包含：
-
-- 文件工具
-- 终端工具
-- 搜索工具
-- MCP 工具
-- Skills
-
-其中搜索能力不绑定模型厂商，而是提供统一的产品级 `internet_search` 工具。
-
-## 输入解析与任务控制层
-
-为了支撑复杂交互，建议在 Renderer 与 Runtime 之间加入一层明确的输入解析器。
-
-```text
-用户输入
-→ Input Parser
-→ Intent Router
-→ Chat Message / Slash Command / Run Control
-→ Runtime Dispatcher
-```
-
-其中：
-
-- 普通文本进入标准对话链路
-- slash command 进入本地命令路由
-- 运行控制命令直接进入 run controller
-
-## Run 状态机
-
-复杂任务需要明确的状态机，而不是只有“运行中”与“完成”。
-
-建议 run 生命周期至少支持：
-
-- `queued`
-- `running`
-- `pausing`
-- `paused`
-- `resuming`
-- `completed`
-- `failed`
-- `cancelled`
-
-### 暂停语义
-
-第一版建议实现“协作式暂停”：
-
-- 在 step 边界暂停
-- 在子 Agent 调度前暂停
-- 在下一次工具调用前暂停
-- 对可控的终端任务尝试暂停或中断并保存上下文
-
-这比一开始强行实现完全抢占式暂停更稳妥。
-
-## 群组编排层建议
-
-群组编排建议在 `packages/agent-runtime` 中单独抽出 team orchestrator，职责包括：
-
-- 维护群组共享上下文
-- 决定由谁响应
-- 处理 Agent 间 `@`
-- 跟踪子任务分配
-- 汇总公开输出
-- 向 Renderer 推送多 Agent 事件
-
-## IPC 设计建议
-
-Renderer 不应调用“原始系统函数”，而应调用“应用语义 API”。
-
-建议优先定义如下 IPC 意图：
-
-- `chat.listRooms`
-- `chat.loadMessages`
-- `chat.sendMessage`
-- `chat.parseInput`
-- `agents.list`
-- `agents.create`
-- `teams.list`
-- `teams.create`
-- `extensions.listSkills`
-- `extensions.listMcpServers`
-- `settings.load`
-- `settings.save`
-- `providers.testConnection`
-- `runs.listByConversation`
-- `runs.pause`
-- `runs.resume`
-- `runs.cancel`
-- `runs.loadDetails`
-- `teams.loadContext`
-
-## 事件流建议
-
-为了支撑聊天页和通知中心，运行时建议向 Renderer 推送统一事件流：
-
-- 新消息
-- run 开始
-- run 完成
-- run 失败
-- run 暂停
-- run 恢复
-- artifact 生成
-- 被提及
-- Agent 状态变化
-- Agent 间消息
-- 群组上下文更新
-
-这样 UI 可以统一驱动：
-
-- 聊天气泡
-- 顶部通知点
-- 通知下拉
-- 仪表盘统计
-- 运行控制条
-- 群组内部协作视图
+这几项完成后，系统会从“高级可体验原型”更进一步走向“可长期使用的本地应用”。
