@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Hash, Sparkles } from "lucide-react";
 import type { AttachmentAssetRecord } from "@shared";
+import { useLocation } from "react-router-dom";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
@@ -10,6 +11,7 @@ import { ChatRunDetails } from "../components/chat/chat-run-details";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 
 export function ChatPage() {
+  const location = useLocation();
   const {
     conversations,
     messages,
@@ -25,10 +27,18 @@ export function ChatPage() {
     settings,
   } = useAppStore();
   const t = createTranslator(settings.language);
+  const requestedConversationId =
+    ((location.state as { conversationId?: string } | null)?.conversationId ?? "").trim();
 
   const [activeConversationId, setActiveConversationId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [internalVisible, setInternalVisible] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!requestedConversationId) return;
+    if (!conversations.some((item) => item.id === requestedConversationId)) return;
+    setActiveConversationId(requestedConversationId);
+  }, [requestedConversationId, conversations]);
 
   useEffect(() => {
     if (!activeConversationId && conversations.length > 0) {

@@ -38,6 +38,7 @@
 
 - [产品定位](./docs/product.md)
 - [系统架构](./docs/architecture.md)
+- [Beta 计划](./docs/beta-plan.md)
 - [运行时与存储](./docs/runtime-and-storage.md)
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)
@@ -47,6 +48,18 @@
 - [MVP 计划](./docs/mvp-plan.md)
 - [路线与 TODO](./docs/roadmap.md)
 - [开发 TODO](./docs/todo.md)
+
+## 当前阶段
+
+当前阶段的目标已经从“继续加功能”切换为“打磨出真正可用的 beta 版本”：
+
+- 完善现有功能的用户使用链路
+- 修复用户链路上的体验问题和 bug
+- 清理中间产物，收口代码结构
+
+阶段计划见：
+
+- [Beta 计划](./docs/beta-plan.md)
 
 ## 当前已实现
 

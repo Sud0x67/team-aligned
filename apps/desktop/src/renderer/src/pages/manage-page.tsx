@@ -111,6 +111,7 @@ export function ManagePage() {
   const {
     agents,
     teams,
+    conversations,
     runs,
     skillCatalog,
     mcpCatalog,
@@ -176,6 +177,15 @@ export function ManagePage() {
     );
     return mcpCatalog.filter((server) => connectedIds.has(server.id));
   }, [mcpCatalog, mcpConnections]);
+
+  const openConversation = (input: { kind: "agent" | "team"; targetId: string }) => {
+    const conversation = conversations.find(
+      (item) => item.kind === input.kind && item.targetId === input.targetId,
+    );
+    navigate("/", {
+      state: conversation ? { conversationId: conversation.id } : undefined,
+    });
+  };
 
   const submitAgent = async () => {
     if (!agentForm.name.trim() || !agentForm.role.trim()) return;
@@ -586,7 +596,7 @@ export function ManagePage() {
                         {t.manage("manageAction")}
                       </button>
                       <button
-                        onClick={() => navigate("/")}
+                        onClick={() => openConversation({ kind: "team", targetId: team.id })}
                         className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-3 py-2 text-[13px] text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_18%,transparent)]"
                       >
                         <MessageSquare className="h-3.5 w-3.5" />
