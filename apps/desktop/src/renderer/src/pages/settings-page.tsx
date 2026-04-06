@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Languages,
+  AlertCircle,
   LoaderCircle,
   MoonStar,
   SunMedium,
@@ -94,12 +95,14 @@ function ToggleSwitch({
 }
 
 export function SettingsPage() {
-  const { settings, providers, updateSettings, updateProvider } = useAppStore();
+  const { settings, providers, updateSettings, updateProvider, testProviderConnection } = useAppStore();
   const t = createTranslator(settings.language);
 
   const [providerForms, setProviderForms] = useState(providers);
   const [showApiKey, setShowApiKey] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [providerMessage, setProviderMessage] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
     providers.find((provider) => provider.isActive)?.id ?? providers[0]?.id ?? "openai",
   );
@@ -117,6 +120,9 @@ export function SettingsPage() {
 
   useEffect(() => {
     setShowApiKey(false);
+    setProviderMessage(null);
+    setTestState("idle");
+    setSaveState("idle");
   }, [selectedProviderId]);
 
   useEffect(() => {
@@ -147,8 +153,60 @@ export function SettingsPage() {
   const selectedProvider =
     providerForms.find((provider) => provider.id === selectedProviderId) ?? providerForms[0] ?? null;
 
+  const providerValidationIssues = selectedProvider
+    ? [
+        !selectedProvider.baseUrl.trim() ? "请填写 Base URL。" : null,
+        selectedProvider.baseUrl.trim() &&
+        !/^https?:\/\//i.test(selectedProvider.baseUrl.trim())
+          ? "Base URL 格式无效，请填写完整的 http(s) 地址。"
+          : null,
+        !selectedProvider.defaultModel.trim() ? "请填写模型名称。" : null,
+        !selectedProvider.apiKey.trim() ||
+        selectedProvider.apiKey === "sk-qwen-demo-key" ||
+        selectedProvider.apiKey === "sk-openai-demo-key"
+          ? selectedProvider?.id === "qwen"
+            ? "请填写真实的百炼 API Key。"
+            : "请填写真实的 OpenAI API Key。"
+          : null,
+        !selectedProvider.supportsToolCalling ? "当前 provider 未开启工具调用，DeepAgents 无法正常工作。" : null,
+      ].filter(Boolean) as string[]
+    : [];
+
+  const runProviderTest = async () => {
+    if (!selectedProvider) return false;
+    if (providerValidationIssues.length > 0) {
+      setProviderMessage(
+        `${t.settings("providerValidationTitle")}\n${providerValidationIssues.map((issue) => `- ${issue}`).join("\n")}`,
+      );
+      setTestState("error");
+      return false;
+    }
+
+    setTestState("testing");
+    setProviderMessage(null);
+    const result = await testProviderConnection({
+      id: selectedProvider.id,
+      label: selectedProvider.label,
+      baseUrl: selectedProvider.baseUrl,
+      apiKey: selectedProvider.apiKey,
+      defaultModel: selectedProvider.defaultModel,
+      supportsToolCalling: selectedProvider.supportsToolCalling,
+      supportsStreaming: selectedProvider.supportsStreaming,
+    });
+    setTestState(result.ok ? "success" : "error");
+    setProviderMessage(
+      `${result.ok ? t.settings("providerConnectionOk") : t.settings("providerConnectionFailed")}${
+        result.latencyMs ? ` · ${t.settings("providerLatency")} ${result.latencyMs}ms` : ""
+      }\n${result.message}`,
+    );
+    return result.ok;
+  };
+
   const handleSaveProvider = async () => {
     if (!selectedProvider || saveState === "saving") return;
+
+    const ok = await runProviderTest();
+    if (!ok) return;
 
     setSaveState("saving");
     await updateProvider({
@@ -345,6 +403,20 @@ export function SettingsPage() {
 
                     <div className="flex gap-3">
                       <button
+                        onClick={() => void runProviderTest()}
+                        disabled={testState === "testing" || saveState === "saving"}
+                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm font-medium text-[var(--foreground)] transition hover:border-[color-mix(in_srgb,var(--primary)_24%,transparent)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {testState === "testing" ? (
+                          <>
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                            {t.settings("testingProvider")}
+                          </>
+                        ) : (
+                          t.settings("testProvider")
+                        )}
+                      </button>
+                      <button
                         onClick={() => void handleSaveProvider()}
                         disabled={saveState === "saving"}
                         className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white transition-all duration-300 ${
@@ -368,6 +440,25 @@ export function SettingsPage() {
                         )}
                       </button>
                     </div>
+
+                    {providerMessage ? (
+                      <div
+                        className={`rounded-[20px] border px-4 py-3 text-sm leading-7 ${
+                          testState === "success"
+                            ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700"
+                            : "border-rose-500/20 bg-rose-500/5 text-rose-700"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {testState === "success" ? (
+                            <Check className="mt-0.5 h-4 w-4 shrink-0" />
+                          ) : (
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                          )}
+                          <p className="whitespace-pre-wrap">{providerMessage}</p>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

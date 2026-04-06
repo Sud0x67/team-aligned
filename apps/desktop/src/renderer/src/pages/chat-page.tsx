@@ -18,6 +18,8 @@ export function ChatPage() {
     artifacts,
     toolInvocations,
     runSteps,
+    agents,
+    teams,
     sendInput,
     controlRun,
     settings,
@@ -93,6 +95,21 @@ export function ChatPage() {
         (!detailRunId || invocation.runId === detailRunId),
     );
   }, [activeConversation, detailRunId, toolInvocations]);
+
+  const mentionCandidates = useMemo(() => {
+    if (!activeConversation) return [];
+    if (activeConversation.kind === "agent") {
+      return agents
+        .filter((agent) => agent.id === activeConversation.targetId)
+        .map((agent) => ({ id: agent.id, name: agent.name, role: agent.role }));
+    }
+
+    const team = teams.find((item) => item.id === activeConversation.targetId);
+    if (!team) return [];
+    return agents
+      .filter((agent) => team.memberIds.includes(agent.id))
+      .map((agent) => ({ id: agent.id, name: agent.name, role: agent.role }));
+  }, [activeConversation, agents, teams]);
 
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
@@ -220,6 +237,7 @@ export function ChatPage() {
               <ChatComposer
                 conversationId={activeConversation.id}
                 onSend={handleSend}
+                mentionCandidates={mentionCandidates}
               />
             </div>
           </>

@@ -5,6 +5,8 @@ import type {
   ConnectMcpInput,
   CreateAgentInput,
   CreateTeamInput,
+  ProviderConnectionTestInput,
+  ProviderConnectionTestResult,
   RunControlPayload,
   SendInputPayload,
   UpdateAgentSkillsInput,
@@ -37,6 +39,7 @@ type AppStore = AppSnapshot & {
   updateSettings: (payload: UpdateSettingsInput) => Promise<void>;
   updateProfile: (payload: UpdateProfileInput) => Promise<void>;
   updateProvider: (payload: UpdateProviderInput) => Promise<void>;
+  testProviderConnection: (payload: ProviderConnectionTestInput) => Promise<ProviderConnectionTestResult>;
   markNotificationsRead: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   applySnapshot: (snapshot: AppSnapshot) => void;
@@ -171,6 +174,7 @@ export const useAppStore = create<AppStore>((set) => ({
     const snapshot = await window.teamaligned.updateProvider(payload);
     set({ ...snapshot, bootstrapped: true, loading: false });
   },
+  testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
   markNotificationsRead: async () => {
     const snapshot = await window.teamaligned.markNotificationsRead();
     set({ ...snapshot, bootstrapped: true, loading: false });

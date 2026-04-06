@@ -13,6 +13,7 @@ import type {
   ConversationRecord,
   McpCatalogRecord,
   MessageVisibility,
+  ProviderConnectionTestInput,
   ProviderConfig,
   RunControlPayload,
   SaveAttachmentAssetInput,
@@ -29,7 +30,11 @@ import type {
   UpdateTeamMcpsInput,
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
-import { invokeSingleChatDeepAgent, validateProviderForSingleChat } from "./deep-agent.ts";
+import {
+  invokeSingleChatDeepAgent,
+  testProviderConnection as runProviderConnectionTest,
+  validateProviderForSingleChat,
+} from "./deep-agent.ts";
 import {
   fetchSkillCatalog,
   installSkillFromRegistry,
@@ -552,6 +557,10 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async testProviderConnection(payload: ProviderConnectionTestInput) {
+    return runProviderConnectionTest(payload);
+  }
+
   async saveAvatarAsset(input: {
     scope: AvatarAssetScope;
     dataUrl: string;
@@ -824,6 +833,7 @@ export class TeamalignedRuntime extends EventEmitter {
       activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id)
         ? readInstalledSkillDefinition(activeSkillRecord)
         : null;
+    const transcriptPaths = this.storage.getConversationTranscriptPaths(conversation.id);
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
       attachmentsRoot: this.storage.attachmentsRoot,
@@ -875,6 +885,49 @@ export class TeamalignedRuntime extends EventEmitter {
             onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
             additionalTools: runtimeTools.tools,
             runtimeToolSummary: runtimeTools.summary,
+            onTextStream: async (aggregatedText) => {
+              const currentRun = this.storage.getRun(runId);
+              if (!currentRun || currentRun.status === "cancelled") return;
+
+              const existingMessageId = currentRun.metadata?.streamMessageId;
+              const baseMetadata = {
+                skill: activeSkillRecord?.id ?? activeSkill,
+                skillLabel: activeSkillLabel,
+                streaming: true,
+              };
+
+              if (typeof existingMessageId === "string") {
+                this.storage.updateMessage(existingMessageId, {
+                  content: aggregatedText,
+                  metadata: baseMetadata,
+                });
+              } else {
+                const message = this.storage.addMessage(
+                  {
+                    conversationId: conversation.id,
+                    senderId: agent.id,
+                    senderName: agent.name,
+                    senderKind: "agent",
+                    messageType: "agent",
+                    visibility: "public",
+                    content: aggregatedText,
+                    mentions: ["user"],
+                    runId,
+                    metadata: baseMetadata,
+                    createdAt: Date.now(),
+                  },
+                  { skipTranscript: true },
+                );
+                this.storage.updateRun(runId, {
+                  metadata: {
+                    ...(currentRun.metadata ?? {}),
+                    streamMessageId: message.id,
+                  },
+                });
+              }
+
+              this.emitSnapshot();
+            },
           });
 
           if (this.storage.getRun(runId)?.status === "cancelled") {
@@ -895,18 +948,44 @@ export class TeamalignedRuntime extends EventEmitter {
             "memory/MEMORY.md",
             `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response)}`,
           );
-          this.storage.addMessage({
-            conversationId: conversation.id,
-            senderId: agent.id,
-            senderName: agent.name,
-            senderKind: "agent",
-            messageType: "agent",
-            visibility: "public",
-            content: response,
-            mentions: ["user"],
-            runId,
-            metadata: { skill: activeSkillRecord?.id ?? activeSkill, skillLabel: activeSkillLabel },
-            createdAt: Date.now(),
+          const currentRun = this.storage.getRun(runId);
+          const streamMessageId = currentRun?.metadata?.streamMessageId;
+          if (typeof streamMessageId === "string") {
+            this.storage.updateMessage(
+              streamMessageId,
+              {
+                content: response,
+                metadata: {
+                  skill: activeSkillRecord?.id ?? activeSkill,
+                  skillLabel: activeSkillLabel,
+                  streaming: false,
+                },
+              },
+              { appendTranscript: true },
+            );
+          } else {
+            this.storage.addMessage({
+              conversationId: conversation.id,
+              senderId: agent.id,
+              senderName: agent.name,
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content: response,
+              mentions: ["user"],
+              runId,
+              metadata: { skill: activeSkillRecord?.id ?? activeSkill, skillLabel: activeSkillLabel },
+              createdAt: Date.now(),
+            });
+          }
+          this.storage.updateRun(runId, {
+            metadata: {
+              ...(currentRun?.metadata ?? {}),
+              artifactPath,
+              memoryPath,
+              transcriptPath: transcriptPaths.globalTranscriptPath,
+              workspaceTranscriptPath: transcriptPaths.workspaceTranscriptPath,
+            },
           });
           this.addRunMessage(
             conversation.id,
@@ -1309,6 +1388,14 @@ export class TeamalignedRuntime extends EventEmitter {
             `群组协作产物已写入：${artifactPath}\n共享记忆已更新：${sharedMemoryPath}`,
             "system",
           );
+          const currentRun = this.storage.getRun(runId);
+          this.storage.updateRun(runId, {
+            metadata: {
+              ...(currentRun?.metadata ?? {}),
+              artifactPath,
+              memoryPath: sharedMemoryPath,
+            },
+          });
         },
       },
     ];
@@ -1395,6 +1482,7 @@ export class TeamalignedRuntime extends EventEmitter {
     actorId: string;
     steps: RunStep[];
   }) {
+    const transcriptPaths = this.storage.getConversationTranscriptPaths(input.conversationId);
     this.storage.createRun({
       id: input.runId,
       conversationId: input.conversationId,
@@ -1404,7 +1492,11 @@ export class TeamalignedRuntime extends EventEmitter {
       actorId: input.actorId,
       stepIndex: 0,
       totalSteps: input.steps.length,
-      metadata: { title: input.title },
+      metadata: {
+        title: input.title,
+        transcriptPath: transcriptPaths.globalTranscriptPath,
+        workspaceTranscriptPath: transcriptPaths.workspaceTranscriptPath,
+      },
     });
     this.storage.initializeRunSteps({
       runId: input.runId,
@@ -1592,6 +1684,13 @@ export class TeamalignedRuntime extends EventEmitter {
             exitCode: code ?? 0,
           },
         });
+        const currentRun = this.storage.getRun(runId);
+        this.storage.updateRun(runId, {
+          metadata: {
+            ...(currentRun?.metadata ?? {}),
+            artifactPath,
+          },
+        });
 
         this.storage.addMessage({
           conversationId,
@@ -1605,7 +1704,13 @@ export class TeamalignedRuntime extends EventEmitter {
           }`,
           mentions: [],
           runId,
-          metadata: { code, shellCommand, workspacePath },
+          metadata: {
+            code,
+            shellCommand,
+            workspacePath,
+            artifactPath,
+            cardType: "command_result",
+          },
           createdAt: Date.now(),
         });
 

@@ -435,7 +435,7 @@ export class AppStorage {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  addMessage(input: Omit<MessageRecord, "id"> & { id?: string }) {
+  addMessage(input: Omit<MessageRecord, "id"> & { id?: string }, options?: { skipTranscript?: boolean }) {
     const message: MessageRecord = {
       ...input,
       id: input.id ?? nanoid(),
@@ -452,7 +452,35 @@ export class AppStorage {
     }
     this.recordMessageAttachments(message);
     this.persist();
-    this.appendTranscript(message);
+    if (!options?.skipTranscript) {
+      this.appendTranscript(message);
+    }
+    return message;
+  }
+
+  updateMessage(
+    messageId: string,
+    patch: Partial<Pick<MessageRecord, "content" | "metadata" | "mentions" | "visibility" | "messageType">>,
+    options?: { appendTranscript?: boolean },
+  ) {
+    const message = this.state.messages.find((item) => item.id === messageId);
+    if (!message) return null;
+    Object.assign(message, patch);
+    this.recordMessageAttachments(message);
+
+    const conversation = this.getConversation(message.conversationId);
+    if (conversation) {
+      const latest = this.listMessages(message.conversationId).at(-1);
+      if (latest?.id === message.id) {
+        conversation.lastMessage = message.content.replace(/\n+/g, " ").slice(0, 120);
+        conversation.lastActivityAt = now();
+      }
+    }
+
+    this.persist();
+    if (options?.appendTranscript) {
+      this.appendTranscript(message);
+    }
     return message;
   }
 
@@ -928,8 +956,47 @@ export class AppStorage {
     this.ensureColumn("runs", "total_steps", "INTEGER DEFAULT 0");
     this.ensureColumn("runs", "created_at", "INTEGER");
     this.ensureColumn("runs", "last_error", "TEXT");
+    this.ensureColumn("runs", "artifact_path", "TEXT");
+    this.ensureColumn("runs", "transcript_path", "TEXT");
+    this.ensureColumn("runs", "workspace_transcript_path", "TEXT");
+    this.ensureColumn("runs", "memory_path", "TEXT");
+
+    this.ensureColumn("providers", "label", "TEXT");
+    this.ensureColumn("providers", "base_url", "TEXT");
+    this.ensureColumn("providers", "default_model", "TEXT");
+    this.ensureColumn("providers", "supports_tool_calling", "INTEGER DEFAULT 1");
+    this.ensureColumn("providers", "supports_streaming", "INTEGER DEFAULT 1");
+    this.ensureColumn("providers", "is_active", "INTEGER DEFAULT 0");
+
+    this.ensureColumn("agents", "name", "TEXT");
+    this.ensureColumn("agents", "role", "TEXT");
+    this.ensureColumn("agents", "status", "TEXT");
+    this.ensureColumn("agents", "workspace_path", "TEXT");
+    this.ensureColumn("agents", "avatar_path", "TEXT");
+    this.ensureColumn("agents", "model_id", "TEXT");
+
+    this.ensureColumn("teams", "name", "TEXT");
+    this.ensureColumn("teams", "objective", "TEXT");
+    this.ensureColumn("teams", "workspace_path", "TEXT");
+    this.ensureColumn("teams", "avatar_path", "TEXT");
+
+    this.ensureColumn("notifications", "type", "TEXT");
+    this.ensureColumn("notifications", "title", "TEXT");
+    this.ensureColumn("notifications", "body", "TEXT");
+    this.ensureColumn("notifications", "read", "INTEGER DEFAULT 0");
+    this.ensureColumn("notifications", "related_conversation_id", "TEXT");
+    this.ensureColumn("notifications", "related_run_id", "TEXT");
 
     this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_providers_active ON providers(is_active);
+      CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
+      CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+      CREATE INDEX IF NOT EXISTS idx_agents_workspace_path ON agents(workspace_path);
+      CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
+      CREATE INDEX IF NOT EXISTS idx_teams_workspace_path ON teams(workspace_path);
+      CREATE INDEX IF NOT EXISTS idx_notifications_read_created_at ON notifications(read, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_notifications_related_run ON notifications(related_run_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_notifications_related_conversation ON notifications(related_conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conversations_last_activity_at ON conversations(last_activity_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conversations_target ON conversations(kind, target_id);
       CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at ASC);
@@ -979,9 +1046,15 @@ export class AppStorage {
     const insertSetting = this.db.prepare(
       "INSERT INTO settings_entries (key, value) VALUES (?, ?)",
     );
-    const insertProvider = this.db.prepare("INSERT INTO providers (id, payload) VALUES (?, ?)");
-    const insertAgent = this.db.prepare("INSERT INTO agents (id, payload) VALUES (?, ?)");
-    const insertTeam = this.db.prepare("INSERT INTO teams (id, payload) VALUES (?, ?)");
+    const insertProvider = this.db.prepare(
+      "INSERT INTO providers (id, label, base_url, default_model, supports_tool_calling, supports_streaming, is_active, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertAgent = this.db.prepare(
+      "INSERT INTO agents (id, name, role, status, workspace_path, avatar_path, model_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertTeam = this.db.prepare(
+      "INSERT INTO teams (id, name, objective, workspace_path, avatar_path, payload) VALUES (?, ?, ?, ?, ?, ?)",
+    );
     const insertConversation = this.db.prepare(
       "INSERT INTO conversations (id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
@@ -989,10 +1062,10 @@ export class AppStorage {
       "INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_kind, message_type, visibility, content, mentions_json, created_at, run_id, has_attachments, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertRun = this.db.prepare(
-      "INSERT INTO runs (id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO runs (id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, artifact_path, transcript_path, workspace_transcript_path, memory_path, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertNotification = this.db.prepare(
-      "INSERT INTO notifications (id, created_at, payload) VALUES (?, ?, ?)",
+      "INSERT INTO notifications (id, type, title, body, read, created_at, related_conversation_id, related_run_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertExtension = this.db.prepare("INSERT INTO extensions (id, payload) VALUES (?, ?)");
     const insertSkillCatalog = this.db.prepare("INSERT INTO skill_catalog (id, payload) VALUES (?, ?)");
@@ -1038,13 +1111,38 @@ export class AppStorage {
         insertSetting.run(key, value);
       }
       for (const provider of this.state.providers) {
-        insertProvider.run(provider.id, JSON.stringify(provider));
+        insertProvider.run(
+          provider.id,
+          provider.label,
+          provider.baseUrl,
+          provider.defaultModel,
+          provider.supportsToolCalling ? 1 : 0,
+          provider.supportsStreaming ? 1 : 0,
+          provider.isActive ? 1 : 0,
+          JSON.stringify(provider),
+        );
       }
       for (const agent of this.state.agents) {
-        insertAgent.run(agent.id, JSON.stringify(agent));
+        insertAgent.run(
+          agent.id,
+          agent.name,
+          agent.role,
+          agent.status,
+          agent.workspacePath,
+          agent.avatarPath,
+          agent.modelId,
+          JSON.stringify(agent),
+        );
       }
       for (const team of this.state.teams) {
-        insertTeam.run(team.id, JSON.stringify(team));
+        insertTeam.run(
+          team.id,
+          team.name,
+          team.objective,
+          team.workspacePath,
+          team.avatarPath,
+          JSON.stringify(team),
+        );
       }
       for (const conversation of this.state.conversations) {
         insertConversation.run(
@@ -1079,6 +1177,7 @@ export class AppStorage {
         );
       }
       for (const run of this.state.runs) {
+        const runMetadata = run.metadata ?? {};
         insertRun.run(
           run.id,
           run.conversationId,
@@ -1091,11 +1190,27 @@ export class AppStorage {
           run.createdAt,
           run.updatedAt,
           typeof run.metadata?.error === "string" ? run.metadata.error : null,
+          typeof runMetadata.artifactPath === "string" ? runMetadata.artifactPath : null,
+          typeof runMetadata.transcriptPath === "string" ? runMetadata.transcriptPath : null,
+          typeof runMetadata.workspaceTranscriptPath === "string"
+            ? runMetadata.workspaceTranscriptPath
+            : null,
+          typeof runMetadata.memoryPath === "string" ? runMetadata.memoryPath : null,
           JSON.stringify(run),
         );
       }
       for (const notification of this.state.notifications) {
-        insertNotification.run(notification.id, notification.createdAt, JSON.stringify(notification));
+        insertNotification.run(
+          notification.id,
+          notification.type,
+          notification.title,
+          notification.body,
+          notification.read ? 1 : 0,
+          notification.createdAt,
+          notification.relatedConversationId,
+          notification.relatedRunId,
+          JSON.stringify(notification),
+        );
       }
       for (const extension of this.state.extensions) {
         insertExtension.run(extension.id, JSON.stringify(extension));
@@ -1190,20 +1305,20 @@ export class AppStorage {
       fileConfig ??
       this.createConfigStateFromDb({
         settingsEntries,
-        providers: this.readCollection<ProviderConfig>("providers"),
+        providers: this.readProviders(),
       });
 
     this.state = {
       settingsEntries: configState.settingsEntries,
       providers: configState.providers,
-      agents: this.readCollection<AgentRecord>("agents").map((agent) => ({
+      agents: this.readAgents().map((agent) => ({
         ...agent,
         skillWhitelist: Array.isArray(agent.skillWhitelist)
           ? agent.skillWhitelist
           : defaultSkillCatalog.map((skill) => skill.id),
         mcpWhitelist: Array.isArray(agent.mcpWhitelist) ? agent.mcpWhitelist : defaultConnectedMcpIds,
       })),
-      teams: this.readCollection<TeamRecord>("teams").map((team) => ({
+      teams: this.readTeams().map((team) => ({
         ...team,
         mcpWhitelist: Array.isArray(team.mcpWhitelist) ? team.mcpWhitelist : defaultConnectedMcpIds,
       })),
@@ -1226,7 +1341,7 @@ export class AppStorage {
         "run_steps",
         "ORDER BY run_id ASC, step_index ASC",
       ),
-      notifications: this.readCollection<NotificationRecord>("notifications", "ORDER BY created_at DESC"),
+      notifications: this.readNotifications(),
       extensions: this.readCollection<ExtensionRecord>("extensions"),
       skillCatalog: skillCatalog.length > 0 ? skillCatalog : defaultSkillCatalog,
       mcpCatalog: mcpCatalog.length > 0 ? mcpCatalog : defaultMcpCatalog,
@@ -1293,6 +1408,140 @@ export class AppStorage {
 
   private readStructuredCollection<T>(tableName: string, orderClause = "") {
     return this.readCollection<T>(tableName, orderClause);
+  }
+
+  private readProviders() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, label, base_url, default_model, supports_tool_calling, supports_streaming, is_active, payload
+         FROM providers
+         ORDER BY is_active DESC, id ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      label: string | null;
+      base_url: string | null;
+      default_model: string | null;
+      supports_tool_calling: number | null;
+      supports_streaming: number | null;
+      is_active: number | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as ProviderConfig;
+      return {
+        ...payload,
+        id: (row.id || payload.id) as ProviderConfig["id"],
+        label: row.label ?? payload.label,
+        baseUrl: row.base_url ?? payload.baseUrl,
+        defaultModel: row.default_model ?? payload.defaultModel,
+        supportsToolCalling:
+          row.supports_tool_calling === null
+            ? payload.supportsToolCalling
+            : row.supports_tool_calling === 1,
+        supportsStreaming:
+          row.supports_streaming === null ? payload.supportsStreaming : row.supports_streaming === 1,
+        isActive: row.is_active === null ? payload.isActive : row.is_active === 1,
+      } satisfies ProviderConfig;
+    });
+  }
+
+  private readAgents() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, name, role, status, workspace_path, avatar_path, model_id, payload
+         FROM agents
+         ORDER BY name COLLATE NOCASE ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      name: string | null;
+      role: string | null;
+      status: AgentRecord["status"] | null;
+      workspace_path: string | null;
+      avatar_path: string | null;
+      model_id: string | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as AgentRecord;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        name: row.name ?? payload.name,
+        role: row.role ?? payload.role,
+        status: row.status ?? payload.status,
+        workspacePath: row.workspace_path ?? payload.workspacePath,
+        avatarPath: row.avatar_path ?? payload.avatarPath,
+        modelId: row.model_id ?? payload.modelId,
+      } satisfies AgentRecord;
+    });
+  }
+
+  private readTeams() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, name, objective, workspace_path, avatar_path, payload
+         FROM teams
+         ORDER BY name COLLATE NOCASE ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      name: string | null;
+      objective: string | null;
+      workspace_path: string | null;
+      avatar_path: string | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as TeamRecord;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        name: row.name ?? payload.name,
+        objective: row.objective ?? payload.objective,
+        workspacePath: row.workspace_path ?? payload.workspacePath,
+        avatarPath: row.avatar_path ?? payload.avatarPath,
+      } satisfies TeamRecord;
+    });
+  }
+
+  private readNotifications() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, type, title, body, read, created_at, related_conversation_id, related_run_id, payload
+         FROM notifications
+         ORDER BY created_at DESC`,
+      )
+      .all() as Array<{
+      id: string;
+      type: NotificationRecord["type"] | null;
+      title: string | null;
+      body: string | null;
+      read: number | null;
+      created_at: number;
+      related_conversation_id: string | null;
+      related_run_id: string | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as NotificationRecord;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        type: row.type ?? payload.type,
+        title: row.title ?? payload.title,
+        body: row.body ?? payload.body,
+        read: row.read === null ? payload.read : row.read === 1,
+        createdAt: row.created_at ?? payload.createdAt,
+        relatedConversationId: row.related_conversation_id ?? payload.relatedConversationId,
+        relatedRunId: row.related_run_id ?? payload.relatedRunId,
+      } satisfies NotificationRecord;
+    });
   }
 
   private readConversations() {
@@ -1384,7 +1633,7 @@ export class AppStorage {
   private readRuns() {
     const rows = this.db
       .prepare(
-        `SELECT id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, payload
+        `SELECT id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, artifact_path, transcript_path, workspace_transcript_path, memory_path, payload
          FROM runs
          ORDER BY updated_at DESC`,
       )
@@ -1400,6 +1649,10 @@ export class AppStorage {
       created_at: number | null;
       updated_at: number;
       last_error: string | null;
+      artifact_path: string | null;
+      transcript_path: string | null;
+      workspace_transcript_path: string | null;
+      memory_path: string | null;
       payload: string;
     }>;
 
@@ -1409,6 +1662,15 @@ export class AppStorage {
         row.last_error && !payload.metadata?.error
           ? { ...(payload.metadata ?? {}), error: row.last_error }
           : payload.metadata;
+      const normalizedMetadata = {
+        ...(metadata ?? {}),
+        ...(row.artifact_path ? { artifactPath: row.artifact_path } : {}),
+        ...(row.transcript_path ? { transcriptPath: row.transcript_path } : {}),
+        ...(row.workspace_transcript_path
+          ? { workspaceTranscriptPath: row.workspace_transcript_path }
+          : {}),
+        ...(row.memory_path ? { memoryPath: row.memory_path } : {}),
+      };
       return {
         ...payload,
         id: row.id || payload.id,
@@ -1421,7 +1683,7 @@ export class AppStorage {
         totalSteps: row.total_steps ?? payload.totalSteps,
         createdAt: row.created_at ?? payload.createdAt,
         updatedAt: row.updated_at ?? payload.updatedAt,
-        metadata,
+        metadata: normalizedMetadata,
       } satisfies RunRecord;
     });
   }
@@ -1634,6 +1896,13 @@ export class AppStorage {
       path: filePath,
       mimeType,
       sizeBytes: buffer.byteLength,
+    };
+  }
+
+  getConversationTranscriptPaths(conversationId: string) {
+    return {
+      globalTranscriptPath: join(this.transcriptRoot, `${conversationId}.jsonl`),
+      workspaceTranscriptPath: this.getWorkspaceSessionPath(conversationId),
     };
   }
 

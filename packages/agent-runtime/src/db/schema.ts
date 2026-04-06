@@ -12,18 +12,51 @@ export const settingsEntries = sqliteTable("settings_entries", {
 
 export const providers = sqliteTable("providers", {
   id: text("id").primaryKey().notNull(),
+  label: text("label"),
+  baseUrl: text("base_url"),
+  defaultModel: text("default_model"),
+  supportsToolCalling: integer("supports_tool_calling").default(1).notNull(),
+  supportsStreaming: integer("supports_streaming").default(1).notNull(),
+  isActive: integer("is_active").default(0).notNull(),
   payload: text("payload").notNull(),
-});
+}, (table) => ({
+  activeIdx: index("idx_providers_active").on(table.isActive),
+}));
 
-export const agents = sqliteTable("agents", {
-  id: text("id").primaryKey().notNull(),
-  payload: text("payload").notNull(),
-});
+export const agents = sqliteTable(
+  "agents",
+  {
+    id: text("id").primaryKey().notNull(),
+    name: text("name"),
+    role: text("role"),
+    status: text("status"),
+    workspacePath: text("workspace_path"),
+    avatarPath: text("avatar_path"),
+    modelId: text("model_id"),
+    payload: text("payload").notNull(),
+  },
+  (table) => ({
+    nameIdx: index("idx_agents_name").on(table.name),
+    statusIdx: index("idx_agents_status").on(table.status),
+    workspaceIdx: index("idx_agents_workspace_path").on(table.workspacePath),
+  }),
+);
 
-export const teams = sqliteTable("teams", {
-  id: text("id").primaryKey().notNull(),
-  payload: text("payload").notNull(),
-});
+export const teams = sqliteTable(
+  "teams",
+  {
+    id: text("id").primaryKey().notNull(),
+    name: text("name"),
+    objective: text("objective"),
+    workspacePath: text("workspace_path"),
+    avatarPath: text("avatar_path"),
+    payload: text("payload").notNull(),
+  },
+  (table) => ({
+    nameIdx: index("idx_teams_name").on(table.name),
+    workspaceIdx: index("idx_teams_workspace_path").on(table.workspacePath),
+  }),
+);
 
 export const conversations = sqliteTable(
   "conversations",
@@ -87,6 +120,10 @@ export const runs = sqliteTable(
     createdAt: integer("created_at"),
     updatedAt: integer("updated_at").notNull(),
     lastError: text("last_error"),
+    artifactPath: text("artifact_path"),
+    transcriptPath: text("transcript_path"),
+    workspaceTranscriptPath: text("workspace_transcript_path"),
+    memoryPath: text("memory_path"),
     payload: text("payload").notNull(),
   },
   (table) => ({
@@ -100,9 +137,22 @@ export const runs = sqliteTable(
 
 export const notifications = sqliteTable("notifications", {
   id: text("id").primaryKey().notNull(),
+  type: text("type"),
+  title: text("title"),
+  body: text("body"),
+  read: integer("read").default(0).notNull(),
   createdAt: integer("created_at").notNull(),
+  relatedConversationId: text("related_conversation_id"),
+  relatedRunId: text("related_run_id"),
   payload: text("payload").notNull(),
-});
+}, (table) => ({
+  readCreatedIdx: index("idx_notifications_read_created_at").on(table.read, table.createdAt),
+  relatedRunIdx: index("idx_notifications_related_run").on(table.relatedRunId, table.createdAt),
+  relatedConversationIdx: index("idx_notifications_related_conversation").on(
+    table.relatedConversationId,
+    table.createdAt,
+  ),
+}));
 
 export const extensions = sqliteTable("extensions", {
   id: text("id").primaryKey().notNull(),

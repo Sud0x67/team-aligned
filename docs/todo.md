@@ -81,14 +81,13 @@
 
 ## 当前真实缺口
 
-真正阻止项目从“高级原型”进入“Alpha 可用”的，不是 UI，而是下面这些运行时和工程化缺口：
+真正阻止项目从“高级原型”进入“Alpha 可用”的，已经主要收敛成这些工程化缺口：
 
-1. 群聊还不是真实多 Agent 编排。
-2. `/skills` 还没有接入真实 `SKILL.md` 执行链。
-3. MCP 虽然已经接通，且已有 tool call 审计落盘，但 run 可视化和更细粒度权限还不够。
-4. 单聊和群聊虽然用了真实模型，但工具层仍有部分能力没有真正接齐。
-5. SQLite 已经进入结构化阶段，但还没有 Drizzle schema、migration 和完整的规范化模型。
-6. 测试和发布链路还远远不够。
+1. 群聊复杂任务下的稳定性与失败恢复还需要专项验证。
+2. Skill 生效细节在消息流和 run 详情中的展示还不够完整。
+3. MCP 还缺 tool 级白名单和服务级配置模板。
+4. transcript / artifact / memory 的导出与更完整关联还没有收口。
+5. 测试和发布链路还远远不够。
 
 ## P0：把原型升级为 Alpha 可用版本
 
@@ -174,11 +173,12 @@ Alpha 验收标准：
 
 - [x] 引入 Drizzle
 - [x] 增加 migration
-- [ ] 进一步规范 agents / teams / providers / notifications 等表
+- [x] 进一步规范 agents / teams / providers / notifications 等表
 - [x] 规范 `conversations / messages / runs` 结构化列
 - [x] 增加消息、会话、运行、附件、产物、工具调用、run steps 的索引
 - [x] 增加 `attachments / artifacts / tool_invocations / run_steps` 表
-- [ ] 建立 transcript / artifact / memory 的更完整关联关系
+- [x] 建立 transcript / artifact / memory 的基础关联关系
+- [ ] 导出级 transcript / artifact / memory 关联继续完善
 - [x] 为 UI 暴露 run 详情、artifact 列表和工具调用查询接口
 
 验收标准：
@@ -188,21 +188,21 @@ Alpha 验收标准：
 
 ### 6. Provider 与运行时可靠性
 
-- [ ] 设置页增加 provider 连通性测试
-- [ ] API Key / Base URL / 模型参数校验
+- [x] 设置页增加 provider 连通性测试
+- [x] API Key / Base URL / 模型参数校验
 - [ ] 统一模型错误提示和失败态
 - [ ] 补充超时、重试、取消的边界处理
-- [ ] 让流式输出在 UI 中真实显示
+- [x] 让流式输出在 UI 中真实显示（单聊优先）
 
 ### 7. 对话体验增强
 
-- [ ] `/` 命令自动补全菜单
-- [ ] `@` 成员选择器
+- [x] `/` 命令自动补全菜单
+- [x] `@` 成员选择器
 - [x] run 详情卡片
 - [x] artifact 浏览入口
 - [x] attachment 浏览入口
-- [ ] attachment 图片预览
-- [ ] 命令执行结果卡片化
+- [x] attachment 图片预览
+- [x] 命令执行结果卡片化
 - [x] 工具调用可视化
 - [ ] 模型调用可视化
 
@@ -246,9 +246,9 @@ Alpha 验收标准：
 
 如果下一阶段按最短路径推进，建议严格按下面顺序做：
 
-1. 先补“Provider 校验、流式输出、失败恢复”
-2. 再补“tool 级白名单与服务模板”
-3. 然后做“数据关系完善、导出与全文检索”
+1. 先补“tool 级白名单与服务模板”
+2. 再补“Provider 失败恢复、超时与统一错误提示”
+3. 然后做“导出与全文检索”
 4. 再补“测试与发布链路”
 
 ## 进入 Alpha 的判断标准

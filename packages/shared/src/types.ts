@@ -118,6 +118,22 @@ export interface ProviderConfig {
   isActive: boolean;
 }
 
+export interface ProviderConnectionTestInput {
+  id: ProviderId;
+  label?: string;
+  baseUrl: string;
+  apiKey: string;
+  defaultModel: string;
+  supportsToolCalling: boolean;
+  supportsStreaming: boolean;
+}
+
+export interface ProviderConnectionTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs: number | null;
+}
+
 export interface AgentRecord {
   id: string;
   name: string;
@@ -434,6 +450,9 @@ export interface TeamalignedApi {
   updateSettings: (payload: UpdateSettingsInput) => Promise<AppSnapshot>;
   updateProfile: (payload: UpdateProfileInput) => Promise<AppSnapshot>;
   updateProvider: (payload: UpdateProviderInput) => Promise<AppSnapshot>;
+  testProviderConnection: (
+    payload: ProviderConnectionTestInput,
+  ) => Promise<ProviderConnectionTestResult>;
   saveAvatarAsset: (payload: SaveAvatarAssetInput) => Promise<string>;
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   markNotificationsRead: () => Promise<AppSnapshot>;

@@ -205,8 +205,21 @@ SQLite 用于承担结构化实体、索引与统计能力。
 
 - `conversations / messages / runs`
   已经具备结构化字段列和索引，同时保留 `payload` 作为兼容字段
+- `agents / teams / providers / notifications`
+  也已经具备首版结构化字段列和索引，方便管理页、设置页和通知中心做稳定查询
 - `attachments / artifacts / tool_invocations / run_steps`
   已经进入正式结构化表，后续可直接支撑 run 详情、审计和导出
+
+目前 `runs` 的结构化 metadata 已经会补充这些关联信息：
+
+- `transcriptPath`
+  全局 transcript 路径
+- `workspaceTranscriptPath`
+  绑定到 Agent / Team workspace 的会话 transcript 路径
+- `artifactPath`
+  当前 run 产物主文件路径
+- `memoryPath`
+  本轮更新到的 `MEMORY.md` 或 `shared-memory.md` 路径
 
 当前聊天页已经直接消费这些表对应的数据，用于展示：
 

@@ -7,6 +7,8 @@ import type {
   McpCatalogRecord,
   McpConnectionRecord,
   MessageRecord,
+  ProviderConnectionTestInput,
+  ProviderConnectionTestResult,
   ProviderConfig,
   UserProfile,
 } from "@teamaligned/shared";
@@ -25,6 +27,15 @@ function isPlaceholderApiKey(value: string) {
     normalized === "sk-qwen-demo-key" ||
     normalized === "sk-openai-demo-key"
   );
+}
+
+function isLikelyHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeMessageContent(content: unknown): string {
@@ -160,6 +171,7 @@ export function createProviderModel(provider: ProviderConfig) {
     temperature: 0.2,
     timeout: 120_000,
     maxRetries: 2,
+    streaming: provider.supportsStreaming,
     configuration: {
       apiKey: provider.apiKey,
       baseURL: provider.baseUrl,
@@ -227,6 +239,77 @@ export function validateProviderForSingleChat(provider: ProviderConfig | null) {
   return null;
 }
 
+export function validateProviderConfig(
+  provider: Pick<
+    ProviderConnectionTestInput,
+    "id" | "baseUrl" | "apiKey" | "defaultModel" | "supportsToolCalling"
+  > | null,
+) {
+  if (!provider) {
+    return ["当前没有可用的模型供应商配置。"];
+  }
+
+  const issues: string[] = [];
+  if (!provider.baseUrl.trim()) {
+    issues.push("请填写 Base URL。");
+  } else if (!isLikelyHttpUrl(provider.baseUrl.trim())) {
+    issues.push("Base URL 格式无效，请填写完整的 http(s) 地址。");
+  }
+
+  if (!provider.defaultModel.trim()) {
+    issues.push("请填写模型名称。");
+  }
+
+  if (isPlaceholderApiKey(provider.apiKey)) {
+    issues.push(
+      provider.id === "qwen"
+        ? "请填写真实的百炼 API Key。"
+        : "请填写真实的 OpenAI API Key。",
+    );
+  }
+
+  if (!provider.supportsToolCalling) {
+    issues.push("当前 provider 未开启工具调用，DeepAgents 无法正常工作。");
+  }
+
+  return issues;
+}
+
+export async function testProviderConnection(
+  input: ProviderConnectionTestInput,
+): Promise<ProviderConnectionTestResult> {
+  const issues = validateProviderConfig(input);
+  if (issues.length > 0) {
+    return {
+      ok: false,
+      message: issues.join("\n"),
+      latencyMs: null,
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const model = createProviderModel({
+      ...input,
+      label: input.label ?? input.id,
+      isActive: true,
+    });
+    const response = await model.invoke("Reply with OK only.");
+    const text = normalizeMessageContent("content" in response ? response.content : response);
+    return {
+      ok: true,
+      message: text || "连接成功，模型已返回响应。",
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+}
+
 export async function invokeSingleChatDeepAgent(input: {
   sessions: Map<string, DeepAgentSession>;
   conversationId: string;
@@ -243,6 +326,7 @@ export async function invokeSingleChatDeepAgent(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
+  onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
 }) {
   const {
     sessions,
@@ -259,6 +343,7 @@ export async function invokeSingleChatDeepAgent(input: {
     latestInput,
     additionalTools,
     runtimeToolSummary,
+    onTextStream,
   } = input;
 
   const mcpConnectionMap = new Map(mcpConnections.map((connection) => [connection.serverId, connection]));
@@ -327,6 +412,52 @@ export async function invokeSingleChatDeepAgent(input: {
     ? [{ role: "user" as const, content: latestInput }]
     : toAgentMessages(history);
 
+  if (provider.supportsStreaming && onTextStream && typeof (session.agent as { streamEvents?: unknown }).streamEvents === "function") {
+    try {
+      let streamedText = "";
+      let finalOutput: unknown = null;
+      const stream = await (session.agent as {
+        streamEvents: (
+          input: unknown,
+          options?: Record<string, unknown>,
+        ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
+      }).streamEvents(
+        { messages },
+        { configurable: { thread_id: conversationId }, version: "v2" },
+      );
+
+      for await (const event of stream) {
+        if (!event || typeof event !== "object") continue;
+        if (event.event === "on_chat_model_stream") {
+          const chunk =
+            "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
+              ? event.data.chunk
+              : null;
+          const delta = extractStreamText(chunk);
+          if (!delta) continue;
+          streamedText += delta;
+          await onTextStream(streamedText, delta);
+          continue;
+        }
+
+        if (event.event === "on_chain_end" || event.event === "on_graph_end") {
+          finalOutput =
+            "data" in event && event.data && typeof event.data === "object" && "output" in event.data
+              ? event.data.output
+              : finalOutput;
+        }
+      }
+
+      session.initialized = true;
+      const finalText = extractAgentText(finalOutput) || streamedText.trim();
+      if (finalText) {
+        return finalText;
+      }
+    } catch {
+      // Fallback to non-streaming invoke below.
+    }
+  }
+
   const result = await session.agent.invoke(
     { messages },
     { configurable: { thread_id: conversationId } },
@@ -336,4 +467,20 @@ export async function invokeSingleChatDeepAgent(input: {
 
   const text = extractAgentText(result);
   return text || "模型已完成调用，但没有返回可显示的文本内容。";
+}
+
+function extractStreamText(chunk: unknown) {
+  if (!chunk || typeof chunk !== "object") {
+    return "";
+  }
+
+  if ("content" in chunk) {
+    return normalizeMessageContent(chunk.content);
+  }
+
+  if ("text" in chunk && typeof chunk.text === "string") {
+    return chunk.text;
+  }
+
+  return "";
 }

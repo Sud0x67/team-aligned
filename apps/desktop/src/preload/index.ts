@@ -10,6 +10,8 @@ import type {
   SaveAvatarAssetInput,
   SendInputPayload,
   TeamalignedApi,
+  ProviderConnectionTestInput,
+  ProviderConnectionTestResult,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
   UpdateProfileInput,
@@ -44,6 +46,10 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:update-profile", payload),
   updateProvider: (payload: UpdateProviderInput) =>
     ipcRenderer.invoke("teamaligned:update-provider", payload),
+  testProviderConnection: (
+    payload: ProviderConnectionTestInput,
+  ): Promise<ProviderConnectionTestResult> =>
+    ipcRenderer.invoke("teamaligned:test-provider-connection", payload),
   saveAvatarAsset: (payload: SaveAvatarAssetInput) =>
     ipcRenderer.invoke("teamaligned:save-avatar-asset", payload),
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput): Promise<AttachmentAssetRecord> =>

@@ -12,6 +12,7 @@ import type {
   RunControlPayload,
   SaveAttachmentAssetInput,
   SendInputPayload,
+  ProviderConnectionTestInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
   UpdateProfileInput,
@@ -151,6 +152,10 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:update-provider", async (_event, payload: UpdateProviderInput) =>
     runtime?.updateProvider(payload),
+  );
+  ipcMain.handle(
+    "teamaligned:test-provider-connection",
+    async (_event, payload: ProviderConnectionTestInput) => runtime?.testProviderConnection(payload),
   );
   ipcMain.handle(
     "teamaligned:save-avatar-asset",

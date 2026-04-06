@@ -77,11 +77,12 @@
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
 - `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP 暂不支持。
-- Skills 当前已经完成 registry、安装、白名单和 prompt 注入，但还没有把 skill 目录中的脚本能力统一接成 runtime tool。
 - Skills 当前已经完成 registry、安装、白名单、prompt 注入，以及 skill bundle / scripts 作为 runtime tools 的接入。
 - 单聊与群聊现在都已接入 workspace 文件、ripgrep 搜索、shell 命令与 MCP 工具的统一 agent tool layer。
 - 聊天页现在已经提供 run 详情、产物、附件与工具调用的可视化卡片。
-- 数据层已经有正式的 `attachments / artifacts / tool_invocations / run_steps` 表以及 `messages / conversations / runs` 的结构化列和索引，并补上了 Drizzle schema 与基线 migration。
+- 数据层已经有正式的 `attachments / artifacts / tool_invocations / run_steps` 表、`messages / conversations / runs / agents / teams / providers / notifications` 的结构化列与索引，并补上了 Drizzle migration。
+- 设置页现在支持 provider 参数校验、连通性测试和错误提示。
+- 单聊回复已经优先按流式方式更新到消息线程；聊天输入支持 `/` 自动补全、`@` 成员选择、命令结果卡片和图片附件预览。
 - 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 

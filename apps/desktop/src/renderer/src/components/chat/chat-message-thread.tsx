@@ -25,6 +25,10 @@ function getAttachments(message: MessageRecord): AttachmentAssetRecord[] {
   return Array.isArray(attachments) ? (attachments as AttachmentAssetRecord[]) : [];
 }
 
+function isImageAttachment(attachment: AttachmentAssetRecord) {
+  return attachment.mimeType.startsWith("image/");
+}
+
 export function ChatMessageThread({
   messages,
   run,
@@ -46,6 +50,8 @@ export function ChatMessageThread({
             const isUser = message.senderKind === "user";
             const isInternal = message.visibility === "internal";
             const isNotification = message.messageType === "notification";
+            const isCommandCard = message.metadata?.cardType === "command_result";
+            const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
 
             return (
@@ -76,6 +82,29 @@ export function ChatMessageThread({
                       !isUser && !isNotification ? messageTone(message) : "",
                     ].join(" ")}
                   >
+                    {isCommandCard ? (
+                      <div className="mb-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)]">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold">{String(message.metadata?.shellCommand ?? "command")}</p>
+                          <span className="text-xs text-[var(--muted-foreground)]">
+                            exit {String(message.metadata?.code ?? 0)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs leading-6 text-[var(--muted-foreground)]">
+                          {String(message.metadata?.workspacePath ?? "")}
+                        </p>
+                        {typeof message.metadata?.artifactPath === "string" ? (
+                          <a
+                            href={resolveAssetSrc(String(message.metadata.artifactPath)) ?? "#"}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex text-xs font-medium text-[var(--primary)] hover:underline"
+                          >
+                            查看完整结果
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {isNotification ? (
                       <div className="mb-1 flex items-center gap-1.5 text-[11px] text-[var(--primary)]">
                         <Bot className="h-3.5 w-3.5" />
@@ -87,6 +116,12 @@ export function ChatMessageThread({
                       </div>
                     ) : null}
                     <p className="whitespace-pre-wrap">{message.content}</p>
+                    {isStreaming ? (
+                      <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
+                        {t.chat("generating")}
+                      </div>
+                    ) : null}
                   </div>
 
                   {attachments.length > 0 ? (
@@ -97,13 +132,22 @@ export function ChatMessageThread({
                           href={resolveAssetSrc(attachment.path) ?? "#"}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex max-w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                          className="max-w-full rounded-2xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
                         >
-                          <Paperclip className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{attachment.name}</span>
-                          <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
-                            {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <Paperclip className="h-4 w-4 shrink-0" />
+                            <span className="truncate">{attachment.name}</span>
+                            <span className="ml-auto shrink-0 text-xs text-[var(--muted-foreground)]">
+                              {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB
+                            </span>
+                          </div>
+                          {isImageAttachment(attachment) ? (
+                            <img
+                              src={resolveAssetSrc(attachment.path) ?? undefined}
+                              alt={attachment.name}
+                              className="mt-3 max-h-48 rounded-xl border border-[var(--border)] object-cover"
+                            />
+                          ) : null}
                         </a>
                       ))}
                     </div>
