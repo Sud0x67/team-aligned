@@ -41,6 +41,7 @@ import {
   validateLocalMcpLauncher,
 } from "./mcp-registry.ts";
 import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts";
+import type { McpInvocationEvent } from "./mcp-tools.ts";
 import {
   generateManagerDirectReply,
   type TeamSpecialistOutput,
@@ -304,6 +305,7 @@ export class TeamalignedRuntime extends EventEmitter {
       if (controller?.childProcess) controller.childProcess.kill("SIGTERM");
       this.activeRuns.delete(latest.id);
       this.storage.updateRun(latest.id, { status: "cancelled" });
+      this.storage.cancelPendingRunSteps(latest.id);
       this.addRunMessage(payload.conversationId, latest.id, "任务已取消。", "system");
     }
 
@@ -559,6 +561,43 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async saveAttachmentAsset(input: SaveAttachmentAssetInput) {
     return this.storage.saveAttachmentAsset(input);
+  }
+
+  private createMcpInvocationObserver(conversationId: string, runId: string) {
+    return async (event: McpInvocationEvent) => {
+      if (event.phase === "start") {
+        this.storage.createToolInvocation({
+          id: event.invocationId,
+          conversationId,
+          runId,
+          serverId: event.server.id,
+          serverName: event.server.name,
+          toolName: event.toolName,
+          status: "running",
+          inputJson: JSON.stringify(event.args),
+          metadata: {
+            transport: event.server.transport,
+          },
+          createdAt: event.startedAt,
+        });
+        return;
+      }
+
+      if (event.phase === "success") {
+        this.storage.updateToolInvocation(event.invocationId, {
+          status: "completed",
+          outputText: event.output,
+          completedAt: event.completedAt,
+        });
+        return;
+      }
+
+      this.storage.updateToolInvocation(event.invocationId, {
+        status: "failed",
+        errorText: event.error,
+        completedAt: event.completedAt,
+      });
+    };
   }
 
   async markNotificationsRead() {
@@ -826,6 +865,7 @@ export class TeamalignedRuntime extends EventEmitter {
             workspacePath,
             history: this.storage.listMessages(conversation.id),
             latestInput: input,
+            onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
           });
 
           if (this.storage.getRun(runId)?.status === "cancelled") {
@@ -833,6 +873,7 @@ export class TeamalignedRuntime extends EventEmitter {
           }
 
           const artifactPath = this.writeAgentArtifact(
+            conversation.id,
             workspacePath,
             runId,
             agent,
@@ -1058,6 +1099,7 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
+              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
             });
             specialistOutputs.push(output);
 
@@ -1114,6 +1156,7 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
+              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
             });
           } else if (plan.strategy === "specialist_question") {
             const directQuestion =
@@ -1160,6 +1203,7 @@ export class TeamalignedRuntime extends EventEmitter {
               runId,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
+              onMcpInvocation: this.createMcpInvocationObserver(conversation.id, runId),
             });
           }
 
@@ -1223,6 +1267,7 @@ export class TeamalignedRuntime extends EventEmitter {
           const specialistSummary =
             effectiveSpecialists.map((agent) => agent.name).join("、") || "无";
           const artifactPath = this.writeTeamArtifact(
+            conversation.id,
             workspacePath,
             runId,
             team,
@@ -1343,6 +1388,11 @@ export class TeamalignedRuntime extends EventEmitter {
       totalSteps: input.steps.length,
       metadata: { title: input.title },
     });
+    this.storage.initializeRunSteps({
+      runId: input.runId,
+      conversationId: input.conversationId,
+      labels: input.steps.map((step) => step.label),
+    });
 
     const controller: ActiveRunController = {
       runId: input.runId,
@@ -1402,8 +1452,19 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     controller.busy = true;
+    this.storage.updateRunStep(runId, run.stepIndex, {
+      status: "running",
+      startedAt: Date.now(),
+      completedAt: null,
+      errorText: null,
+      metadata: null,
+    });
     try {
       await step.execute();
+      this.storage.updateRunStep(runId, run.stepIndex, {
+        status: "completed",
+        completedAt: Date.now(),
+      });
       this.storage.updateRun(runId, { stepIndex: run.stepIndex + 1 });
       controller.busy = false;
 
@@ -1425,6 +1486,12 @@ export class TeamalignedRuntime extends EventEmitter {
       this.scheduleNext(controller, step.delayMs ?? 900);
     } catch (error) {
       controller.busy = false;
+      this.storage.updateRunStep(runId, run.stepIndex, {
+        status: "failed",
+        completedAt: Date.now(),
+        errorText: error instanceof Error ? error.message : String(error),
+      });
+      this.storage.cancelPendingRunSteps(runId);
       this.storage.updateRun(runId, {
         status: "failed",
         metadata: {
@@ -1495,6 +1562,18 @@ export class TeamalignedRuntime extends EventEmitter {
           artifactPath,
           `# 命令执行结果\n\n- 命令：\`${shellCommand}\`\n- 工作目录：\`${workspacePath}\`\n- 退出码：${code ?? 0}\n\n## 标准输出\n\n\`\`\`\n${normalizedStdout}\n\`\`\`\n${normalizedStderr ? `\n## 标准错误\n\n\`\`\`\n${normalizedStderr}\n\`\`\`\n` : ""}`,
         );
+        this.storage.recordArtifact({
+          conversationId,
+          runId,
+          artifactKind: "command_output",
+          title: `命令执行结果：${shellCommand}`,
+          path: artifactPath,
+          workspacePath,
+          metadata: {
+            shellCommand,
+            exitCode: code ?? 0,
+          },
+        });
 
         this.storage.addMessage({
           conversationId,
@@ -1597,6 +1676,7 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   private writeAgentArtifact(
+    conversationId: string,
     workspacePath: string,
     runId: string,
     agent: AgentRecord,
@@ -1622,10 +1702,23 @@ export class TeamalignedRuntime extends EventEmitter {
         "",
       ].join("\n"),
     );
+    this.storage.recordArtifact({
+      conversationId,
+      runId,
+      artifactKind: "agent_output",
+      title: `${agent.name} 任务产物`,
+      path: artifactPath,
+      workspacePath,
+      metadata: {
+        agentId: agent.id,
+        skill: activeSkill,
+      },
+    });
     return artifactPath;
   }
 
   private writeTeamArtifact(
+    conversationId: string,
     workspacePath: string,
     runId: string,
     team: TeamRecord,
@@ -1675,6 +1768,19 @@ export class TeamalignedRuntime extends EventEmitter {
         "",
       ].join("\n"),
     );
+    this.storage.recordArtifact({
+      conversationId,
+      runId,
+      artifactKind: "team_output",
+      title: `${team.name} 协作产物`,
+      path: artifactPath,
+      workspacePath,
+      metadata: {
+        teamId: team.id,
+        managerId: manager.id,
+        specialistIds: specialists.map((agent) => agent.id),
+      },
+    });
     return artifactPath;
   }
 

@@ -1,5 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import type { McpCatalogRecord, McpConnectionRecord } from "@teamaligned/shared";
+import { nanoid } from "nanoid";
 import { callMcpTool } from "./mcp-runtime.ts";
 
 function sanitizeToolName(serverSlug: string, toolName: string) {
@@ -26,12 +27,43 @@ export function summarizeAvailableMcps(input: {
     .join("；");
 }
 
+export type McpInvocationEvent =
+  | {
+      phase: "start";
+      invocationId: string;
+      startedAt: number;
+      server: McpCatalogRecord;
+      toolName: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      phase: "success";
+      invocationId: string;
+      startedAt: number;
+      completedAt: number;
+      server: McpCatalogRecord;
+      toolName: string;
+      args: Record<string, unknown>;
+      output: string;
+    }
+  | {
+      phase: "error";
+      invocationId: string;
+      startedAt: number;
+      completedAt: number;
+      server: McpCatalogRecord;
+      toolName: string;
+      args: Record<string, unknown>;
+      error: string;
+    };
+
 export function buildMcpLangChainTools(input: {
   servers: McpCatalogRecord[];
   connections?: McpConnectionRecord[];
   connectionsById?: Map<string, McpConnectionRecord>;
   workspacePath: string;
   pinnedServerId?: string | null;
+  onInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const connectionMap =
     input.connectionsById ?? new Map((input.connections ?? []).map((item) => [item.serverId, item]));
@@ -49,14 +81,53 @@ export function buildMcpLangChainTools(input: {
 
     return connection.discoveredTools.map((toolItem) =>
       tool(
-        async (toolInput) =>
-          callMcpTool({
-            catalog: server,
-            connection,
-            workspacePath: input.workspacePath,
+        async (toolInput) => {
+          const args = (toolInput as Record<string, unknown>) ?? {};
+          const invocationId = nanoid();
+          const startedAt = Date.now();
+
+          await input.onInvocation?.({
+            phase: "start",
+            invocationId,
+            startedAt,
+            server,
             toolName: toolItem.name,
-            args: (toolInput as Record<string, unknown>) ?? {},
-          }),
+            args,
+          });
+
+          try {
+            const output = await callMcpTool({
+              catalog: server,
+              connection,
+              workspacePath: input.workspacePath,
+              toolName: toolItem.name,
+              args,
+            });
+            await input.onInvocation?.({
+              phase: "success",
+              invocationId,
+              startedAt,
+              completedAt: Date.now(),
+              server,
+              toolName: toolItem.name,
+              args,
+              output,
+            });
+            return output;
+          } catch (error) {
+            await input.onInvocation?.({
+              phase: "error",
+              invocationId,
+              startedAt,
+              completedAt: Date.now(),
+              server,
+              toolName: toolItem.name,
+              args,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        },
         {
           name: sanitizeToolName(server.slug, toolItem.name),
           description:

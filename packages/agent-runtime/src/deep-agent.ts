@@ -9,7 +9,7 @@ import type {
   ProviderConfig,
   UserProfile,
 } from "@teamaligned/shared";
-import { buildMcpLangChainTools } from "./mcp-tools.ts";
+import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
 type DeepAgentSession = {
   signature: string;
@@ -228,6 +228,7 @@ export async function invokeSingleChatDeepAgent(input: {
   workspacePath: string;
   history: MessageRecord[];
   latestInput: string;
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const {
     sessions,
@@ -249,6 +250,7 @@ export async function invokeSingleChatDeepAgent(input: {
     servers: mcpServers,
     connectionsById: mcpConnectionMap,
     workspacePath,
+    onInvocation: input.onMcpInvocation,
   });
   const mcpToolSignature = JSON.stringify(
     mcpServers.map((server) => ({

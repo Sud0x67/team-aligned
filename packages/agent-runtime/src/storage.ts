@@ -55,6 +55,10 @@ type PersistedState = {
   conversations: ConversationRecord[];
   messages: MessageRecord[];
   runs: RunRecord[];
+  attachments: StoredAttachmentRecord[];
+  artifacts: StoredArtifactRecord[];
+  toolInvocations: StoredToolInvocationRecord[];
+  runSteps: StoredRunStepRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
   skillCatalog: SkillCatalogRecord[];
@@ -82,6 +86,55 @@ type SettingsFilePayload = {
   activeProviderId?: AppSettings["activeProviderId"];
   providers?: ProviderConfig[];
   profile?: Partial<UserProfile>;
+};
+
+type StoredAttachmentRecord = AttachmentAssetRecord & {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  runId: string | null;
+  createdAt: number;
+};
+
+type StoredArtifactRecord = {
+  id: string;
+  conversationId: string;
+  runId: string | null;
+  artifactKind: "agent_output" | "team_output" | "command_output";
+  title: string;
+  path: string;
+  workspacePath: string;
+  createdAt: number;
+  metadata: Record<string, unknown> | null;
+};
+
+type StoredToolInvocationRecord = {
+  id: string;
+  conversationId: string;
+  runId: string | null;
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  status: "running" | "completed" | "failed";
+  inputJson: string;
+  outputText: string | null;
+  errorText: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type StoredRunStepRecord = {
+  id: string;
+  runId: string;
+  conversationId: string;
+  stepIndex: number;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  startedAt: number | null;
+  completedAt: number | null;
+  errorText: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 function now() {
@@ -423,8 +476,10 @@ export class AppStorage {
         conversation.unread += 1;
       }
     }
+    this.recordMessageAttachments(message);
     this.persist();
     this.appendTranscript(message);
+    return message;
   }
 
   listRuns(): RunRecord[] {
@@ -453,6 +508,87 @@ export class AppStorage {
     const run = this.getRun(runId);
     if (!run) return;
     Object.assign(run, patch, { updatedAt: now() });
+    this.persist();
+  }
+
+  initializeRunSteps(input: { runId: string; conversationId: string; labels: string[] }) {
+    this.state.runSteps = this.state.runSteps.filter((step) => step.runId !== input.runId);
+    this.state.runSteps.push(
+      ...input.labels.map((label, index) => ({
+        id: `${input.runId}:${index}`,
+        runId: input.runId,
+        conversationId: input.conversationId,
+        stepIndex: index,
+        label,
+        status: "pending" as const,
+        startedAt: null,
+        completedAt: null,
+        errorText: null,
+        metadata: null,
+      })),
+    );
+    this.persist();
+  }
+
+  updateRunStep(
+    runId: string,
+    stepIndex: number,
+    patch: Partial<Pick<StoredRunStepRecord, "status" | "startedAt" | "completedAt" | "errorText" | "metadata">>,
+  ) {
+    const step = this.state.runSteps.find((item) => item.runId === runId && item.stepIndex === stepIndex);
+    if (!step) return;
+    Object.assign(step, patch);
+    this.persist();
+  }
+
+  cancelPendingRunSteps(runId: string) {
+    let changed = false;
+    for (const step of this.state.runSteps) {
+      if (step.runId !== runId) continue;
+      if (step.status === "completed" || step.status === "failed" || step.status === "cancelled") continue;
+      step.status = "cancelled";
+      step.completedAt ??= now();
+      changed = true;
+    }
+    if (changed) {
+      this.persist();
+    }
+  }
+
+  recordArtifact(input: Omit<StoredArtifactRecord, "id" | "createdAt"> & { createdAt?: number }) {
+    this.state.artifacts.push({
+      id: nanoid(),
+      createdAt: input.createdAt ?? now(),
+      ...input,
+    });
+    this.persist();
+  }
+
+  createToolInvocation(
+    input: Omit<StoredToolInvocationRecord, "createdAt" | "completedAt" | "outputText" | "errorText"> & {
+      createdAt?: number;
+      completedAt?: number | null;
+      outputText?: string | null;
+      errorText?: string | null;
+    },
+  ) {
+    this.state.toolInvocations.push({
+      ...input,
+      createdAt: input.createdAt ?? now(),
+      completedAt: input.completedAt ?? null,
+      outputText: input.outputText ?? null,
+      errorText: input.errorText ?? null,
+    });
+    this.persist();
+  }
+
+  updateToolInvocation(
+    invocationId: string,
+    patch: Partial<Pick<StoredToolInvocationRecord, "status" | "outputText" | "errorText" | "completedAt" | "metadata">>,
+  ) {
+    const invocation = this.state.toolInvocations.find((item) => item.id === invocationId);
+    if (!invocation) return;
+    Object.assign(invocation, patch);
     this.persist();
   }
 
@@ -740,6 +876,101 @@ export class AppStorage {
         server_id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        message_id TEXT,
+        run_id TEXT,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        run_id TEXT,
+        artifact_kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        path TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS tool_invocations (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        run_id TEXT,
+        server_id TEXT NOT NULL,
+        server_name TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        output_text TEXT,
+        error_text TEXT,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS run_steps (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        step_index INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        error_text TEXT,
+        payload TEXT NOT NULL
+      );
+    `);
+    this.ensureColumn("conversations", "kind", "TEXT");
+    this.ensureColumn("conversations", "target_id", "TEXT");
+    this.ensureColumn("conversations", "title", "TEXT");
+    this.ensureColumn("conversations", "unread", "INTEGER DEFAULT 0");
+    this.ensureColumn("conversations", "last_message", "TEXT");
+    this.ensureColumn("conversations", "active_skill", "TEXT");
+    this.ensureColumn("conversations", "pinned_mcp", "TEXT");
+    this.ensureColumn("conversations", "show_internal_messages", "INTEGER DEFAULT 0");
+
+    this.ensureColumn("messages", "sender_id", "TEXT");
+    this.ensureColumn("messages", "sender_name", "TEXT");
+    this.ensureColumn("messages", "sender_kind", "TEXT");
+    this.ensureColumn("messages", "message_type", "TEXT");
+    this.ensureColumn("messages", "visibility", "TEXT");
+    this.ensureColumn("messages", "content", "TEXT");
+    this.ensureColumn("messages", "mentions_json", "TEXT");
+    this.ensureColumn("messages", "run_id", "TEXT");
+    this.ensureColumn("messages", "has_attachments", "INTEGER DEFAULT 0");
+
+    this.ensureColumn("runs", "title", "TEXT");
+    this.ensureColumn("runs", "kind", "TEXT");
+    this.ensureColumn("runs", "status", "TEXT");
+    this.ensureColumn("runs", "actor_id", "TEXT");
+    this.ensureColumn("runs", "step_index", "INTEGER DEFAULT 0");
+    this.ensureColumn("runs", "total_steps", "INTEGER DEFAULT 0");
+    this.ensureColumn("runs", "created_at", "INTEGER");
+    this.ensureColumn("runs", "last_error", "TEXT");
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_last_activity_at ON conversations(last_activity_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_conversations_target ON conversations(kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_messages_run_id ON messages(run_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_sender_kind ON messages(sender_kind, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runs_conversation_updated_at ON runs(conversation_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_conversation_created_at ON attachments(conversation_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_run_id ON attachments(run_id);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_conversation_created_at ON artifacts(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_artifacts_run_id ON artifacts(run_id);
+      CREATE INDEX IF NOT EXISTS idx_tool_invocations_run_id ON tool_invocations(run_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_tool_invocations_server_tool ON tool_invocations(server_id, tool_name, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id, step_index ASC);
     `);
   }
 
@@ -757,6 +988,10 @@ export class AppStorage {
       "skill_catalog",
       "mcp_catalog",
       "mcp_connections",
+      "attachments",
+      "artifacts",
+      "tool_invocations",
+      "run_steps",
     ];
 
     return tables.some((table) => {
@@ -774,13 +1009,13 @@ export class AppStorage {
     const insertAgent = this.db.prepare("INSERT INTO agents (id, payload) VALUES (?, ?)");
     const insertTeam = this.db.prepare("INSERT INTO teams (id, payload) VALUES (?, ?)");
     const insertConversation = this.db.prepare(
-      "INSERT INTO conversations (id, last_activity_at, payload) VALUES (?, ?, ?)",
+      "INSERT INTO conversations (id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertMessage = this.db.prepare(
-      "INSERT INTO messages (id, conversation_id, created_at, payload) VALUES (?, ?, ?, ?)",
+      "INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_kind, message_type, visibility, content, mentions_json, created_at, run_id, has_attachments, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertRun = this.db.prepare(
-      "INSERT INTO runs (id, conversation_id, updated_at, payload) VALUES (?, ?, ?, ?)",
+      "INSERT INTO runs (id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertNotification = this.db.prepare(
       "INSERT INTO notifications (id, created_at, payload) VALUES (?, ?, ?)",
@@ -790,6 +1025,18 @@ export class AppStorage {
     const insertMcpCatalog = this.db.prepare("INSERT INTO mcp_catalog (id, payload) VALUES (?, ?)");
     const insertMcpConnection = this.db.prepare(
       "INSERT INTO mcp_connections (server_id, payload) VALUES (?, ?)",
+    );
+    const insertAttachment = this.db.prepare(
+      "INSERT INTO attachments (id, conversation_id, message_id, run_id, name, path, mime_type, size_bytes, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertArtifact = this.db.prepare(
+      "INSERT INTO artifacts (id, conversation_id, run_id, artifact_kind, title, path, workspace_path, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertToolInvocation = this.db.prepare(
+      "INSERT INTO tool_invocations (id, conversation_id, run_id, server_id, server_name, tool_name, status, input_json, output_text, error_text, created_at, completed_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertRunStep = this.db.prepare(
+      "INSERT INTO run_steps (id, run_id, conversation_id, step_index, label, status, started_at, completed_at, error_text, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     this.db.exec("BEGIN IMMEDIATE");
@@ -807,6 +1054,10 @@ export class AppStorage {
         DELETE FROM skill_catalog;
         DELETE FROM mcp_catalog;
         DELETE FROM mcp_connections;
+        DELETE FROM attachments;
+        DELETE FROM artifacts;
+        DELETE FROM tool_invocations;
+        DELETE FROM run_steps;
       `);
 
       for (const [key, value] of Object.entries(this.state.settingsEntries)) {
@@ -824,7 +1075,15 @@ export class AppStorage {
       for (const conversation of this.state.conversations) {
         insertConversation.run(
           conversation.id,
+          conversation.kind,
+          conversation.targetId,
+          conversation.title,
+          conversation.unread,
+          conversation.lastMessage,
           conversation.lastActivityAt,
+          conversation.meta.activeSkill,
+          conversation.meta.pinnedMcp,
+          conversation.meta.showInternalMessages ? 1 : 0,
           JSON.stringify(conversation),
         );
       }
@@ -832,12 +1091,34 @@ export class AppStorage {
         insertMessage.run(
           message.id,
           message.conversationId,
+          message.senderId,
+          message.senderName,
+          message.senderKind,
+          message.messageType,
+          message.visibility,
+          message.content,
+          JSON.stringify(message.mentions),
           message.createdAt,
+          message.runId,
+          this.extractAttachmentsFromMessage(message).length > 0 ? 1 : 0,
           JSON.stringify(message),
         );
       }
       for (const run of this.state.runs) {
-        insertRun.run(run.id, run.conversationId, run.updatedAt, JSON.stringify(run));
+        insertRun.run(
+          run.id,
+          run.conversationId,
+          run.title,
+          run.kind,
+          run.status,
+          run.actorId,
+          run.stepIndex,
+          run.totalSteps,
+          run.createdAt,
+          run.updatedAt,
+          typeof run.metadata?.error === "string" ? run.metadata.error : null,
+          JSON.stringify(run),
+        );
       }
       for (const notification of this.state.notifications) {
         insertNotification.run(notification.id, notification.createdAt, JSON.stringify(notification));
@@ -853,6 +1134,64 @@ export class AppStorage {
       }
       for (const connection of this.state.mcpConnections) {
         insertMcpConnection.run(connection.serverId, JSON.stringify(connection));
+      }
+      for (const attachment of this.state.attachments) {
+        insertAttachment.run(
+          attachment.id,
+          attachment.conversationId,
+          attachment.messageId,
+          attachment.runId,
+          attachment.name,
+          attachment.path,
+          attachment.mimeType,
+          attachment.sizeBytes,
+          attachment.createdAt,
+          JSON.stringify(attachment),
+        );
+      }
+      for (const artifact of this.state.artifacts) {
+        insertArtifact.run(
+          artifact.id,
+          artifact.conversationId,
+          artifact.runId,
+          artifact.artifactKind,
+          artifact.title,
+          artifact.path,
+          artifact.workspacePath,
+          artifact.createdAt,
+          JSON.stringify(artifact),
+        );
+      }
+      for (const invocation of this.state.toolInvocations) {
+        insertToolInvocation.run(
+          invocation.id,
+          invocation.conversationId,
+          invocation.runId,
+          invocation.serverId,
+          invocation.serverName,
+          invocation.toolName,
+          invocation.status,
+          invocation.inputJson,
+          invocation.outputText,
+          invocation.errorText,
+          invocation.createdAt,
+          invocation.completedAt,
+          JSON.stringify(invocation),
+        );
+      }
+      for (const step of this.state.runSteps) {
+        insertRunStep.run(
+          step.id,
+          step.runId,
+          step.conversationId,
+          step.stepIndex,
+          step.label,
+          step.status,
+          step.startedAt,
+          step.completedAt,
+          step.errorText,
+          JSON.stringify(step),
+        );
       }
 
       this.db.exec("COMMIT");
@@ -894,9 +1233,25 @@ export class AppStorage {
         ...team,
         mcpWhitelist: Array.isArray(team.mcpWhitelist) ? team.mcpWhitelist : defaultConnectedMcpIds,
       })),
-      conversations: this.readCollection<ConversationRecord>("conversations"),
-      messages: this.readCollection<MessageRecord>("messages", "ORDER BY created_at ASC"),
-      runs: this.readCollection<RunRecord>("runs", "ORDER BY updated_at DESC"),
+      conversations: this.readConversations(),
+      messages: this.readMessages(),
+      runs: this.readRuns(),
+      attachments: this.readStructuredCollection<StoredAttachmentRecord>(
+        "attachments",
+        "ORDER BY created_at ASC",
+      ),
+      artifacts: this.readStructuredCollection<StoredArtifactRecord>(
+        "artifacts",
+        "ORDER BY created_at DESC",
+      ),
+      toolInvocations: this.readStructuredCollection<StoredToolInvocationRecord>(
+        "tool_invocations",
+        "ORDER BY created_at ASC",
+      ),
+      runSteps: this.readStructuredCollection<StoredRunStepRecord>(
+        "run_steps",
+        "ORDER BY run_id ASC, step_index ASC",
+      ),
       notifications: this.readCollection<NotificationRecord>("notifications", "ORDER BY created_at DESC"),
       extensions: this.readCollection<ExtensionRecord>("extensions"),
       skillCatalog: skillCatalog.length > 0 ? skillCatalog : defaultSkillCatalog,
@@ -935,6 +1290,10 @@ export class AppStorage {
           ? (team as TeamRecord).mcpWhitelist
           : defaultConnectedMcpIds,
       })),
+      attachments: [],
+      artifacts: [],
+      toolInvocations: [],
+      runSteps: [],
       skillCatalog: legacy.skillCatalog ?? defaultSkillCatalog,
       mcpCatalog: (legacy as Partial<PersistedState>).mcpCatalog ?? defaultMcpCatalog,
       mcpConnections: (legacy as Partial<PersistedState>).mcpConnections ?? [],
@@ -958,6 +1317,184 @@ export class AppStorage {
     return rows.map((row) => JSON.parse(row.payload) as T);
   }
 
+  private readStructuredCollection<T>(tableName: string, orderClause = "") {
+    return this.readCollection<T>(tableName, orderClause);
+  }
+
+  private readConversations() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages, payload
+         FROM conversations
+         ORDER BY last_activity_at DESC`,
+      )
+      .all() as Array<{
+      id: string;
+      kind: ConversationRecord["kind"] | null;
+      target_id: string | null;
+      title: string | null;
+      unread: number | null;
+      last_message: string | null;
+      last_activity_at: number;
+      active_skill: string | null;
+      pinned_mcp: string | null;
+      show_internal_messages: number | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as ConversationRecord;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        kind: row.kind ?? payload.kind,
+        targetId: row.target_id ?? payload.targetId,
+        title: row.title ?? payload.title,
+        unread: row.unread ?? payload.unread,
+        lastMessage: row.last_message ?? payload.lastMessage,
+        lastActivityAt: row.last_activity_at ?? payload.lastActivityAt,
+        meta: {
+          ...payload.meta,
+          activeSkill: row.active_skill ?? payload.meta.activeSkill,
+          pinnedMcp: row.pinned_mcp ?? payload.meta.pinnedMcp,
+          showInternalMessages:
+            row.show_internal_messages === null
+              ? payload.meta.showInternalMessages
+              : row.show_internal_messages === 1,
+        },
+      } satisfies ConversationRecord;
+    });
+  }
+
+  private readMessages() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, conversation_id, sender_id, sender_name, sender_kind, message_type, visibility, content, mentions_json, created_at, run_id, payload
+         FROM messages
+         ORDER BY created_at ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      conversation_id: string;
+      sender_id: string | null;
+      sender_name: string | null;
+      sender_kind: MessageRecord["senderKind"] | null;
+      message_type: MessageRecord["messageType"] | null;
+      visibility: MessageRecord["visibility"] | null;
+      content: string | null;
+      mentions_json: string | null;
+      created_at: number;
+      run_id: string | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as MessageRecord;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        conversationId: row.conversation_id ?? payload.conversationId,
+        senderId: row.sender_id ?? payload.senderId,
+        senderName: row.sender_name ?? payload.senderName,
+        senderKind: row.sender_kind ?? payload.senderKind,
+        messageType: row.message_type ?? payload.messageType,
+        visibility: row.visibility ?? payload.visibility,
+        content: row.content ?? payload.content,
+        mentions: row.mentions_json ? (JSON.parse(row.mentions_json) as string[]) : payload.mentions,
+        createdAt: row.created_at ?? payload.createdAt,
+        runId: row.run_id ?? payload.runId,
+      } satisfies MessageRecord;
+    });
+  }
+
+  private readRuns() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, conversation_id, title, kind, status, actor_id, step_index, total_steps, created_at, updated_at, last_error, payload
+         FROM runs
+         ORDER BY updated_at DESC`,
+      )
+      .all() as Array<{
+      id: string;
+      conversation_id: string;
+      title: string | null;
+      kind: RunRecord["kind"] | null;
+      status: RunRecord["status"] | null;
+      actor_id: string | null;
+      step_index: number | null;
+      total_steps: number | null;
+      created_at: number | null;
+      updated_at: number;
+      last_error: string | null;
+      payload: string;
+    }>;
+
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as RunRecord;
+      const metadata =
+        row.last_error && !payload.metadata?.error
+          ? { ...(payload.metadata ?? {}), error: row.last_error }
+          : payload.metadata;
+      return {
+        ...payload,
+        id: row.id || payload.id,
+        conversationId: row.conversation_id ?? payload.conversationId,
+        title: row.title ?? payload.title,
+        kind: row.kind ?? payload.kind,
+        status: row.status ?? payload.status,
+        actorId: row.actor_id ?? payload.actorId,
+        stepIndex: row.step_index ?? payload.stepIndex,
+        totalSteps: row.total_steps ?? payload.totalSteps,
+        createdAt: row.created_at ?? payload.createdAt,
+        updatedAt: row.updated_at ?? payload.updatedAt,
+        metadata,
+      } satisfies RunRecord;
+    });
+  }
+
+  private ensureColumn(tableName: string, columnName: string, definition: string) {
+    const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (rows.some((row) => row.name === columnName)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+
+  private extractAttachmentsFromMessage(message: MessageRecord): AttachmentAssetRecord[] {
+    const attachments = message.metadata?.attachments;
+    return Array.isArray(attachments) ? (attachments as AttachmentAssetRecord[]) : [];
+  }
+
+  private recordMessageAttachments(message: MessageRecord) {
+    const attachments = this.extractAttachmentsFromMessage(message);
+    if (attachments.length === 0) {
+      return;
+    }
+
+    for (const attachment of attachments) {
+      const alreadyRecorded = this.state.attachments.some(
+        (item) =>
+          item.messageId === message.id &&
+          item.path === attachment.path &&
+          item.conversationId === message.conversationId,
+      );
+      if (alreadyRecorded) {
+        continue;
+      }
+      this.state.attachments.push({
+        id: nanoid(),
+        conversationId: message.conversationId,
+        messageId: message.id,
+        runId: message.runId,
+        name: attachment.name,
+        path: attachment.path,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        createdAt: message.createdAt,
+      });
+    }
+  }
+
   private createEmptyState(): PersistedState {
     return {
       settingsEntries: this.createSettingsEntries(defaultSettings, defaultProfile),
@@ -967,6 +1504,10 @@ export class AppStorage {
       conversations: [],
       messages: [],
       runs: [],
+      attachments: [],
+      artifacts: [],
+      toolInvocations: [],
+      runSteps: [],
       notifications: [],
       extensions: [],
       skillCatalog: [],

@@ -16,7 +16,7 @@ import {
   extractAgentText,
   normalizeMessageContent,
 } from "./deep-agent.ts";
-import { buildMcpLangChainTools } from "./mcp-tools.ts";
+import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
 type UserContactMode = "none" | "manager_relay" | "specialist_direct";
 
@@ -287,11 +287,13 @@ function createEphemeralWorker(input: {
   memoryPaths?: string[];
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const tools = buildMcpLangChainTools({
     servers: input.mcpServers ?? [],
     connectionsById: new Map((input.mcpConnections ?? []).map((connection) => [connection.serverId, connection])),
     workspacePath: input.workspacePath,
+    onInvocation: input.onMcpInvocation,
   });
   return createDeepAgent({
     name: input.name,
@@ -317,6 +319,7 @@ async function invokeWorkerText(input: {
   memoryPaths?: string[];
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const worker = createEphemeralWorker(input);
   const result = await worker.invoke(
@@ -423,6 +426,7 @@ export async function runSpecialistAssignment(input: {
   runId: string;
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const { assignment } = input;
   if (assignment.userContactMode === "manager_relay" || assignment.userContactMode === "specialist_direct") {
@@ -504,6 +508,7 @@ export async function runSpecialistAssignment(input: {
     memoryPaths: ["/memory/MEMORY.md"],
     mcpServers: input.mcpServers,
     mcpConnections: input.mcpConnections,
+    onMcpInvocation: input.onMcpInvocation,
   });
 
   return {
@@ -531,6 +536,7 @@ export async function summarizeTeamConversation(input: {
   runId: string;
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const summaryPrompt = [
     `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
@@ -571,6 +577,7 @@ export async function summarizeTeamConversation(input: {
     memoryPaths: ["/memory/MEMORY.md"],
     mcpServers: input.mcpServers,
     mcpConnections: input.mcpConnections,
+    onMcpInvocation: input.onMcpInvocation,
   });
 
   return {
@@ -592,6 +599,7 @@ export async function generateManagerDirectReply(input: {
   runId: string;
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
 }) {
   const systemPrompt = [
     `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
@@ -615,6 +623,7 @@ export async function generateManagerDirectReply(input: {
     memoryPaths: ["/memory/MEMORY.md"],
     mcpServers: input.mcpServers,
     mcpConnections: input.mcpConnections,
+    onMcpInvocation: input.onMcpInvocation,
   });
 
   return {
