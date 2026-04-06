@@ -1,7 +1,15 @@
 import { createDeepAgent, FilesystemBackend } from "deepagents";
 import { MemorySaver } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
-import type { AgentRecord, MessageRecord, ProviderConfig, UserProfile } from "@teamaligned/shared";
+import type {
+  AgentRecord,
+  McpCatalogRecord,
+  McpConnectionRecord,
+  MessageRecord,
+  ProviderConfig,
+  UserProfile,
+} from "@teamaligned/shared";
+import { buildMcpLangChainTools } from "./mcp-tools.ts";
 
 type DeepAgentSession = {
   signature: string;
@@ -102,10 +110,14 @@ function buildSystemPrompt(input: {
   provider: ProviderConfig;
   profile: UserProfile;
   activeSkill: string | null;
+  activeSkillDefinition: string | null;
+  activeMcpServers: McpCatalogRecord[];
   workspacePath: string;
 }) {
-  const { agent, provider, profile, activeSkill, workspacePath } = input;
+  const { agent, provider, profile, activeSkill, activeSkillDefinition, activeMcpServers, workspacePath } =
+    input;
   const capabilities = agent.capabilities.join("、") || "未设置";
+  const mcpServerNames = activeMcpServers.map((server) => server.name).join("、");
 
   return [
     `你是 ${agent.name}，角色是 ${agent.role}。`,
@@ -114,6 +126,12 @@ function buildSystemPrompt(input: {
     `当前 workspace：${workspacePath}。`,
     `你的能力标签：${capabilities}。`,
     activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前会话未指定额外技能。",
+    activeSkillDefinition
+      ? `请严格参考下面这份 SKILL 定义执行：\n\n${activeSkillDefinition}`
+      : "",
+    activeMcpServers.length > 0
+      ? `当前可用 MCP 服务：${mcpServerNames}。如需外部能力，请优先通过已注入的 MCP tools 调用。`
+      : "当前没有可用 MCP 服务。",
     `当前用户资料：姓名 ${profile.name}，角色 ${profile.role || "未设置"}，团队 ${profile.team || "未设置"}。`,
     "请优先使用与用户相同的语言回复。",
     "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
@@ -142,9 +160,12 @@ function createSignature(input: {
   agent: AgentRecord;
   profile: UserProfile;
   activeSkill: string | null;
+  activeSkillDefinition: string | null;
+  mcpToolSignature: string;
   workspacePath: string;
 }) {
-  const { provider, agent, profile, activeSkill, workspacePath } = input;
+  const { provider, agent, profile, activeSkill, activeSkillDefinition, mcpToolSignature, workspacePath } =
+    input;
   return JSON.stringify({
     provider: {
       id: provider.id,
@@ -166,6 +187,8 @@ function createSignature(input: {
       bio: profile.bio,
     },
     activeSkill,
+    activeSkillDefinition,
+    mcpToolSignature,
     workspacePath,
   });
 }
@@ -199,6 +222,9 @@ export async function invokeSingleChatDeepAgent(input: {
   agent: AgentRecord;
   profile: UserProfile;
   activeSkill: string | null;
+  activeSkillDefinition: string | null;
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
   workspacePath: string;
   history: MessageRecord[];
   latestInput: string;
@@ -210,16 +236,38 @@ export async function invokeSingleChatDeepAgent(input: {
     agent,
     profile,
     activeSkill,
+    activeSkillDefinition,
+    mcpServers,
+    mcpConnections,
     workspacePath,
     history,
     latestInput,
   } = input;
+
+  const mcpConnectionMap = new Map(mcpConnections.map((connection) => [connection.serverId, connection]));
+  const mcpTools = buildMcpLangChainTools({
+    servers: mcpServers,
+    connectionsById: mcpConnectionMap,
+    workspacePath,
+  });
+  const mcpToolSignature = JSON.stringify(
+    mcpServers.map((server) => ({
+      id: server.id,
+      tools: (mcpConnectionMap.get(server.id)?.discoveredTools ?? []).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })),
+    })),
+  );
 
   const signature = createSignature({
     provider,
     agent,
     profile,
     activeSkill,
+    activeSkillDefinition,
+    mcpToolSignature,
     workspacePath,
   });
   const cached = sessions.get(conversationId);
@@ -238,8 +286,11 @@ export async function invokeSingleChatDeepAgent(input: {
               provider,
               profile,
               activeSkill,
+              activeSkillDefinition,
+              activeMcpServers: mcpServers,
               workspacePath,
             }),
+            tools: mcpTools,
             backend: new FilesystemBackend({
               rootDir: workspacePath,
               virtualMode: true,

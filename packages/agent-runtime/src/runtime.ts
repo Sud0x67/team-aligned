@@ -6,23 +6,43 @@ import { nanoid } from "nanoid";
 import { parseSlashCommand } from "@teamaligned/shared";
 import type {
   AgentRecord,
+  AttachmentAssetRecord,
   AppSnapshot,
+  AvatarAssetScope,
+  ConnectMcpInput,
   ConversationRecord,
+  McpCatalogRecord,
   MessageVisibility,
   ProviderConfig,
   RunControlPayload,
+  SaveAttachmentAssetInput,
   RunRecord,
   RunStatus,
   SendInputPayload,
   TeamContext,
   TeamRecord,
+  UpdateAgentSkillsInput,
+  UpdateAgentMcpsInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
+  UpdateTeamMcpsInput,
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
 import { invokeSingleChatDeepAgent, validateProviderForSingleChat } from "./deep-agent.ts";
 import {
+  fetchSkillCatalog,
+  installSkillFromRegistry,
+  readInstalledSkillDefinition,
+} from "./skill-registry.ts";
+import {
+  buildMcpConnection,
+  fetchMcpCatalog,
+  validateLocalMcpLauncher,
+} from "./mcp-registry.ts";
+import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts";
+import {
+  generateManagerDirectReply,
   type TeamSpecialistOutput,
   type TeamFinalResponse,
   planTeamConversation,
@@ -57,6 +77,52 @@ function trimOutput(text: string, max = 2400) {
 function trimHeadline(text: string, max = 120) {
   const value = text.trim().replace(/\s+/g, " ");
   return value.length <= max ? value : `${value.slice(0, max)}...`;
+}
+
+function summarizeAttachments(attachments: AttachmentAssetRecord[]) {
+  if (attachments.length === 0) return "";
+  return attachments.map((attachment) => attachment.name).join("、");
+}
+
+function buildUserMessageContent(input: string, attachments: AttachmentAssetRecord[]) {
+  const trimmed = input.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  return `已上传附件：${summarizeAttachments(attachments)}`;
+}
+
+function buildRuntimePrompt(input: string, attachments: AttachmentAssetRecord[]) {
+  const trimmed = input.trim();
+  if (attachments.length === 0) {
+    return trimmed;
+  }
+
+  const attachmentLines = attachments
+    .map(
+      (attachment) =>
+        `- ${attachment.name}\n  路径：${attachment.path}\n  类型：${attachment.mimeType}\n  大小：${attachment.sizeBytes} bytes`,
+    )
+    .join("\n");
+
+  const body = trimmed || "我上传了一些附件，请结合附件内容帮助我。";
+  return `${body}\n\n附件列表：\n${attachmentLines}`;
+}
+
+function getMcpConfiguredHint(server: McpCatalogRecord) {
+  if (server.transport === "http") {
+    return `${server.name} 已加入本地连接列表。请在扩展页补充远端 URL、请求头或 Token 后，再点击“保存并检测”。`;
+  }
+
+  if (server.authType === "env") {
+    return `${server.name} 已加入本地连接列表。请在扩展页补充环境变量后，再点击“保存并检测”。`;
+  }
+
+  if (server.authType === "header") {
+    return `${server.name} 已加入本地连接列表。请在扩展页补充请求头后，再点击“保存并检测”。`;
+  }
+
+  return `${server.name} 已加入本地连接列表。请在扩展页确认本地启动命令后，再点击“保存并检测”。`;
 }
 
 function extractAgentMentions(input: string, agents: AgentRecord[]) {
@@ -107,6 +173,18 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async init() {
     this.storage.init();
+    try {
+      const catalog = await fetchSkillCatalog();
+      this.storage.replaceSkillCatalog(catalog);
+    } catch {
+      // Keep local cached catalog when remote sync is not available.
+    }
+    try {
+      const catalog = await fetchMcpCatalog();
+      this.storage.replaceMcpCatalog(catalog);
+    } catch {
+      // Keep local cached catalog when remote sync is not available.
+    }
     this.recoverInterruptedRuns();
     this.emitSnapshot();
   }
@@ -124,6 +202,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
     this.storage.resetUnread(payload.conversationId);
 
+    const attachments = payload.attachments ?? [];
     const command = parseSlashCommand(payload.input);
     if (command) {
       this.storage.addMessage({
@@ -151,17 +230,19 @@ export class TeamalignedRuntime extends EventEmitter {
       senderKind: "user",
       messageType: "user",
       visibility: "public",
-      content: payload.input,
+      content: buildUserMessageContent(payload.input, attachments),
       mentions: extractAgentMentions(payload.input, snapshot.agents).map((agent) => agent.id),
       runId: null,
-      metadata: null,
+      metadata: attachments.length > 0 ? { attachments } : null,
       createdAt: Date.now(),
     });
 
+    const runtimeInput = buildRuntimePrompt(payload.input, attachments);
+
     if (conversation.kind === "agent") {
-      await this.startAgentRun(conversation, payload.input);
+      await this.startAgentRun(conversation, runtimeInput);
     } else {
-      await this.startTeamRun(conversation, payload.input);
+      await this.startTeamRun(conversation, runtimeInput);
     }
 
     this.emitSnapshot();
@@ -248,6 +329,208 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async refreshSkillCatalog() {
+    const catalog = await fetchSkillCatalog();
+    this.storage.replaceSkillCatalog(catalog);
+    this.storage.createNotification({
+      type: "extension",
+      title: "Skill catalog 已同步",
+      body: `已同步 ${catalog.length} 个 Skill 元数据。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async installSkill(skillId: string) {
+    const skill = this.storage.getSkillCatalogEntry(skillId);
+    if (!skill) {
+      this.storage.createNotification({
+        type: "system",
+        title: "Skill 安装失败",
+        body: `未找到 Skill：${skillId}`,
+        relatedConversationId: null,
+        relatedRunId: null,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
+
+    const installed = await installSkillFromRegistry({
+      skill,
+      installRoot: this.storage.skillInstallRoot,
+    });
+    this.storage.markSkillInstalled({
+      skillId,
+      installPath: installed.installPath,
+      version: installed.version,
+    });
+    this.storage.createNotification({
+      type: "extension",
+      title: "Skill 已安装",
+      body: `${skill.displayName || skill.name} 已安装到全局目录。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async refreshMcpCatalog() {
+    const catalog = await fetchMcpCatalog();
+    this.storage.replaceMcpCatalog(catalog);
+    this.storage.createNotification({
+      type: "extension",
+      title: "MCP catalog 已同步",
+      body: `已同步 ${catalog.length} 个 MCP 元数据。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async connectMcp(payload: ConnectMcpInput) {
+    const server = this.storage.getMcpCatalogEntry(payload.serverId);
+    if (!server) {
+      this.storage.createNotification({
+        type: "system",
+        title: "MCP 连接失败",
+        body: `未找到 MCP：${payload.serverId}`,
+        relatedConversationId: null,
+        relatedRunId: null,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
+
+    const existing = this.storage.getMcpConnection(server.id);
+    const baseConnection = existing ?? buildMcpConnection(server);
+    const connection = {
+      ...baseConnection,
+      command: payload.command ?? baseConnection.command,
+      args: payload.args ?? baseConnection.args,
+      url: payload.url ?? baseConnection.url,
+      envEntries: {
+        ...baseConnection.envEntries,
+        ...(payload.envEntries ?? {}),
+      },
+      headers: {
+        ...baseConnection.headers,
+        ...(payload.headers ?? {}),
+      },
+      cwd: payload.cwd ?? baseConnection.cwd,
+      enabled: payload.enabled ?? baseConnection.enabled,
+    };
+
+    const launcherIssue = validateLocalMcpLauncher({
+      ...server,
+      launcherCommand: connection.command,
+    });
+    const checkedConnection = launcherIssue
+      ? {
+          ...connection,
+          enabled: false,
+          status: "error" as const,
+          lastCheckedAt: Date.now(),
+          lastError: launcherIssue,
+        }
+      : await healthCheckMcpConnection({
+          catalog: server,
+          connection,
+          workspacePath: connection.cwd || this.storage.workspaceRoot,
+        });
+
+    this.storage.upsertMcpConnection(checkedConnection);
+    this.storage.createNotification({
+      type: checkedConnection.status === "connected" ? "extension" : "system",
+      title:
+        checkedConnection.status === "connected"
+          ? "MCP 已连接"
+          : checkedConnection.status === "configured"
+            ? "MCP 已保存待配置"
+            : "MCP 连接失败",
+      body:
+        checkedConnection.status === "connected"
+          ? `${server.name} 已连接成功，并发现 ${checkedConnection.discoveredTools.length} 个工具。`
+          : checkedConnection.status === "configured"
+            ? getMcpConfiguredHint(server)
+            : `${server.name} 连接失败：${checkedConnection.lastError ?? "未知错误"}`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async checkMcpHealth(serverId: string) {
+    const server = this.storage.getMcpCatalogEntry(serverId);
+    const connection = this.storage.getMcpConnection(serverId);
+    if (!server || !connection) {
+      this.storage.createNotification({
+        type: "system",
+        title: "MCP 检测失败",
+        body: `未找到 MCP 连接：${serverId}`,
+        relatedConversationId: null,
+        relatedRunId: null,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
+
+    const checked = await healthCheckMcpConnection({
+      catalog: server,
+      connection,
+      workspacePath: connection.cwd || this.storage.workspaceRoot,
+    });
+    this.storage.upsertMcpConnection(checked);
+    this.storage.createNotification({
+      type: checked.status === "connected" ? "extension" : "system",
+      title: checked.status === "connected" ? "MCP 检测通过" : "MCP 检测失败",
+      body:
+        checked.status === "connected"
+          ? `${server.name} 当前可用，已发现 ${checked.discoveredTools.length} 个工具。`
+          : `${server.name} 检测失败：${checked.lastError ?? "未知错误"}`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async disconnectMcp(serverId: string) {
+    const server = this.storage.getMcpCatalogEntry(serverId);
+    this.storage.removeMcpConnection(serverId);
+    this.storage.createNotification({
+      type: "extension",
+      title: "MCP 已移除",
+      body: `${server?.name ?? serverId} 已从本地连接列表中移除。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async updateAgentSkills(payload: UpdateAgentSkillsInput) {
+    this.storage.updateAgentSkillWhitelist(payload);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async updateAgentMcps(payload: UpdateAgentMcpsInput) {
+    this.storage.updateAgentMcpWhitelist(payload);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async updateTeamMcps(payload: UpdateTeamMcpsInput) {
+    this.storage.updateTeamMcpWhitelist(payload);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
   async updateSettings(payload: UpdateSettingsInput) {
     this.storage.setSettings(payload);
     this.emitSnapshot();
@@ -266,10 +549,52 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async saveAvatarAsset(input: {
+    scope: AvatarAssetScope;
+    dataUrl: string;
+    fileNameHint?: string;
+  }) {
+    return this.storage.saveAvatarAsset(input);
+  }
+
+  async saveAttachmentAsset(input: SaveAttachmentAssetInput) {
+    return this.storage.saveAttachmentAsset(input);
+  }
+
   async markNotificationsRead() {
     this.storage.markNotificationsRead();
     this.emitSnapshot();
     return this.getSnapshot();
+  }
+
+  private getAvailableMcpServersForConversation(conversation: ConversationRecord) {
+    const pinnedMcp = conversation.meta.pinnedMcp;
+    const allowedIds =
+      conversation.kind === "agent"
+        ? (this.storage.getAgent(conversation.targetId)?.mcpWhitelist ?? [])
+        : (this.storage.getTeam(conversation.targetId)?.mcpWhitelist ?? []);
+
+    const servers = this.storage
+      .listMcpConnections()
+      .filter(
+        (connection) =>
+          connection.enabled && connection.status === "connected" && allowedIds.includes(connection.serverId),
+      )
+      .map((connection) => this.storage.getMcpCatalogEntry(connection.serverId))
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    return servers.sort((left, right) => {
+      if (left.id === pinnedMcp) return -1;
+      if (right.id === pinnedMcp) return 1;
+      return left.name.localeCompare(right.name, "en");
+    });
+  }
+
+  private getAvailableMcpConnectionsForConversation(conversation: ConversationRecord) {
+    const serverIds = new Set(this.getAvailableMcpServersForConversation(conversation).map((server) => server.id));
+    return this.storage
+      .listMcpConnections()
+      .filter((connection) => serverIds.has(connection.serverId) && connection.enabled && connection.status === "connected");
   }
 
   private async handleSlashCommand(
@@ -278,49 +603,143 @@ export class TeamalignedRuntime extends EventEmitter {
     args: string[],
   ) {
     if (commandName === "skills") {
-      const skills = this.storage
-        .listExtensions()
-        .filter((extension) => extension.type === "skill" && extension.installed);
+      const agents = this.storage.listAgents();
+      const availableSkills =
+        conversation.kind === "agent"
+          ? (() => {
+              const agent = agents.find((item) => item.id === conversation.targetId);
+              return this.storage
+                .listSkillCatalog()
+                .filter((skill) => skill.installed && (!!agent ? agent.skillWhitelist.includes(skill.id) : true));
+            })()
+          : this.storage.listSkillCatalog().filter((skill) => skill.installed);
       const currentMeta = conversation.meta;
+      const currentSkillLabel =
+        (currentMeta.activeSkill
+          ? this.storage.findSkillCatalogEntryByNameOrId(currentMeta.activeSkill)?.displayName
+          : null) ?? currentMeta.activeSkill;
 
       if (args.length === 0) {
         this.addSystemMessage(
           conversation.id,
-          `当前可用技能：${skills.map((skill) => skill.name).join("、")}\n当前激活技能：${
-            currentMeta.activeSkill ?? "默认"
+          `当前可用技能：${availableSkills.map((skill) => skill.displayName || skill.name).join("、") || "暂无"}\n当前激活技能：${
+            currentSkillLabel ?? "默认"
           }`,
         );
         return;
       }
 
       const selectedSkill = args.filter((item) => item !== "use").join(" ");
-      const match = skills.find((skill) => skill.name.toLowerCase() === selectedSkill.toLowerCase());
-      const meta = { ...currentMeta, activeSkill: match?.name ?? selectedSkill };
+      const match = availableSkills.find(
+        (skill) =>
+          skill.name.toLowerCase() === selectedSkill.toLowerCase() ||
+          skill.displayName.toLowerCase() === selectedSkill.toLowerCase() ||
+          skill.slug.toLowerCase() === selectedSkill.toLowerCase() ||
+          skill.id.toLowerCase() === selectedSkill.toLowerCase(),
+      );
+      if (!match) {
+        this.addSystemMessage(conversation.id, `当前会话不可用 Skill：${selectedSkill || "未指定"}。`);
+        return;
+      }
+      const meta = { ...currentMeta, activeSkill: match.id };
       this.storage.updateConversationMeta(conversation.id, meta);
       this.addSystemMessage(
         conversation.id,
-        `已为当前会话切换技能：${meta.activeSkill ?? "默认"}。后续回复会优先参考该技能。`,
+        `已为当前会话切换技能：${match.displayName || match.name}。后续回复会优先参考该技能。`,
       );
       return;
     }
 
     if (commandName === "mcp") {
-      const installed = this.storage
-        .listExtensions()
-        .filter((extension) => extension.type === "mcp" && extension.installed);
+      const availableServers = this.getAvailableMcpServersForConversation(conversation);
+      const currentMeta = conversation.meta;
+      const currentMcpLabel =
+        (currentMeta.pinnedMcp ? this.storage.findMcpCatalogEntryByNameOrId(currentMeta.pinnedMcp)?.name : null) ??
+        currentMeta.pinnedMcp;
 
       if (args.length === 0) {
         this.addSystemMessage(
           conversation.id,
-          `当前可用 MCP：${installed.map((item) => item.name).join("、") || "暂无"}。`,
+          `当前可用 MCP：${availableServers.map((item) => item.name).join("、") || "暂无"}\n当前固定 MCP：${
+            currentMcpLabel ?? "未固定"
+          }`,
         );
         return;
       }
 
-      const selected = args.join(" ");
+      const [subcommand, ...restArgs] = args;
+      if (subcommand === "use") {
+        const selected = restArgs.join(" ").trim();
+        const match = availableServers.find(
+          (item) =>
+            item.id.toLowerCase() === selected.toLowerCase() ||
+            item.slug.toLowerCase() === selected.toLowerCase() ||
+            item.name.toLowerCase() === selected.toLowerCase(),
+        );
+        const connection = match ? this.storage.getMcpConnection(match.id) : null;
+        if (!match || !connection || connection.status !== "connected") {
+          this.addSystemMessage(conversation.id, `当前会话不可用 MCP：${selected || "未指定"}。`);
+          return;
+        }
+        this.storage.updateConversationMeta(conversation.id, {
+          ...currentMeta,
+          pinnedMcp: match.id,
+        });
+        this.addSystemMessage(
+          conversation.id,
+          `已为当前会话固定 MCP：${match.name}。\n可用工具：${
+            connection.discoveredTools.map((tool) => tool.name).join("、") || "暂无"
+          }`,
+        );
+        return;
+      }
+
+      if (subcommand === "tools") {
+        const selected = restArgs.join(" ").trim();
+        const match = availableServers.find(
+          (item) =>
+            item.id.toLowerCase() === selected.toLowerCase() ||
+            item.slug.toLowerCase() === selected.toLowerCase() ||
+            item.name.toLowerCase() === selected.toLowerCase(),
+        );
+        const connection = match ? this.storage.getMcpConnection(match.id) : null;
+        if (!match) {
+          this.addSystemMessage(conversation.id, `未找到 MCP：${selected || "未指定"}。`);
+          return;
+        }
+        this.addSystemMessage(
+          conversation.id,
+          `${match.name} 当前工具：${
+            connection?.discoveredTools.map((tool) => tool.name).join("、") ||
+            match.declaredTools.join("、") ||
+            "暂无"
+          }`,
+        );
+        return;
+      }
+
+      const selected = args.join(" ").trim();
+      const match = availableServers.find(
+        (item) =>
+          item.id.toLowerCase() === selected.toLowerCase() ||
+          item.slug.toLowerCase() === selected.toLowerCase() ||
+          item.name.toLowerCase() === selected.toLowerCase(),
+      );
+      const connection = match ? this.storage.getMcpConnection(match.id) : null;
+      if (!match) {
+        this.addSystemMessage(conversation.id, `未找到 MCP：${selected || "未指定"}。`);
+        return;
+      }
+
       this.addSystemMessage(
         conversation.id,
-        `已模拟调用 MCP：${selected}。\n在完整版本中，这里会进入真实 MCP tool 调用链路。`,
+        `${match.name}\n连接状态：${connection?.status ?? "disconnected"}\n协议：${match.transport}\n能力：${
+          match.capabilities.join("、") || "暂无"
+        }\n工具：${
+          connection?.discoveredTools.map((tool) => tool.name).join("、") ||
+          match.declaredTools.join("、") ||
+          "暂无"
+        }`,
       );
       return;
     }
@@ -357,6 +776,14 @@ export class TeamalignedRuntime extends EventEmitter {
     const workspacePath = agent.workspacePath;
     const runId = `run-${nanoid(8)}`;
     const activeSkill = conversation.meta.activeSkill;
+    const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
+    const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
+    const activeSkillRecord = activeSkill ? this.storage.findSkillCatalogEntryByNameOrId(activeSkill) : null;
+    const activeSkillLabel = activeSkillRecord?.displayName || activeSkillRecord?.name || activeSkill;
+    const activeSkillDefinition =
+      activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id)
+        ? readInstalledSkillDefinition(activeSkillRecord)
+        : null;
     const steps: RunStep[] = [
       {
         label: "准备上下文",
@@ -374,7 +801,7 @@ export class TeamalignedRuntime extends EventEmitter {
         label: "检查技能与上下文",
         delayMs: 300,
         execute: () => {
-          const skillText = activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前使用默认技能栈。";
+          const skillText = activeSkillLabel ? `当前会话激活技能：${activeSkillLabel}。` : "当前使用默认技能栈。";
           this.addRunMessage(
             conversation.id,
             runId,
@@ -392,7 +819,10 @@ export class TeamalignedRuntime extends EventEmitter {
             provider: provider!,
             agent,
             profile: snapshot.profile,
-            activeSkill,
+            activeSkill: activeSkillLabel,
+            activeSkillDefinition,
+            mcpServers: availableMcpServers,
+            mcpConnections: availableMcpConnections,
             workspacePath,
             history: this.storage.listMessages(conversation.id),
             latestInput: input,
@@ -402,7 +832,14 @@ export class TeamalignedRuntime extends EventEmitter {
             return;
           }
 
-          const artifactPath = this.writeAgentArtifact(workspacePath, runId, agent, input, response, activeSkill);
+          const artifactPath = this.writeAgentArtifact(
+            workspacePath,
+            runId,
+            agent,
+            input,
+            response,
+            activeSkillLabel,
+          );
           const memoryPath = this.appendMemory(
             workspacePath,
             "memory/MEMORY.md",
@@ -418,7 +855,7 @@ export class TeamalignedRuntime extends EventEmitter {
             content: response,
             mentions: ["user"],
             runId,
-            metadata: { skill: activeSkill },
+            metadata: { skill: activeSkillRecord?.id ?? activeSkill, skillLabel: activeSkillLabel },
             createdAt: Date.now(),
           });
           this.addRunMessage(
@@ -473,6 +910,8 @@ export class TeamalignedRuntime extends EventEmitter {
     };
     this.storage.updateTeamContext(team.id, updatedContext);
     const workspacePath = team.workspacePath;
+    const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
+    const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const specialistOutputs: TeamSpecialistOutput[] = [];
     let plan: Awaited<ReturnType<typeof planTeamConversation>> | null = null;
     let finalResponse: TeamFinalResponse | null = null;
@@ -510,6 +949,8 @@ export class TeamalignedRuntime extends EventEmitter {
             })),
             userInput: input,
             explicitMentionIds: explicitMentions,
+            mcpServers: availableMcpServers,
+            mcpConnections: availableMcpConnections,
           });
 
           updatedContext = {
@@ -615,6 +1056,8 @@ export class TeamalignedRuntime extends EventEmitter {
               workspacePath,
               conversationId: conversation.id,
               runId,
+              mcpServers: availableMcpServers,
+              mcpConnections: availableMcpConnections,
             });
             specialistOutputs.push(output);
 
@@ -656,12 +1099,22 @@ export class TeamalignedRuntime extends EventEmitter {
           }
 
           if (plan.strategy === "manager_direct") {
-            finalResponse = {
-              speaker: manager,
-              content:
-                plan.directReply || `${manager.name}：我已经收到你的请求，会先给出一个清晰的处理建议。`,
-              summary: trimHeadline(plan.intentSummary || input),
-            };
+            finalResponse = await generateManagerDirectReply({
+              provider: provider!,
+              profile: snapshot.profile,
+              team: {
+                ...team,
+                context: updatedContext,
+              },
+              manager,
+              context: updatedContext,
+              userInput: input,
+              workspacePath,
+              conversationId: conversation.id,
+              runId,
+              mcpServers: availableMcpServers,
+              mcpConnections: availableMcpConnections,
+            });
           } else if (plan.strategy === "specialist_question") {
             const directQuestion =
               specialistOutputs.find((output) => output.userContactMode === "specialist_direct")
@@ -705,6 +1158,8 @@ export class TeamalignedRuntime extends EventEmitter {
               workspacePath,
               conversationId: conversation.id,
               runId,
+              mcpServers: availableMcpServers,
+              mcpConnections: availableMcpConnections,
             });
           }
 

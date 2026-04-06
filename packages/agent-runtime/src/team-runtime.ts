@@ -3,6 +3,8 @@ import { MemorySaver } from "@langchain/langgraph";
 import { z } from "zod";
 import type {
   AgentRecord,
+  McpCatalogRecord,
+  McpConnectionRecord,
   MessageVisibility,
   ProviderConfig,
   TeamContext,
@@ -14,6 +16,7 @@ import {
   extractAgentText,
   normalizeMessageContent,
 } from "./deep-agent.ts";
+import { buildMcpLangChainTools } from "./mcp-tools.ts";
 
 type UserContactMode = "none" | "manager_relay" | "specialist_direct";
 
@@ -282,11 +285,19 @@ function createEphemeralWorker(input: {
   workspacePath: string;
   systemPrompt: string;
   memoryPaths?: string[];
+  mcpServers?: McpCatalogRecord[];
+  mcpConnections?: McpConnectionRecord[];
 }) {
+  const tools = buildMcpLangChainTools({
+    servers: input.mcpServers ?? [],
+    connectionsById: new Map((input.mcpConnections ?? []).map((connection) => [connection.serverId, connection])),
+    workspacePath: input.workspacePath,
+  });
   return createDeepAgent({
     name: input.name,
     model: createProviderModel(input.provider),
     systemPrompt: input.systemPrompt,
+    tools,
     backend: new FilesystemBackend({
       rootDir: input.workspacePath,
       virtualMode: true,
@@ -304,6 +315,8 @@ async function invokeWorkerText(input: {
   message: string;
   threadId: string;
   memoryPaths?: string[];
+  mcpServers?: McpCatalogRecord[];
+  mcpConnections?: McpConnectionRecord[];
 }) {
   const worker = createEphemeralWorker(input);
   const result = await worker.invoke(
@@ -330,6 +343,8 @@ export async function planTeamConversation(input: {
   history: { senderName: string; visibility: string; content: string }[];
   userInput: string;
   explicitMentionIds: string[];
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
 }) {
   const model = createProviderModel(input.provider).withStructuredOutput(teamPlanSchema);
   const prompt = [
@@ -351,6 +366,8 @@ export async function planTeamConversation(input: {
     "候选 specialist：",
     buildSpecialistRoster(input.specialists),
     "",
+    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+    "",
     "最近公开对话：",
     buildRecentHistory(selectPublicHistory(input.history)),
     "",
@@ -360,6 +377,7 @@ export async function planTeamConversation(input: {
     `用户显式提及的成员 id：${input.explicitMentionIds.join("、") || "无"}`,
     "",
     "输出要求：",
+    "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
     "- strategy 只能是 manager_direct / specialist_question / collaborate",
     "- 如果是 collaborate，请给出 assignments",
     "- 如果是 specialist_question，请尽量给出 speakerSpecialistId、userQuestion 和 kickoffReply",
@@ -403,6 +421,8 @@ export async function runSpecialistAssignment(input: {
   workspacePath: string;
   conversationId: string;
   runId: string;
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
 }) {
   const { assignment } = input;
   if (assignment.userContactMode === "manager_relay" || assignment.userContactMode === "specialist_direct") {
@@ -423,6 +443,7 @@ export async function runSpecialistAssignment(input: {
         `用户交互方式：${assignment.userContactMode}`,
         `交互原因：${assignment.questionReason}`,
         "",
+        "你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释。",
         "请输出两部分：",
         "- internalNote：给 manager 的内部说明，解释为什么需要确认",
         "- userQuestionDraft：要确认的那一句问题",
@@ -455,6 +476,7 @@ export async function runSpecialistAssignment(input: {
     "默认你是在给 manager 回报，不要直接对用户下结论，也不要自称是 manager。",
     "如果任务信息不足，可以明确指出缺口，但先给出你目前能判断的内容。",
     "回复尽量简洁、具体、可执行，优先使用与用户相同的语言。",
+    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
     "",
     "群组上下文：",
     buildContextText(input.team, input.context),
@@ -480,6 +502,8 @@ export async function runSpecialistAssignment(input: {
     message: workerMessage,
     threadId: `${input.conversationId}:${input.runId}:${assignment.specialist.id}`,
     memoryPaths: ["/memory/MEMORY.md"],
+    mcpServers: input.mcpServers,
+    mcpConnections: input.mcpConnections,
   });
 
   return {
@@ -505,6 +529,8 @@ export async function summarizeTeamConversation(input: {
   workspacePath: string;
   conversationId: string;
   runId: string;
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
 }) {
   const summaryPrompt = [
     `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
@@ -513,6 +539,7 @@ export async function summarizeTeamConversation(input: {
     "不要原样转抄内部过程；可以适度总结不同 specialist 的观点。",
     "如果存在明显风险或待确认项，请在回复里直接说清楚。",
     "请优先使用与用户相同的语言。",
+    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
     "",
     "群组上下文：",
     buildContextText(input.team, input.context),
@@ -542,6 +569,52 @@ export async function summarizeTeamConversation(input: {
     message,
     threadId: `${input.conversationId}:${input.runId}:manager-summary`,
     memoryPaths: ["/memory/MEMORY.md"],
+    mcpServers: input.mcpServers,
+    mcpConnections: input.mcpConnections,
+  });
+
+  return {
+    speaker: input.manager,
+    content,
+    summary: compact(content),
+  } satisfies TeamFinalResponse;
+}
+
+export async function generateManagerDirectReply(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  manager: AgentRecord;
+  profile: UserProfile;
+  context: TeamContext;
+  userInput: string;
+  workspacePath: string;
+  conversationId: string;
+  runId: string;
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
+}) {
+  const systemPrompt = [
+    `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
+    "这轮请求由你直接处理，不需要拉其他 specialist。",
+    "请像一个真实团队负责人一样直接回复用户，优先给出清晰、具体、可执行的答案。",
+    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+    "",
+    "群组上下文：",
+    buildContextText(input.team, input.context),
+    "",
+    `当前用户：${input.profile.name} / ${input.profile.role || "未设置"}`,
+  ].join("\n");
+
+  const content = await invokeWorkerText({
+    name: input.manager.name,
+    provider: input.provider,
+    workspacePath: input.workspacePath,
+    systemPrompt,
+    message: `用户原始请求：${input.userInput}\n请直接完成本轮回复。`,
+    threadId: `${input.conversationId}:${input.runId}:manager-direct`,
+    memoryPaths: ["/memory/MEMORY.md"],
+    mcpServers: input.mcpServers,
+    mcpConnections: input.mcpConnections,
   });
 
   return {

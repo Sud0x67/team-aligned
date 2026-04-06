@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  Blocks,
   Bot,
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
   Plus,
+  Puzzle,
   Search,
   Users,
   X,
@@ -106,13 +108,32 @@ function TabButton({
 
 export function ManagePage() {
   const navigate = useNavigate();
-  const { agents, teams, runs, settings, createAgent, createTeam, openWorkspace } = useAppStore();
+  const {
+    agents,
+    teams,
+    runs,
+    skillCatalog,
+    mcpCatalog,
+    mcpConnections,
+    settings,
+    createAgent,
+    createTeam,
+    openWorkspace,
+    updateAgentSkills,
+    updateAgentMcps,
+    updateTeamMcps,
+  } = useAppStore();
   const t = createTranslator(settings.language);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("agents");
   const [search, setSearch] = useState("");
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
+  const [editingAgentSkills, setEditingAgentSkills] = useState<AgentRecord | null>(null);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [editingAgentMcps, setEditingAgentMcps] = useState<AgentRecord | null>(null);
+  const [editingTeamMcps, setEditingTeamMcps] = useState<TeamRecord | null>(null);
+  const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([]);
   const [agentForm, setAgentForm] = useState(defaultAgentForm);
   const [teamForm, setTeamForm] = useState(defaultTeamForm);
 
@@ -143,6 +164,19 @@ export function ManagePage() {
     [teams],
   );
 
+  const installedSkills = useMemo(
+    () => skillCatalog.filter((skill) => skill.installed),
+    [skillCatalog],
+  );
+  const connectedMcps = useMemo(() => {
+    const connectedIds = new Set(
+      mcpConnections
+        .filter((connection) => connection.enabled && connection.status === "connected")
+        .map((connection) => connection.serverId),
+    );
+    return mcpCatalog.filter((server) => connectedIds.has(server.id));
+  }, [mcpCatalog, mcpConnections]);
+
   const submitAgent = async () => {
     if (!agentForm.name.trim() || !agentForm.role.trim()) return;
     await createAgent({
@@ -172,6 +206,57 @@ export function ManagePage() {
     });
     setTeamForm(defaultTeamForm);
     setShowTeamForm(false);
+  };
+
+  const openSkillEditor = (agent: AgentRecord) => {
+    setEditingAgentSkills(agent);
+    setSelectedSkillIds(
+      agent.skillWhitelist.filter((skillId) => installedSkills.some((skill) => skill.id === skillId)),
+    );
+  };
+
+  const submitAgentSkills = async () => {
+    if (!editingAgentSkills) return;
+    await updateAgentSkills({
+      agentId: editingAgentSkills.id,
+      skillIds: selectedSkillIds,
+    });
+    setEditingAgentSkills(null);
+    setSelectedSkillIds([]);
+  };
+
+  const openAgentMcpEditor = (agent: AgentRecord) => {
+    setEditingAgentMcps(agent);
+    setSelectedMcpIds(
+      agent.mcpWhitelist.filter((serverId) => connectedMcps.some((server) => server.id === serverId)),
+    );
+  };
+
+  const openTeamMcpEditor = (team: TeamRecord) => {
+    setEditingTeamMcps(team);
+    setSelectedMcpIds(
+      team.mcpWhitelist.filter((serverId) => connectedMcps.some((server) => server.id === serverId)),
+    );
+  };
+
+  const submitAgentMcps = async () => {
+    if (!editingAgentMcps) return;
+    await updateAgentMcps({
+      agentId: editingAgentMcps.id,
+      serverIds: selectedMcpIds,
+    });
+    setEditingAgentMcps(null);
+    setSelectedMcpIds([]);
+  };
+
+  const submitTeamMcps = async () => {
+    if (!editingTeamMcps) return;
+    await updateTeamMcps({
+      teamId: editingTeamMcps.id,
+      serverIds: selectedMcpIds,
+    });
+    setEditingTeamMcps(null);
+    setSelectedMcpIds([]);
   };
 
   return (
@@ -225,74 +310,161 @@ export function ManagePage() {
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {visibleAgents.map((agent) => (
-                <div
-                  key={agent.id}
-                  className="group rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-colors hover:border-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
-                >
-                  <div className="mb-4 flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <AgentAvatar agent={agent} />
-                      <div>
-                        <h4 className="text-[15px] font-semibold text-[var(--foreground)]">{agent.name}</h4>
-                        <p className="text-[12px] text-[var(--muted-foreground)]">{agent.role}</p>
+                (() => {
+                  const whitelistedSkills = installedSkills.filter((skill) =>
+                    agent.skillWhitelist.includes(skill.id),
+                  );
+                  const whitelistedMcps = connectedMcps.filter((server) =>
+                    agent.mcpWhitelist.includes(server.id),
+                  );
+
+                  return (
+                    <div
+                      key={agent.id}
+                      className="group rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-colors hover:border-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
+                    >
+                      <div className="mb-4 flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <AgentAvatar agent={agent} />
+                          <div>
+                            <h4 className="text-[15px] font-semibold text-[var(--foreground)]">{agent.name}</h4>
+                            <p className="text-[12px] text-[var(--muted-foreground)]">{agent.role}</p>
+                          </div>
+                        </div>
+                        <button className="rounded-lg p-1.5 opacity-0 transition-all hover:bg-[var(--muted)] group-hover:opacity-100">
+                          <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
+                        </button>
+                      </div>
+
+                      <p className="mb-4 text-[13px] leading-6 text-[var(--muted-foreground)]">
+                        {agent.description}
+                      </p>
+
+                      <div className="mb-4 flex flex-wrap gap-1.5">
+                        {agent.capabilities.slice(0, 3).map((capability) => (
+                          <span
+                            key={capability}
+                            className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]"
+                          >
+                            {capability}
+                          </span>
+                        ))}
+                        {agent.capabilities.length > 3 ? (
+                          <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
+                            +{agent.capabilities.length - 3}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--foreground)]">
+                            <Puzzle className="h-3.5 w-3.5 text-[var(--primary)]" />
+                            {t.manage("skillWhitelist")}
+                          </div>
+                          <button
+                            onClick={() =>
+                              installedSkills.length > 0 ? openSkillEditor(agent) : navigate("/extensions")
+                            }
+                            className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                          >
+                            {installedSkills.length > 0 ? t.manage("configureSkills") : t.manage("openExtensions")}
+                          </button>
+                        </div>
+                        {whitelistedSkills.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {whitelistedSkills.slice(0, 3).map((skill) => (
+                              <span
+                                key={skill.id}
+                                className="rounded-md bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] text-[var(--primary)]"
+                              >
+                                {settings.language === "zh" ? skill.displayName || skill.name : skill.name}
+                              </span>
+                            ))}
+                            {whitelistedSkills.length > 3 ? (
+                              <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
+                                +{whitelistedSkills.length - 3}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-[var(--muted-foreground)]">
+                            {installedSkills.length > 0 ? t.manage("noAgentSkills") : t.manage("noSkillsInstalled")}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--foreground)]">
+                            <Blocks className="h-3.5 w-3.5 text-[var(--primary)]" />
+                            {t.manage("mcpWhitelist")}
+                          </div>
+                          <button
+                            onClick={() =>
+                              connectedMcps.length > 0 ? openAgentMcpEditor(agent) : navigate("/extensions")
+                            }
+                            className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                          >
+                            {connectedMcps.length > 0 ? t.manage("configureMcps") : t.manage("openExtensions")}
+                          </button>
+                        </div>
+                        {whitelistedMcps.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {whitelistedMcps.slice(0, 3).map((server) => (
+                              <span
+                                key={server.id}
+                                className="rounded-md bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] text-[var(--primary)]"
+                              >
+                                {server.name}
+                              </span>
+                            ))}
+                            {whitelistedMcps.length > 3 ? (
+                              <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
+                                +{whitelistedMcps.length - 3}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-[var(--muted-foreground)]">
+                            {connectedMcps.length > 0 ? t.manage("noAgentMcps") : t.manage("noMcpsConnected")}
+                          </p>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => openWorkspace(agent.workspacePath)}
+                        className="mb-4 flex w-full items-center gap-1.5 rounded-lg text-left text-[12px] text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{agent.workspacePath}</span>
+                      </button>
+
+                      <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
+                        <div className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)]">
+                          <Zap className="h-3.5 w-3.5" />
+                          {t.manage("completedTasks")} {completedRunsByActor.get(agent.id) ?? 0}{" "}
+                          {t.manage("tasksUnit")}
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] ${
+                            agent.status === "online"
+                              ? "bg-emerald-500/10 text-emerald-500"
+                              : agent.status === "busy"
+                                ? "bg-amber-500/10 text-amber-500"
+                                : "bg-[color-mix(in_srgb,var(--muted-foreground)_12%,transparent)] text-[var(--muted-foreground)]"
+                          }`}
+                        >
+                          {agent.status === "online"
+                            ? t.dashboard("online")
+                            : agent.status === "busy"
+                              ? t.dashboard("busy")
+                              : t.dashboard("offline")}
+                        </span>
                       </div>
                     </div>
-                    <button className="rounded-lg p-1.5 opacity-0 transition-all hover:bg-[var(--muted)] group-hover:opacity-100">
-                      <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
-                    </button>
-                  </div>
-
-                  <p className="mb-4 text-[13px] leading-6 text-[var(--muted-foreground)]">
-                    {agent.description}
-                  </p>
-
-                  <div className="mb-4 flex flex-wrap gap-1.5">
-                    {agent.capabilities.slice(0, 3).map((capability) => (
-                      <span
-                        key={capability}
-                        className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]"
-                      >
-                        {capability}
-                      </span>
-                    ))}
-                    {agent.capabilities.length > 3 ? (
-                      <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
-                        +{agent.capabilities.length - 3}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <button
-                    onClick={() => openWorkspace(agent.workspacePath)}
-                    className="mb-4 flex w-full items-center gap-1.5 rounded-lg text-left text-[12px] text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
-                  >
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{agent.workspacePath}</span>
-                  </button>
-
-                  <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
-                    <div className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)]">
-                      <Zap className="h-3.5 w-3.5" />
-                      {t.manage("completedTasks")} {completedRunsByActor.get(agent.id) ?? 0}{" "}
-                      {t.manage("tasksUnit")}
-                    </div>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] ${
-                        agent.status === "online"
-                          ? "bg-emerald-500/10 text-emerald-500"
-                          : agent.status === "busy"
-                            ? "bg-amber-500/10 text-amber-500"
-                            : "bg-[color-mix(in_srgb,var(--muted-foreground)_12%,transparent)] text-[var(--muted-foreground)]"
-                      }`}
-                    >
-                      {agent.status === "online"
-                        ? t.dashboard("online")
-                        : agent.status === "busy"
-                          ? t.dashboard("busy")
-                          : t.dashboard("offline")}
-                    </span>
-                  </div>
-                </div>
+                  );
+                })()
               ))}
             </div>
           </div>
@@ -319,6 +491,7 @@ export function ManagePage() {
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {visibleTeams.map((team) => {
                 const members = agents.filter((agent) => team.memberIds.includes(agent.id));
+                const whitelistedMcps = connectedMcps.filter((server) => team.mcpWhitelist.includes(server.id));
                 return (
                   <div
                     key={team.id}
@@ -365,6 +538,44 @@ export function ManagePage() {
                           </div>
                         ) : null}
                       </div>
+                    </div>
+
+                    <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--foreground)]">
+                          <Blocks className="h-3.5 w-3.5 text-[var(--primary)]" />
+                          {t.manage("mcpWhitelist")}
+                        </div>
+                        <button
+                          onClick={() =>
+                            connectedMcps.length > 0 ? openTeamMcpEditor(team) : navigate("/extensions")
+                          }
+                          className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                        >
+                          {connectedMcps.length > 0 ? t.manage("configureMcps") : t.manage("openExtensions")}
+                        </button>
+                      </div>
+                      {whitelistedMcps.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {whitelistedMcps.slice(0, 3).map((server) => (
+                            <span
+                              key={server.id}
+                              className="rounded-md bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] text-[var(--primary)]"
+                            >
+                              {server.name}
+                            </span>
+                          ))}
+                          {whitelistedMcps.length > 3 ? (
+                            <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
+                              +{whitelistedMcps.length - 3}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-[var(--muted-foreground)]">
+                          {connectedMcps.length > 0 ? t.manage("noAgentMcps") : t.manage("noMcpsConnected")}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex gap-2 border-t border-[var(--border)] pt-3">
@@ -418,6 +629,8 @@ export function ManagePage() {
                   agentForm.avatarPath ? t.common("changeAvatar") : t.common("uploadAvatar")
                 }
                 removeLabel={t.common("removeAvatar")}
+                scope="agents"
+                fileNameHint={agentForm.name || "agent"}
                 onChange={(avatarPath) => setAgentForm((current) => ({ ...current, avatarPath }))}
               />
               <div>
@@ -512,6 +725,8 @@ export function ManagePage() {
                   teamForm.avatarPath ? t.common("changeAvatar") : t.common("uploadAvatar")
                 }
                 removeLabel={t.common("removeAvatar")}
+                scope="teams"
+                fileNameHint={teamForm.name || "team"}
                 onChange={(avatarPath) => setTeamForm((current) => ({ ...current, avatarPath }))}
               />
               <div>
@@ -599,6 +814,271 @@ export function ManagePage() {
                 className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
               >
                 {t.manage("create")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingAgentSkills ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-[18px] font-semibold text-[var(--foreground)]">
+                  {editingAgentSkills.name} · {t.manage("skillWhitelist")}
+                </h2>
+                <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
+                  {t.manage("configureSkills")}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingAgentSkills(null);
+                  setSelectedSkillIds([]);
+                }}
+                className="rounded-lg p-1.5 hover:bg-[var(--muted)]"
+              >
+                <X className="h-5 w-5 text-[var(--muted-foreground)]" />
+              </button>
+            </div>
+
+            {installedSkills.length > 0 ? (
+              <div className="space-y-3">
+                {installedSkills.map((skill) => {
+                  const selected = selectedSkillIds.includes(skill.id);
+                  return (
+                    <button
+                      key={skill.id}
+                      onClick={() =>
+                        setSelectedSkillIds((current) =>
+                          selected
+                            ? current.filter((id) => id !== skill.id)
+                            : [...current, skill.id],
+                        )
+                      }
+                      className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                        selected
+                          ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                          : "border-[var(--border)] bg-[var(--background)] hover:bg-[var(--muted)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[14px] font-medium text-[var(--foreground)]">
+                            {settings.language === "zh" ? skill.displayName || skill.name : skill.name}
+                          </p>
+                          <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                            {skill.description}
+                          </p>
+                        </div>
+                        <div
+                          className={`h-4 w-4 rounded-full border ${
+                            selected
+                              ? "border-[var(--primary)] bg-[var(--primary)]"
+                              : "border-[var(--border)] bg-transparent"
+                          }`}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] p-4 text-[13px] text-[var(--muted-foreground)]">
+                {t.manage("noSkillsInstalled")}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setEditingAgentSkills(null);
+                  setSelectedSkillIds([]);
+                }}
+                className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-[14px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              >
+                {t.manage("cancel")}
+              </button>
+              <button
+                onClick={() => void submitAgentSkills()}
+                className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
+              >
+                {t.manage("saveSkills")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingAgentMcps ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-[18px] font-semibold text-[var(--foreground)]">
+                  {editingAgentMcps.name} · {t.manage("mcpWhitelist")}
+                </h2>
+                <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
+                  {t.manage("configureMcps")}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingAgentMcps(null);
+                  setSelectedMcpIds([]);
+                }}
+                className="rounded-lg p-1.5 hover:bg-[var(--muted)]"
+              >
+                <X className="h-5 w-5 text-[var(--muted-foreground)]" />
+              </button>
+            </div>
+
+            {connectedMcps.length > 0 ? (
+              <div className="space-y-3">
+                {connectedMcps.map((server) => {
+                  const selected = selectedMcpIds.includes(server.id);
+                  return (
+                    <button
+                      key={server.id}
+                      onClick={() =>
+                        setSelectedMcpIds((current) =>
+                          selected ? current.filter((id) => id !== server.id) : [...current, server.id],
+                        )
+                      }
+                      className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                        selected
+                          ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                          : "border-[var(--border)] bg-[var(--background)] hover:bg-[var(--muted)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[14px] font-medium text-[var(--foreground)]">{server.name}</p>
+                          <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                            {server.description}
+                          </p>
+                        </div>
+                        <div
+                          className={`h-4 w-4 rounded-full border ${
+                            selected
+                              ? "border-[var(--primary)] bg-[var(--primary)]"
+                              : "border-[var(--border)] bg-transparent"
+                          }`}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] p-4 text-[13px] text-[var(--muted-foreground)]">
+                {t.manage("noMcpsConnected")}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setEditingAgentMcps(null);
+                  setSelectedMcpIds([]);
+                }}
+                className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-[14px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              >
+                {t.manage("cancel")}
+              </button>
+              <button
+                onClick={() => void submitAgentMcps()}
+                className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
+              >
+                {t.manage("saveMcps")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingTeamMcps ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-[18px] font-semibold text-[var(--foreground)]">
+                  {editingTeamMcps.name} · {t.manage("mcpWhitelist")}
+                </h2>
+                <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
+                  {t.manage("configureMcps")}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingTeamMcps(null);
+                  setSelectedMcpIds([]);
+                }}
+                className="rounded-lg p-1.5 hover:bg-[var(--muted)]"
+              >
+                <X className="h-5 w-5 text-[var(--muted-foreground)]" />
+              </button>
+            </div>
+
+            {connectedMcps.length > 0 ? (
+              <div className="space-y-3">
+                {connectedMcps.map((server) => {
+                  const selected = selectedMcpIds.includes(server.id);
+                  return (
+                    <button
+                      key={server.id}
+                      onClick={() =>
+                        setSelectedMcpIds((current) =>
+                          selected ? current.filter((id) => id !== server.id) : [...current, server.id],
+                        )
+                      }
+                      className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                        selected
+                          ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                          : "border-[var(--border)] bg-[var(--background)] hover:bg-[var(--muted)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[14px] font-medium text-[var(--foreground)]">{server.name}</p>
+                          <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                            {server.description}
+                          </p>
+                        </div>
+                        <div
+                          className={`h-4 w-4 rounded-full border ${
+                            selected
+                              ? "border-[var(--primary)] bg-[var(--primary)]"
+                              : "border-[var(--border)] bg-transparent"
+                          }`}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--background)] p-4 text-[13px] text-[var(--muted-foreground)]">
+                {t.manage("noMcpsConnected")}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setEditingTeamMcps(null);
+                  setSelectedMcpIds([]);
+                }}
+                className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-[14px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              >
+                {t.manage("cancel")}
+              </button>
+              <button
+                onClick={() => void submitTeamMcps()}
+                className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
+              >
+                {t.manage("saveMcps")}
               </button>
             </div>
           </div>

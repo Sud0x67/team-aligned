@@ -18,6 +18,8 @@ export function AvatarPicker({
   color,
   uploadLabel,
   removeLabel,
+  scope,
+  fileNameHint,
   onChange,
 }: {
   label: string;
@@ -26,6 +28,8 @@ export function AvatarPicker({
   color: string;
   uploadLabel: string;
   removeLabel: string;
+  scope: "profile" | "agents" | "teams";
+  fileNameHint?: string;
   onChange: (value: string | null) => void;
 }) {
   const inputId = useId();
@@ -72,7 +76,14 @@ export function AvatarPicker({
             if (!file) return;
             setLoading(true);
             void fileToDataUrl(file)
-              .then((dataUrl) => onChange(dataUrl))
+              .then((dataUrl) =>
+                window.teamaligned.saveAvatarAsset({
+                  scope,
+                  dataUrl,
+                  fileNameHint: fileNameHint || file.name.replace(/\.[^.]+$/, ""),
+                }),
+              )
+              .then((assetPath) => onChange(assetPath))
               .catch(() => undefined)
               .finally(() => {
                 setLoading(false);

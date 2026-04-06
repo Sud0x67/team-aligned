@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { createTranslator } from "../i18n";
+import { resolveAssetSrc } from "../lib/asset-src";
 import { useAppStore } from "../store/use-app-store";
 import { ProfileModal } from "./profile-modal";
 import { TeamAlignedLogo } from "./teamaligned-logo";
@@ -215,7 +216,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full bg-white/15 text-sm font-semibold text-white">
                 {profile.avatarPath ? (
-                  <img src={profile.avatarPath} alt={profile.name} className="h-full w-full object-cover" />
+                  <img
+                    src={resolveAssetSrc(profile.avatarPath) ?? ""}
+                    alt={profile.name}
+                    className="h-full w-full object-cover"
+                  />
                 ) : (
                   profile.name.slice(0, 1) || "A"
                 )}

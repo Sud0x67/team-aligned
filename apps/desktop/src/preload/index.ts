@@ -1,14 +1,21 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AttachmentAssetRecord,
   AppSnapshot,
+  ConnectMcpInput,
   CreateAgentInput,
   CreateTeamInput,
   RunControlPayload,
+  SaveAttachmentAssetInput,
+  SaveAvatarAssetInput,
   SendInputPayload,
   TeamalignedApi,
+  UpdateAgentSkillsInput,
+  UpdateAgentMcpsInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
+  UpdateTeamMcpsInput,
 } from "@shared";
 
 const api: TeamalignedApi = {
@@ -17,14 +24,30 @@ const api: TeamalignedApi = {
   controlRun: (payload: RunControlPayload) => ipcRenderer.invoke("teamaligned:control-run", payload),
   createAgent: (payload: CreateAgentInput) => ipcRenderer.invoke("teamaligned:create-agent", payload),
   createTeam: (payload: CreateTeamInput) => ipcRenderer.invoke("teamaligned:create-team", payload),
+  refreshSkillCatalog: () => ipcRenderer.invoke("teamaligned:refresh-skill-catalog"),
+  installSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:install-skill", skillId),
+  refreshMcpCatalog: () => ipcRenderer.invoke("teamaligned:refresh-mcp-catalog"),
+  connectMcp: (payload: ConnectMcpInput) => ipcRenderer.invoke("teamaligned:connect-mcp", payload),
+  checkMcpHealth: (serverId: string) => ipcRenderer.invoke("teamaligned:check-mcp-health", serverId),
+  disconnectMcp: (serverId: string) => ipcRenderer.invoke("teamaligned:disconnect-mcp", serverId),
   toggleExtension: (extensionId: string) =>
     ipcRenderer.invoke("teamaligned:toggle-extension", extensionId),
+  updateAgentSkills: (payload: UpdateAgentSkillsInput) =>
+    ipcRenderer.invoke("teamaligned:update-agent-skills", payload),
+  updateAgentMcps: (payload: UpdateAgentMcpsInput) =>
+    ipcRenderer.invoke("teamaligned:update-agent-mcps", payload),
+  updateTeamMcps: (payload: UpdateTeamMcpsInput) =>
+    ipcRenderer.invoke("teamaligned:update-team-mcps", payload),
   updateSettings: (payload: UpdateSettingsInput) =>
     ipcRenderer.invoke("teamaligned:update-settings", payload),
   updateProfile: (payload: UpdateProfileInput) =>
     ipcRenderer.invoke("teamaligned:update-profile", payload),
   updateProvider: (payload: UpdateProviderInput) =>
     ipcRenderer.invoke("teamaligned:update-provider", payload),
+  saveAvatarAsset: (payload: SaveAvatarAssetInput) =>
+    ipcRenderer.invoke("teamaligned:save-avatar-asset", payload),
+  saveAttachmentAsset: (payload: SaveAttachmentAssetInput): Promise<AttachmentAssetRecord> =>
+    ipcRenderer.invoke("teamaligned:save-attachment-asset", payload),
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   openWorkspace: (path: string) => ipcRenderer.invoke("teamaligned:open-workspace", path),
   subscribe: (listener: (snapshot: AppSnapshot) => void) => {
@@ -37,4 +60,3 @@ const api: TeamalignedApi = {
 };
 
 contextBridge.exposeInMainWorld("teamaligned", api);
-

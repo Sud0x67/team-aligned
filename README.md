@@ -42,6 +42,7 @@
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)
 - [群组运行时设计](./docs/group-runtime-design.md)
+- [MCP Registry 设计](./docs/mcp-registry-design.md)
 - [原型对齐说明](./docs/prototype-spec.md)
 - [MVP 计划](./docs/mvp-plan.md)
 - [路线与 TODO](./docs/roadmap.md)
@@ -60,13 +61,17 @@
 - Workspace 打开入口、通知、Provider/Profile/Settings 编辑
 - Agent、群组、个人资料头像上传与本地保存
 - 扩展中心、管理页、设置页的 Figma 对齐首版
+- Skills registry 同步、全局安装与 Agent Skill 白名单
+- MCP registry 同步、本地连接配置、健康检查、Agent/Team 白名单和 `/mcp use/tools`
 
 ## 当前说明
 
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
+- 当前桌面端本地数据目录统一使用 `~/teamaligned`；如果旧版本数据还在 `~/.teamaligned` 或 Electron `userData` 目录中，启动时会自动迁移。
+- 持久层设计正在收敛为三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
-- 群聊真实调度、真实 MCP 调用和真实 Skills 执行仍在后续版本中继续替换接入。
+- `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP、Skill 脚本执行和更完整的 MCP run 可视化仍在后续版本中继续补齐。
 - 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 

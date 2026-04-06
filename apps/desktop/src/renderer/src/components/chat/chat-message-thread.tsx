@@ -1,6 +1,7 @@
-import { Bot, ShieldAlert } from "lucide-react";
-import type { MessageRecord, RunRecord } from "@shared";
+import { Bot, Paperclip, ShieldAlert } from "lucide-react";
+import type { AttachmentAssetRecord, MessageRecord, RunRecord } from "@shared";
 import { createTranslator } from "../../i18n";
+import { resolveAssetSrc } from "../../lib/asset-src";
 import { useAppStore } from "../../store/use-app-store";
 import { getConversationVisibleMessages } from "./chat-utils";
 
@@ -17,6 +18,11 @@ function messageTone(message: MessageRecord) {
     return "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--accent)] text-[var(--foreground)]";
   }
   return "border-transparent bg-[var(--muted)] text-[var(--foreground)]";
+}
+
+function getAttachments(message: MessageRecord): AttachmentAssetRecord[] {
+  const attachments = message.metadata?.attachments;
+  return Array.isArray(attachments) ? (attachments as AttachmentAssetRecord[]) : [];
 }
 
 export function ChatMessageThread({
@@ -40,6 +46,7 @@ export function ChatMessageThread({
             const isUser = message.senderKind === "user";
             const isInternal = message.visibility === "internal";
             const isNotification = message.messageType === "notification";
+            const attachments = getAttachments(message);
 
             return (
               <div
@@ -81,6 +88,26 @@ export function ChatMessageThread({
                     ) : null}
                     <p className="whitespace-pre-wrap">{message.content}</p>
                   </div>
+
+                  {attachments.length > 0 ? (
+                    <div className="mt-2 flex flex-col gap-2">
+                      {attachments.map((attachment) => (
+                        <a
+                          key={attachment.path}
+                          href={resolveAssetSrc(attachment.path) ?? "#"}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex max-w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                        >
+                          <Paperclip className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{attachment.name}</span>
+                          <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
+                            {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
 
                   {message.mentions.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2">

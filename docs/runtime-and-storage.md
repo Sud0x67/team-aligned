@@ -13,53 +13,70 @@
 应用主目录建议固定为：
 
 ```text
-~/.teamaligned/
+~/teamaligned/
 ```
 
 建议目录结构如下：
 
 ```text
-~/.teamaligned/
+~/teamaligned/
   settings.json
-  providers.json
-  mcp.json
-  profile.json
   app.db
+  transcripts/
+  artifacts/
+    attachments/
 
   skills/
     summarize/SKILL.md
     planner/SKILL.md
 
   avatars/
-    user.png
+    profile/
     agents/
     teams/
 
-  agents/
-    designer/
-      profile.json
-      workspace/
-      memory/
-        MEMORY.md
-      sessions/
-        2026-04-05-001.jsonl
-
-    frontend/
-      profile.json
-      workspace/
-      memory/
-      sessions/
-
-  teams/
-    landing-page/
-      team.json
-      shared-memory.md
-      sessions/
+  workspaces/
+    agents/
+      designer/
+        artifacts/
+        memory/
+          MEMORY.md
+        sessions/
+          2026-04-05-001.jsonl
+    teams/
+      landing-page/
+        artifacts/
+        shared-memory.md
+        sessions/
+          2026-04-05-001.jsonl
 
   logs/
     app.log
     runtime.log
 ```
+
+当前实现里的目录职责如下：
+
+- `settings.json`
+  用户配置主文件
+- `app.db`
+  结构化运行状态
+- `transcripts/`
+  全局会话审计流水
+- `artifacts/attachments/`
+  聊天附件统一存储目录
+- `avatars/profile/`
+  个人头像资源
+- `avatars/agents/`
+  Agent 头像资源
+- `avatars/teams/`
+  群组头像资源
+- `workspaces/agents/*`
+  Agent 默认 workspace
+- `workspaces/teams/*`
+  Team 默认 workspace
+
+如果用户显式指定了 workspace 路径，则对应 Agent / Team 的工作目录会改用用户提供的位置。
 
 ## 结合原型新增的本地数据对象
 
@@ -70,6 +87,88 @@
 - 主题与语言偏好
 - Agent / 群组头像资源
 - 扩展安装状态
+
+## 三层持久化原则
+
+建议把本地持久层拆成三层：
+
+1. `settings.json`
+   用于保存用户可以直接阅读和编辑的配置。
+2. `app.db`
+   用于保存结构化状态、列表查询、统计和运行态数据。
+3. `JSONL / Markdown / artifacts`
+   用于保存 transcript、长期记忆、共享记忆和产物文件。
+
+这样拆分的原因是：
+
+- 配置和运行数据语义不同
+- 用户配置更适合放到可读文件中
+- 历史流水和产物更适合以文件形式审计和导出
+- 结构化查询仍然交给 SQLite
+
+## `settings.json` 作为主配置文件
+
+建议把下面这些内容统一放在 `~/teamaligned/settings.json`：
+
+- 主题
+- 语言
+- 通知开关
+- 当前激活 provider
+- provider 列表
+- 用户个人资料
+- 后续也可扩展全局默认值，例如默认技能策略、默认 MCP 偏好等
+
+示例：
+
+```json
+{
+  "theme": "light",
+  "language": "zh",
+  "notifications": {
+    "agentComplete": true,
+    "mention": true,
+    "group": true
+  },
+  "activeProviderId": "qwen",
+  "providers": [
+    {
+      "id": "qwen",
+      "label": "百炼 (DashScope)",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKey": "env:DASHSCOPE_API_KEY",
+      "defaultModel": "qwen-max",
+      "supportsToolCalling": true,
+      "supportsStreaming": true
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "env:OPENAI_API_KEY",
+      "defaultModel": "gpt-5",
+      "supportsToolCalling": true,
+      "supportsStreaming": true
+    }
+  ],
+  "profile": {
+    "name": "Alex Chen",
+    "role": "产品经理",
+    "team": "TeamAligned",
+    "email": "alex@example.com",
+    "bio": "关注本地优先 AI 工作流与多 Agent 协作体验。",
+    "avatarPath": "/Users/bobo/teamaligned/avatars/profile/alex-chen-ab12cd34.png"
+  }
+}
+```
+
+说明：
+
+- `settings.json` 应作为用户配置的 source of truth
+- API Key 后续可以支持三种形式：
+  - 明文值
+  - `env:VAR_NAME`
+  - 未来扩展为 `keychain:provider-id`
+- 配置类数据不建议优先放 SQLite，因为用户手动修改和迁移配置的需求更强
 
 ## SQLite 职责
 
@@ -86,14 +185,23 @@ SQLite 用于承担结构化实体、索引与统计能力。
 - `artifacts`
 - `notifications`
 - `mcp_servers`
+- `mcp_connections`
 - `installed_skills`
 - `installed_extensions`
 - `workspace_metadata`
-- `app_preferences`
 - `run_checkpoints`
 - `conversation_context_snapshots`
 - `message_mentions`
 - `slash_command_history`
+
+这里刻意不把 `settings / providers / profile` 作为主存储放进 SQLite。
+
+原因是：
+
+- 它们更像配置，不像业务流水
+- 用户可能直接打开编辑
+- 导入导出和迁移机器更方便
+- 不需要复杂查询能力
 
 ## 文件职责
 
@@ -104,6 +212,27 @@ Markdown / JSON / JSONL 文件负责：
 - 会话流水
 - 用户可直接编辑的配置
 - 本地日志
+
+具体建议如下：
+
+- `settings.json`
+  用户配置
+- `transcripts/*.jsonl`
+  全局审计流水
+- `workspaces/**/sessions/*.jsonl`
+  与 workspace 绑定的对话流水
+- `workspaces/**/memory/MEMORY.md`
+  Agent 长期记忆
+- `workspaces/**/shared-memory.md`
+  Team 共享记忆
+- `workspaces/**/artifacts/*`
+  实际产物文件
+- `artifacts/attachments/*`
+  全局聊天附件
+- `avatars/**`
+  头像资源文件
+- `skills/**`
+  全局安装的 Skill 文件
 
 ## 会话记录格式
 
@@ -166,46 +295,19 @@ Markdown / JSON / JSONL 文件负责：
 
 ## Provider 配置
 
-建议 provider 配置文件保存在 `providers.json`，每个 provider 结构统一：
-
-```json
-{
-  "id": "openai",
-  "label": "OpenAI",
-  "apiKey": "env-or-user-secret",
-  "baseURL": "https://api.openai.com/v1",
-  "defaultModel": "gpt-5",
-  "supportsToolCalling": true,
-  "supportsStreaming": true
-}
-```
+Provider 建议直接作为 `settings.json` 的一部分，不再拆单独 `providers.json`。
 
 Qwen 在第一版优先通过 DashScope 的 OpenAI-compatible 接口接入，这样可以最大程度复用 provider 抽象。
 
 ## 用户偏好与个人资料
 
-结合原型中的“设置页”和“个人资料弹窗”，建议拆成两类数据：
+结合原型中的“设置页”和“个人资料弹窗”，建议统一并入 `settings.json`。
 
-### `profile.json`
+这样做的好处是：
 
-保存：
-
-- 姓名
-- 角色
-- 团队
-- 邮箱
-- 个人简介
-- 头像路径
-
-### `settings.json`
-
-保存：
-
-- 语言
-- 主题
-- 通知开关
-- 默认 provider
-- 默认模型
+- 用户只需要理解一个全局配置文件
+- profile 和 settings 之间不会分散
+- provider 切换、个人资料和偏好设置能一起导入导出
 
 ## Skills 加载顺序
 
@@ -241,7 +343,13 @@ Skills 建议支持三层来源：
 - stdio MCP
 - HTTP MCP
 
-注册信息集中保存在本地 `mcp.json` 或 SQLite 表中。
+MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保存在 SQLite 中。
+
+原因是：
+
+- metadata 由 registry 管理
+- connection 状态属于运行态数据
+- 健康检查结果、discovered tools、最近错误更适合结构化查询
 
 ## 通知模型
 
@@ -326,7 +434,7 @@ Skills 建议支持三层来源：
 
 原型中已经支持用户、Agent、群组头像上传，因此建议本地资源单独落盘：
 
-- 头像文件：`~/.teamaligned/avatars/`
-- 聊天附件：`~/.teamaligned/artifacts/attachments/`
+- 头像文件：`~/teamaligned/avatars/`
+- 聊天附件：`~/teamaligned/artifacts/attachments/`
 
 数据库中只保存相对路径或资源引用，不保存大体积二进制。

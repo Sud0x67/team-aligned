@@ -3,6 +3,9 @@ export type AppLanguage = "zh" | "en";
 export type ProviderId = "openai" | "qwen";
 export type AgentStatus = "online" | "busy" | "offline";
 export type ConversationKind = "agent" | "team";
+export type McpTransport = "stdio" | "http";
+export type McpConnectionStatus = "disconnected" | "configured" | "connected" | "error";
+export type AvatarAssetScope = "profile" | "agents" | "teams";
 export type SenderKind = "user" | "agent" | "system";
 export type MessageType =
   | "user"
@@ -29,6 +32,13 @@ export type NotificationType =
   | "system"
   | "run_failed"
   | "extension";
+
+export interface AttachmentAssetRecord {
+  name: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+}
 
 export interface UserProfile {
   name: string;
@@ -69,6 +79,8 @@ export interface AgentRecord {
   status: AgentStatus;
   description: string;
   capabilities: string[];
+  skillWhitelist: string[];
+  mcpWhitelist: string[];
   workspacePath: string;
   modelId: string;
 }
@@ -83,6 +95,7 @@ export interface TeamRecord {
   objective: string;
   workspacePath: string;
   memberIds: string[];
+  mcpWhitelist: string[];
   context: TeamContext;
 }
 
@@ -164,6 +177,83 @@ export interface ExtensionRecord {
   metadata: Record<string, unknown> | null;
 }
 
+export interface SkillCatalogRecord {
+  id: string;
+  slug: string;
+  name: string;
+  displayName: string;
+  description: string;
+  version: string;
+  sourceRepo: string;
+  sourceBranch: string;
+  sourcePath: string;
+  entryFile: string;
+  installed: boolean;
+  installedVersion: string | null;
+  installPath: string | null;
+  author: string;
+  recommendedTools: string[];
+  metadata: Record<string, unknown> | null;
+}
+
+export interface McpAuthFieldRecord {
+  key: string;
+  label: string;
+  required: boolean;
+  secret: boolean;
+  placeholder?: string;
+}
+
+export interface McpToolRecord {
+  name: string;
+  title: string | null;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown> | null;
+  annotations: Record<string, unknown> | null;
+}
+
+export interface McpCatalogRecord {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  transport: McpTransport;
+  sourceRepo: string;
+  sourceBranch: string;
+  sourcePath: string;
+  launcherCommand: string | null;
+  launcherArgs: string[];
+  remoteUrl: string | null;
+  authType: "none" | "env" | "header";
+  authFields: McpAuthFieldRecord[];
+  capabilities: string[];
+  declaredTools: string[];
+  recommendedFor: string[];
+  riskLevel: "low" | "medium" | "high";
+  docsUrl: string | null;
+  homepage: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface McpConnectionRecord {
+  serverId: string;
+  enabled: boolean;
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  envEntries: Record<string, string>;
+  headers: Record<string, string>;
+  cwd: string | null;
+  discoveredTools: McpToolRecord[];
+  status: McpConnectionStatus;
+  lastCheckedAt: number | null;
+  lastError: string | null;
+}
+
 export interface DashboardStats {
   activeAgents: number;
   totalAgents: number;
@@ -185,6 +275,9 @@ export interface AppSnapshot {
   runs: RunRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
+  skillCatalog: SkillCatalogRecord[];
+  mcpCatalog: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
   stats: DashboardStats;
 }
 
@@ -215,6 +308,7 @@ export interface CreateTeamInput {
 export interface SendInputPayload {
   conversationId: string;
   input: string;
+  attachments?: AttachmentAssetRecord[];
 }
 
 export interface RunControlPayload {
@@ -230,16 +324,65 @@ export interface UpdateProviderInput extends Partial<ProviderConfig> {
   id: ProviderId;
 }
 
+export interface UpdateAgentSkillsInput {
+  agentId: string;
+  skillIds: string[];
+}
+
+export interface UpdateAgentMcpsInput {
+  agentId: string;
+  serverIds: string[];
+}
+
+export interface UpdateTeamMcpsInput {
+  teamId: string;
+  serverIds: string[];
+}
+
+export interface ConnectMcpInput {
+  serverId: string;
+  command?: string | null;
+  args?: string[];
+  url?: string | null;
+  envEntries?: Record<string, string>;
+  headers?: Record<string, string>;
+  cwd?: string | null;
+  enabled?: boolean;
+}
+
+export interface SaveAvatarAssetInput {
+  scope: AvatarAssetScope;
+  dataUrl: string;
+  fileNameHint?: string;
+}
+
+export interface SaveAttachmentAssetInput {
+  conversationId: string;
+  dataUrl: string;
+  fileName: string;
+}
+
 export interface TeamalignedApi {
   bootstrap: () => Promise<AppSnapshot>;
   sendInput: (payload: SendInputPayload) => Promise<AppSnapshot>;
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
+  refreshSkillCatalog: () => Promise<AppSnapshot>;
+  installSkill: (skillId: string) => Promise<AppSnapshot>;
+  refreshMcpCatalog: () => Promise<AppSnapshot>;
+  connectMcp: (payload: ConnectMcpInput) => Promise<AppSnapshot>;
+  checkMcpHealth: (serverId: string) => Promise<AppSnapshot>;
+  disconnectMcp: (serverId: string) => Promise<AppSnapshot>;
   toggleExtension: (extensionId: string) => Promise<AppSnapshot>;
+  updateAgentSkills: (payload: UpdateAgentSkillsInput) => Promise<AppSnapshot>;
+  updateAgentMcps: (payload: UpdateAgentMcpsInput) => Promise<AppSnapshot>;
+  updateTeamMcps: (payload: UpdateTeamMcpsInput) => Promise<AppSnapshot>;
   updateSettings: (payload: UpdateSettingsInput) => Promise<AppSnapshot>;
   updateProfile: (payload: UpdateProfileInput) => Promise<AppSnapshot>;
   updateProvider: (payload: UpdateProviderInput) => Promise<AppSnapshot>;
+  saveAvatarAsset: (payload: SaveAvatarAssetInput) => Promise<string>;
+  saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   markNotificationsRead: () => Promise<AppSnapshot>;
   openWorkspace: (path: string) => Promise<void>;
   subscribe: (listener: (snapshot: AppSnapshot) => void) => () => void;

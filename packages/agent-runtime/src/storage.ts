@@ -11,14 +11,18 @@ import { join } from "node:path";
 import { nanoid } from "nanoid";
 import {
   defaultConversationMeta,
+  defaultConnectedMcpIds,
   defaultExtensions,
+  defaultMcpCatalog,
   defaultProfile,
   defaultProviders,
   defaultSettings,
+  defaultSkillCatalog,
   defaultTeamContext,
 } from "@teamaligned/shared";
 import type {
   AgentRecord,
+  AttachmentAssetRecord,
   AppSettings,
   AppSnapshot,
   ConversationMeta,
@@ -27,12 +31,16 @@ import type {
   CreateTeamInput,
   DashboardStats,
   ExtensionRecord,
+  McpCatalogRecord,
+  McpConnectionRecord,
   MessageRecord,
   NotificationRecord,
   ProviderConfig,
   RunRecord,
+  SkillCatalogRecord,
   TeamContext,
   TeamRecord,
+  UpdateAgentSkillsInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
@@ -49,6 +57,9 @@ type PersistedState = {
   runs: RunRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
+  skillCatalog: SkillCatalogRecord[];
+  mcpCatalog: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
 };
 
 type WorkspaceLayout = {
@@ -58,6 +69,19 @@ type WorkspaceLayout = {
   sessionsPath: string;
   memoryFilePath: string;
   sharedMemoryPath: string;
+};
+
+type SettingsFilePayload = {
+  theme?: AppSettings["theme"];
+  language?: AppSettings["language"];
+  notifications?: {
+    agentComplete?: boolean;
+    mention?: boolean;
+    group?: boolean;
+  };
+  activeProviderId?: AppSettings["activeProviderId"];
+  providers?: ProviderConfig[];
+  profile?: Partial<UserProfile>;
 };
 
 function now() {
@@ -70,28 +94,48 @@ const teamPalette = ["#7c3aed", "#0ea5e9", "#14b8a6", "#8b5cf6"];
 export class AppStorage {
   readonly rootDir: string;
   readonly filePath: string;
+  readonly configPath: string;
   readonly dbPath: string;
   readonly workspaceRoot: string;
   readonly agentWorkspaceRoot: string;
   readonly teamWorkspaceRoot: string;
+  readonly skillInstallRoot: string;
   readonly transcriptRoot: string;
+  readonly avatarsRoot: string;
+  readonly profileAvatarRoot: string;
+  readonly agentAvatarRoot: string;
+  readonly teamAvatarRoot: string;
+  readonly attachmentsRoot: string;
   private readonly db: DatabaseSync;
   private state: PersistedState;
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
     this.filePath = join(rootDir, "app-state.json");
+    this.configPath = join(rootDir, "settings.json");
     this.dbPath = join(rootDir, "app.db");
     this.workspaceRoot = join(rootDir, "workspaces");
     this.agentWorkspaceRoot = join(this.workspaceRoot, "agents");
     this.teamWorkspaceRoot = join(this.workspaceRoot, "teams");
+    this.skillInstallRoot = join(rootDir, "skills");
     this.transcriptRoot = join(rootDir, "transcripts");
+    this.avatarsRoot = join(rootDir, "avatars");
+    this.profileAvatarRoot = join(this.avatarsRoot, "profile");
+    this.agentAvatarRoot = join(this.avatarsRoot, "agents");
+    this.teamAvatarRoot = join(this.avatarsRoot, "teams");
+    this.attachmentsRoot = join(rootDir, "artifacts", "attachments");
 
     mkdirSync(rootDir, { recursive: true });
     mkdirSync(this.workspaceRoot, { recursive: true });
     mkdirSync(this.agentWorkspaceRoot, { recursive: true });
     mkdirSync(this.teamWorkspaceRoot, { recursive: true });
+    mkdirSync(this.skillInstallRoot, { recursive: true });
     mkdirSync(this.transcriptRoot, { recursive: true });
+    mkdirSync(this.avatarsRoot, { recursive: true });
+    mkdirSync(this.profileAvatarRoot, { recursive: true });
+    mkdirSync(this.agentAvatarRoot, { recursive: true });
+    mkdirSync(this.teamAvatarRoot, { recursive: true });
+    mkdirSync(this.attachmentsRoot, { recursive: true });
 
     this.db = new DatabaseSync(this.dbPath);
     this.setupSchema();
@@ -113,7 +157,7 @@ export class AppStorage {
       return;
     }
 
-    this.seedIfEmpty();
+    this.seedIfEmpty(this.readSettingsFile());
   }
 
   getSnapshot(): AppSnapshot {
@@ -135,6 +179,9 @@ export class AppStorage {
       runs: this.listRuns(),
       notifications: this.listNotifications(),
       extensions: this.listExtensions(),
+      skillCatalog: this.listSkillCatalog(),
+      mcpCatalog: this.listMcpCatalog(),
+      mcpConnections: this.listMcpConnections(),
       stats: this.getStats(agents, teams, messages),
     };
   }
@@ -256,6 +303,12 @@ export class AppStorage {
       status: "online",
       description: input.description,
       capabilities: input.capabilities,
+      skillWhitelist: this.listSkillCatalog()
+        .filter((skill) => skill.installed)
+        .map((skill) => skill.id),
+      mcpWhitelist: this.listMcpConnections()
+        .filter((connection) => connection.enabled && connection.status === "connected")
+        .map((connection) => connection.serverId),
       workspacePath,
       modelId: this.getSettings().activeProviderId === "openai" ? "gpt-5" : "qwen-max",
     };
@@ -302,6 +355,9 @@ export class AppStorage {
       objective: input.objective,
       workspacePath,
       memberIds: input.memberIds,
+      mcpWhitelist: this.listMcpConnections()
+        .filter((connection) => connection.enabled && connection.status === "connected")
+        .map((connection) => connection.serverId),
       context: defaultTeamContext(input.objective),
     };
 
@@ -429,6 +485,175 @@ export class AppStorage {
     return [...this.state.extensions].sort((a, b) => a.name.localeCompare(b.name, "en"));
   }
 
+  listSkillCatalog(): SkillCatalogRecord[] {
+    return [...this.state.skillCatalog].sort((a, b) =>
+      (a.displayName || a.name).localeCompare(b.displayName || b.name, "zh-Hans-CN"),
+    );
+  }
+
+  getSkillCatalogEntry(skillId: string) {
+    return this.state.skillCatalog.find((skill) => skill.id === skillId) ?? null;
+  }
+
+  findSkillCatalogEntryByNameOrId(value: string) {
+    const normalized = value.trim().toLowerCase();
+    return (
+      this.state.skillCatalog.find(
+        (skill) =>
+          skill.id.toLowerCase() === normalized ||
+          skill.slug.toLowerCase() === normalized ||
+          skill.name.toLowerCase() === normalized ||
+          skill.displayName.toLowerCase() === normalized,
+      ) ?? null
+    );
+  }
+
+  replaceSkillCatalog(entries: SkillCatalogRecord[]) {
+    const previous = new Map(this.state.skillCatalog.map((skill) => [skill.id, skill]));
+    const resolvedEntries = entries.map((entry) => {
+      const existing = previous.get(entry.id);
+      return {
+        ...entry,
+        installed: existing?.installed ?? entry.installed,
+        installedVersion: existing?.installedVersion ?? entry.installedVersion,
+        installPath: existing?.installPath ?? entry.installPath,
+      };
+    });
+    const byId = new Map(resolvedEntries.map((skill) => [skill.id, skill]));
+    const bySlug = new Map(resolvedEntries.map((skill) => [skill.slug.toLowerCase(), skill]));
+    const byName = new Map(
+      resolvedEntries.flatMap((skill) => [
+        [skill.name.toLowerCase(), skill] as const,
+        [skill.displayName.toLowerCase(), skill] as const,
+      ]),
+    );
+
+    this.state.skillCatalog = resolvedEntries;
+    for (const agent of this.state.agents) {
+      const normalizedWhitelist = (agent.skillWhitelist ?? [])
+        .map((value) => {
+          const key = value.trim().toLowerCase();
+          return byId.get(value) ?? bySlug.get(key) ?? byName.get(key) ?? null;
+        })
+        .filter((item): item is SkillCatalogRecord => item !== null)
+        .map((item) => item.id);
+
+      agent.skillWhitelist = Array.from(new Set(normalizedWhitelist));
+    }
+    this.persist();
+  }
+
+  markSkillInstalled(input: { skillId: string; installPath: string; version: string }) {
+    const skill = this.getSkillCatalogEntry(input.skillId);
+    if (!skill) return;
+    skill.installed = true;
+    skill.installedVersion = input.version;
+    skill.installPath = input.installPath;
+    for (const agent of this.state.agents) {
+      if (!agent.skillWhitelist.includes(skill.id)) {
+        agent.skillWhitelist.push(skill.id);
+      }
+    }
+    this.persist();
+  }
+
+  updateAgentSkillWhitelist(input: UpdateAgentSkillsInput) {
+    const agent = this.getAgent(input.agentId);
+    if (!agent) return;
+    agent.skillWhitelist = Array.from(new Set(input.skillIds));
+    this.persist();
+  }
+
+  listMcpCatalog(): McpCatalogRecord[] {
+    return [...this.state.mcpCatalog].sort((a, b) => a.name.localeCompare(b.name, "en"));
+  }
+
+  getMcpCatalogEntry(serverId: string) {
+    return this.state.mcpCatalog.find((item) => item.id === serverId) ?? null;
+  }
+
+  findMcpCatalogEntryByNameOrId(value: string) {
+    const normalized = value.trim().toLowerCase();
+    return (
+      this.state.mcpCatalog.find(
+        (item) =>
+          item.id.toLowerCase() === normalized ||
+          item.slug.toLowerCase() === normalized ||
+          item.name.toLowerCase() === normalized,
+      ) ?? null
+    );
+  }
+
+  replaceMcpCatalog(entries: McpCatalogRecord[]) {
+    const previous = new Map(this.state.mcpCatalog.map((item) => [item.id, item]));
+    this.state.mcpCatalog = entries.map((entry) => ({
+      ...entry,
+      metadata: {
+        ...(previous.get(entry.id)?.metadata ?? {}),
+        ...(entry.metadata ?? {}),
+      },
+    }));
+    const validIds = new Set(this.state.mcpCatalog.map((item) => item.id));
+    for (const agent of this.state.agents) {
+      agent.mcpWhitelist = agent.mcpWhitelist.filter((serverId) => validIds.has(serverId));
+    }
+    for (const team of this.state.teams) {
+      team.mcpWhitelist = team.mcpWhitelist.filter((serverId) => validIds.has(serverId));
+    }
+    this.state.mcpConnections = this.state.mcpConnections.filter((item) => validIds.has(item.serverId));
+    this.persist();
+  }
+
+  listMcpConnections(): McpConnectionRecord[] {
+    return [...this.state.mcpConnections].sort((a, b) => a.serverId.localeCompare(b.serverId, "en"));
+  }
+
+  getMcpConnection(serverId: string) {
+    return this.state.mcpConnections.find((item) => item.serverId === serverId) ?? null;
+  }
+
+  upsertMcpConnection(connection: McpConnectionRecord) {
+    const index = this.state.mcpConnections.findIndex((item) => item.serverId === connection.serverId);
+    if (index >= 0) {
+      this.state.mcpConnections[index] = connection;
+    } else {
+      this.state.mcpConnections.push(connection);
+    }
+
+    if (connection.enabled && connection.status === "connected") {
+      for (const agent of this.state.agents) {
+        if (!agent.mcpWhitelist.includes(connection.serverId)) {
+          agent.mcpWhitelist.push(connection.serverId);
+        }
+      }
+      for (const team of this.state.teams) {
+        if (!team.mcpWhitelist.includes(connection.serverId)) {
+          team.mcpWhitelist.push(connection.serverId);
+        }
+      }
+    }
+    this.persist();
+  }
+
+  removeMcpConnection(serverId: string) {
+    this.state.mcpConnections = this.state.mcpConnections.filter((item) => item.serverId !== serverId);
+    this.persist();
+  }
+
+  updateAgentMcpWhitelist(input: { agentId: string; serverIds: string[] }) {
+    const agent = this.getAgent(input.agentId);
+    if (!agent) return;
+    agent.mcpWhitelist = Array.from(new Set(input.serverIds));
+    this.persist();
+  }
+
+  updateTeamMcpWhitelist(input: { teamId: string; serverIds: string[] }) {
+    const team = this.getTeam(input.teamId);
+    if (!team) return;
+    team.mcpWhitelist = Array.from(new Set(input.serverIds));
+    this.persist();
+  }
+
   toggleExtension(extensionId: string) {
     const extension = this.state.extensions.find((item) => item.id === extensionId);
     if (!extension) return;
@@ -503,6 +728,18 @@ export class AppStorage {
         id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS skill_catalog (
+        id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mcp_catalog (
+        id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mcp_connections (
+        server_id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
+      );
     `);
   }
 
@@ -517,6 +754,9 @@ export class AppStorage {
       "runs",
       "notifications",
       "extensions",
+      "skill_catalog",
+      "mcp_catalog",
+      "mcp_connections",
     ];
 
     return tables.some((table) => {
@@ -526,6 +766,7 @@ export class AppStorage {
   }
 
   private persist() {
+    this.persistSettingsFile();
     const insertSetting = this.db.prepare(
       "INSERT INTO settings_entries (key, value) VALUES (?, ?)",
     );
@@ -545,6 +786,11 @@ export class AppStorage {
       "INSERT INTO notifications (id, created_at, payload) VALUES (?, ?, ?)",
     );
     const insertExtension = this.db.prepare("INSERT INTO extensions (id, payload) VALUES (?, ?)");
+    const insertSkillCatalog = this.db.prepare("INSERT INTO skill_catalog (id, payload) VALUES (?, ?)");
+    const insertMcpCatalog = this.db.prepare("INSERT INTO mcp_catalog (id, payload) VALUES (?, ?)");
+    const insertMcpConnection = this.db.prepare(
+      "INSERT INTO mcp_connections (server_id, payload) VALUES (?, ?)",
+    );
 
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -558,6 +804,9 @@ export class AppStorage {
         DELETE FROM runs;
         DELETE FROM notifications;
         DELETE FROM extensions;
+        DELETE FROM skill_catalog;
+        DELETE FROM mcp_catalog;
+        DELETE FROM mcp_connections;
       `);
 
       for (const [key, value] of Object.entries(this.state.settingsEntries)) {
@@ -596,6 +845,15 @@ export class AppStorage {
       for (const extension of this.state.extensions) {
         insertExtension.run(extension.id, JSON.stringify(extension));
       }
+      for (const skill of this.state.skillCatalog) {
+        insertSkillCatalog.run(skill.id, JSON.stringify(skill));
+      }
+      for (const server of this.state.mcpCatalog) {
+        insertMcpCatalog.run(server.id, JSON.stringify(server));
+      }
+      for (const connection of this.state.mcpConnections) {
+        insertMcpConnection.run(connection.serverId, JSON.stringify(connection));
+      }
 
       this.db.exec("COMMIT");
     } catch (error) {
@@ -612,22 +870,76 @@ export class AppStorage {
           .all() as Array<{ key: string; value: string }>
       ).map((row) => [row.key, row.value]),
     );
+    const skillCatalog = this.readCollection<SkillCatalogRecord>("skill_catalog");
+    const mcpCatalog = this.readCollection<McpCatalogRecord>("mcp_catalog");
+    const fileConfig = this.readSettingsFile();
+    const configState =
+      fileConfig ??
+      this.createConfigStateFromDb({
+        settingsEntries,
+        providers: this.readCollection<ProviderConfig>("providers"),
+      });
 
     this.state = {
-      settingsEntries,
-      providers: this.readCollection<ProviderConfig>("providers"),
-      agents: this.readCollection<AgentRecord>("agents"),
-      teams: this.readCollection<TeamRecord>("teams"),
+      settingsEntries: configState.settingsEntries,
+      providers: configState.providers,
+      agents: this.readCollection<AgentRecord>("agents").map((agent) => ({
+        ...agent,
+        skillWhitelist: Array.isArray(agent.skillWhitelist)
+          ? agent.skillWhitelist
+          : defaultSkillCatalog.map((skill) => skill.id),
+        mcpWhitelist: Array.isArray(agent.mcpWhitelist) ? agent.mcpWhitelist : defaultConnectedMcpIds,
+      })),
+      teams: this.readCollection<TeamRecord>("teams").map((team) => ({
+        ...team,
+        mcpWhitelist: Array.isArray(team.mcpWhitelist) ? team.mcpWhitelist : defaultConnectedMcpIds,
+      })),
       conversations: this.readCollection<ConversationRecord>("conversations"),
       messages: this.readCollection<MessageRecord>("messages", "ORDER BY created_at ASC"),
       runs: this.readCollection<RunRecord>("runs", "ORDER BY updated_at DESC"),
       notifications: this.readCollection<NotificationRecord>("notifications", "ORDER BY created_at DESC"),
       extensions: this.readCollection<ExtensionRecord>("extensions"),
+      skillCatalog: skillCatalog.length > 0 ? skillCatalog : defaultSkillCatalog,
+      mcpCatalog: mcpCatalog.length > 0 ? mcpCatalog : defaultMcpCatalog,
+      mcpConnections: this.readCollection<McpConnectionRecord>("mcp_connections"),
     };
+    this.persistSettingsFile();
   }
 
   private loadLegacyState() {
-    this.state = JSON.parse(readFileSync(this.filePath, "utf8")) as PersistedState;
+    const legacy = JSON.parse(readFileSync(this.filePath, "utf8")) as Partial<PersistedState>;
+    const fileConfig = this.readSettingsFile();
+    const configState =
+      fileConfig ??
+      this.createConfigStateFromDb({
+        settingsEntries: legacy.settingsEntries ?? {},
+        providers: legacy.providers ?? defaultProviders,
+      });
+    this.state = {
+      ...this.createEmptyState(),
+      ...legacy,
+      settingsEntries: configState.settingsEntries,
+      providers: configState.providers,
+      agents: (legacy.agents ?? []).map((agent) => ({
+        ...agent,
+        skillWhitelist: Array.isArray(agent.skillWhitelist)
+          ? agent.skillWhitelist
+          : defaultSkillCatalog.map((skill) => skill.id),
+        mcpWhitelist: Array.isArray((agent as AgentRecord).mcpWhitelist)
+          ? (agent as AgentRecord).mcpWhitelist
+          : defaultConnectedMcpIds,
+      })),
+      teams: (legacy.teams ?? []).map((team) => ({
+        ...team,
+        mcpWhitelist: Array.isArray((team as TeamRecord).mcpWhitelist)
+          ? (team as TeamRecord).mcpWhitelist
+          : defaultConnectedMcpIds,
+      })),
+      skillCatalog: legacy.skillCatalog ?? defaultSkillCatalog,
+      mcpCatalog: (legacy as Partial<PersistedState>).mcpCatalog ?? defaultMcpCatalog,
+      mcpConnections: (legacy as Partial<PersistedState>).mcpConnections ?? [],
+    };
+    this.persistSettingsFile();
   }
 
   private backupLegacyState() {
@@ -648,8 +960,8 @@ export class AppStorage {
 
   private createEmptyState(): PersistedState {
     return {
-      settingsEntries: {},
-      providers: [],
+      settingsEntries: this.createSettingsEntries(defaultSettings, defaultProfile),
+      providers: [...defaultProviders],
       agents: [],
       teams: [],
       conversations: [],
@@ -657,6 +969,9 @@ export class AppStorage {
       runs: [],
       notifications: [],
       extensions: [],
+      skillCatalog: [],
+      mcpCatalog: [],
+      mcpConnections: [],
     };
   }
 
@@ -723,6 +1038,90 @@ export class AppStorage {
     };
   }
 
+  saveAvatarAsset(input: { scope: "profile" | "agents" | "teams"; dataUrl: string; fileNameHint?: string }) {
+    const parsed = input.dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!parsed) {
+      throw new Error("头像格式无效，当前仅支持 data URL 图片。");
+    }
+
+    const [, mimeType, base64Payload] = parsed;
+    const extension =
+      mimeType === "image/jpeg"
+        ? "jpg"
+        : mimeType === "image/png"
+          ? "png"
+          : mimeType === "image/webp"
+            ? "webp"
+            : mimeType === "image/gif"
+              ? "gif"
+              : "png";
+
+    const root =
+      input.scope === "profile"
+        ? this.profileAvatarRoot
+        : input.scope === "agents"
+          ? this.agentAvatarRoot
+          : this.teamAvatarRoot;
+
+    const safeHint = (input.fileNameHint || input.scope)
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    const fileName = `${safeHint || input.scope}-${nanoid(8)}.${extension}`;
+    const filePath = join(root, fileName);
+    writeFileSync(filePath, Buffer.from(base64Payload, "base64"));
+    return filePath;
+  }
+
+  saveAttachmentAsset(input: { conversationId: string; dataUrl: string; fileName: string }): AttachmentAssetRecord {
+    const parsed = input.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!parsed) {
+      throw new Error("附件格式无效，当前仅支持 data URL 文件。");
+    }
+
+    const [, mimeType, base64Payload] = parsed;
+    const sourceName = input.fileName.trim() || "attachment";
+    const extensionMatch = sourceName.match(/\.([a-zA-Z0-9]+)$/);
+    const inferredExtension =
+      extensionMatch?.[1]?.toLowerCase() ??
+      (mimeType === "image/jpeg"
+        ? "jpg"
+        : mimeType === "image/png"
+          ? "png"
+          : mimeType === "image/webp"
+            ? "webp"
+            : mimeType === "application/pdf"
+              ? "pdf"
+              : mimeType === "text/plain"
+                ? "txt"
+                : "bin");
+
+    const safeBaseName = sourceName
+      .replace(/\.[^.]+$/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+    const safeConversation = input.conversationId
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    const fileName = `${safeConversation || "conversation"}-${safeBaseName || "attachment"}-${nanoid(8)}.${inferredExtension}`;
+    const filePath = join(this.attachmentsRoot, fileName);
+    const buffer = Buffer.from(base64Payload, "base64");
+
+    writeFileSync(filePath, buffer);
+
+    return {
+      name: sourceName,
+      path: filePath,
+      mimeType,
+      sizeBytes: buffer.byteLength,
+    };
+  }
+
   private appendTranscript(message: MessageRecord) {
     const transcriptPath = join(this.transcriptRoot, `${message.conversationId}.jsonl`);
     const payload = `${JSON.stringify(message)}\n`;
@@ -759,8 +1158,14 @@ export class AppStorage {
     return join(layout.sessionsPath, `${conversationId}.jsonl`);
   }
 
-  private seedIfEmpty() {
+  private seedIfEmpty(
+    configState: { settingsEntries: Record<string, string>; providers: ProviderConfig[] } | null = null,
+  ) {
     this.state = this.createEmptyState();
+    if (configState) {
+      this.state.settingsEntries = configState.settingsEntries;
+      this.state.providers = configState.providers;
+    }
     const timestamp = now();
 
     const agentSeeds = [
@@ -834,6 +1239,8 @@ export class AppStorage {
         status: seed.status,
         description: seed.description,
         capabilities: [...seed.capabilities],
+        skillWhitelist: defaultSkillCatalog.map((skill) => skill.id),
+        mcpWhitelist: [...defaultConnectedMcpIds],
         workspacePath,
         modelId: index % 2 === 0 ? "qwen-max" : "gpt-5",
       });
@@ -877,6 +1284,7 @@ export class AppStorage {
         objective: seed.objective,
         workspacePath,
         memberIds: [...seed.members],
+        mcpWhitelist: [...defaultConnectedMcpIds],
         context: defaultTeamContext(seed.objective),
       });
     }
@@ -999,10 +1407,14 @@ export class AppStorage {
     }));
 
     this.state.extensions = [...defaultExtensions];
-    this.state.providers = [...defaultProviders];
-
-    this.setProfile(defaultProfile);
-    this.setSettings(defaultSettings);
+    this.state.skillCatalog = [...defaultSkillCatalog];
+    this.state.mcpCatalog = [...defaultMcpCatalog];
+    this.state.mcpConnections = [];
+    this.state.providers = this.state.providers.length > 0 ? this.state.providers : [...defaultProviders];
+    this.state.settingsEntries =
+      Object.keys(this.state.settingsEntries).length > 0
+        ? this.state.settingsEntries
+        : this.createSettingsEntries(defaultSettings, defaultProfile);
     this.createNotification({
       type: "system",
       title: "欢迎来到 teamaligned",
@@ -1017,6 +1429,108 @@ export class AppStorage {
     }
 
     this.persist();
+  }
+
+  private createSettingsEntries(settings: AppSettings, profile: UserProfile) {
+    return {
+      "settings.theme": settings.theme,
+      "settings.language": settings.language,
+      "settings.notifyAgentComplete": String(settings.notifyAgentComplete),
+      "settings.notifyMention": String(settings.notifyMention),
+      "settings.notifyGroup": String(settings.notifyGroup),
+      "settings.activeProviderId": settings.activeProviderId,
+      "profile.name": profile.name,
+      "profile.role": profile.role,
+      "profile.team": profile.team,
+      "profile.email": profile.email,
+      "profile.bio": profile.bio,
+      "profile.avatarPath": profile.avatarPath ?? "null",
+    };
+  }
+
+  private createConfigStateFromDb(input: {
+    settingsEntries: Record<string, string>;
+    providers: ProviderConfig[];
+  }) {
+    const settingsEntries =
+      Object.keys(input.settingsEntries).length > 0
+        ? input.settingsEntries
+        : this.createSettingsEntries(defaultSettings, defaultProfile);
+    const providers = input.providers.length > 0 ? input.providers : [...defaultProviders];
+    const activeProviderId =
+      (settingsEntries["settings.activeProviderId"] as AppSettings["activeProviderId"] | undefined) ??
+      defaultSettings.activeProviderId;
+
+    return {
+      settingsEntries,
+      providers: providers.map((provider) => ({
+        ...provider,
+        isActive: provider.id === activeProviderId,
+      })),
+    };
+  }
+
+  private readSettingsFile() {
+    if (!existsSync(this.configPath)) {
+      return null;
+    }
+
+    try {
+      const payload = JSON.parse(readFileSync(this.configPath, "utf8")) as SettingsFilePayload;
+      const settings: AppSettings = {
+        theme: payload.theme ?? defaultSettings.theme,
+        language: payload.language ?? defaultSettings.language,
+        notifyAgentComplete: payload.notifications?.agentComplete ?? defaultSettings.notifyAgentComplete,
+        notifyMention: payload.notifications?.mention ?? defaultSettings.notifyMention,
+        notifyGroup: payload.notifications?.group ?? defaultSettings.notifyGroup,
+        activeProviderId: payload.activeProviderId ?? defaultSettings.activeProviderId,
+      };
+      const profile: UserProfile = {
+        name: payload.profile?.name ?? defaultProfile.name,
+        role: payload.profile?.role ?? defaultProfile.role,
+        team: payload.profile?.team ?? defaultProfile.team,
+        email: payload.profile?.email ?? defaultProfile.email,
+        bio: payload.profile?.bio ?? defaultProfile.bio,
+        avatarPath:
+          payload.profile?.avatarPath === undefined ? defaultProfile.avatarPath : payload.profile.avatarPath,
+      };
+      const providers =
+        Array.isArray(payload.providers) && payload.providers.length > 0
+          ? payload.providers
+          : [...defaultProviders];
+
+      return {
+        settingsEntries: this.createSettingsEntries(settings, profile),
+        providers: providers.map((provider) => ({
+          ...provider,
+          isActive: provider.id === settings.activeProviderId,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private persistSettingsFile() {
+    const settings = this.getSettings();
+    const profile = this.getProfile();
+    const payload: SettingsFilePayload = {
+      theme: settings.theme,
+      language: settings.language,
+      notifications: {
+        agentComplete: settings.notifyAgentComplete,
+        mention: settings.notifyMention,
+        group: settings.notifyGroup,
+      },
+      activeProviderId: settings.activeProviderId,
+      providers: this.state.providers.map((provider) => ({
+        ...provider,
+        isActive: provider.id === settings.activeProviderId,
+      })),
+      profile,
+    };
+
+    writeFileSync(this.configPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
 
   private getStats(

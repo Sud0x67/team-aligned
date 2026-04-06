@@ -48,6 +48,8 @@ export function ProfileModal({
               color="var(--primary)"
               uploadLabel={draft.avatarPath ? t.common("changeAvatar") : t.common("uploadAvatar")}
               removeLabel={t.common("removeAvatar")}
+              scope="profile"
+              fileNameHint={draft.name || "profile"}
               onChange={(avatarPath) => setDraft((current) => ({ ...current, avatarPath }))}
             />
           </div>

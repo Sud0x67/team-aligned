@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Hash, Sparkles } from "lucide-react";
+import type { AttachmentAssetRecord } from "@shared";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
@@ -52,11 +53,12 @@ export function ChatPage() {
   const isTeamConversation = activeConversation?.kind === "team";
   const showInternal = activeConversation ? internalVisible[activeConversation.id] ?? false : false;
 
-  const handleSend = async (input: string) => {
+  const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
     await sendInput({
       conversationId: activeConversation.id,
-      input,
+      input: payload.input,
+      attachments: payload.attachments,
     });
   };
 
@@ -167,6 +169,7 @@ export function ChatPage() {
               ) : null}
 
               <ChatComposer
+                conversationId={activeConversation.id}
                 onSend={handleSend}
               />
             </div>

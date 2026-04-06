@@ -10,7 +10,8 @@
 
 - 可体验的桌面应用
 - 单聊已接入真实模型
-- 群聊、Skills、MCP 仍处于半真实或 mock 过渡阶段
+- 群聊仍有一部分处于半真实或 mock 过渡阶段
+- Skills、MCP 主链路已经接入，但还缺少更完整的审计、可视化和工程化收口
 - 本地持久化已经可用，但数据层还没有正式工程化
 
 当前完成度的主观估计：
@@ -77,8 +78,8 @@
 
 1. 群聊还不是真实多 Agent 编排。
 2. `/skills` 还没有接入真实 `SKILL.md` 执行链。
-3. `/mcp` 还没有接入真实 stdio / HTTP MCP。
-4. 单聊虽然用了真实模型，但工具层还没有真正接齐。
+3. MCP 虽然已经接通，但 tool call 审计、run 可视化和更细粒度权限还不够。
+4. 单聊虽然用了真实模型，但工具层仍有部分能力没有真正接齐。
 5. SQLite 已经在用，但还没有 Drizzle schema、migration 和正式索引。
 6. 测试和发布链路还远远不够。
 
@@ -117,16 +118,24 @@ Alpha 验收标准：
 
 ### 3. MCP 真实接线
 
-- [ ] 设计本地 MCP 注册表
-- [ ] 支持 stdio MCP
-- [ ] 支持 HTTP MCP
-- [ ] `/mcp` 列出当前可用 MCP
-- [ ] `/mcp <name>` 真实调用目标 MCP
-- [ ] 扩展页展示协议、健康状态、启用状态、错误信息
+- [x] 设计本地 MCP 注册表
+- [x] 支持 `stdio npx` MCP
+- [x] 支持 `HTTP + headers` MCP
+- [x] `/mcp` 列出当前可用 MCP
+- [x] `/mcp <name>` / `/mcp tools <slug>` 读取真实目标 MCP 状态
+- [x] 扩展页展示协议、健康状态、启用状态、错误信息
+- [x] Agent / Team MCP 白名单
+- [x] discovered tools 注入单聊与群聊 runtime
+- [ ] MCP tool call 审计落盘
+- [ ] run 详情中展示 MCP 调用过程
+- [ ] tool 级白名单
+- [ ] 服务级配置模板优化
+- [ ] OAuth 型 MCP（暂缓）
 
 Alpha 验收标准：
 
 - MCP 能真实完成一次端到端调用
+- stdio / HTTP 主链路都能完成健康检查和 tools/list
 - 调用结果可以在消息流中被消费和展示
 
 ### 4. 工具层接入真实 Agent Runtime
