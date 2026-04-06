@@ -24,16 +24,16 @@ export function DashboardPage() {
           <SectionCard title={t.dashboard("recentStatus")} subtitle={t.dashboard("recentStatusDesc")}>
             <div className="space-y-3">
               {notifications.slice(0, 5).map((item) => (
-                <div key={item.id} className="flex items-start gap-3 rounded-[22px] bg-slate-50 p-4">
-                  <div className="mt-0.5 rounded-2xl bg-white p-2 shadow-sm">
-                    <Activity className="h-4 w-4 text-slate-600" />
+                <div key={item.id} className="flex items-start gap-3 rounded-[22px] bg-[var(--panel-muted)] p-4">
+                  <div className="mt-0.5 rounded-2xl bg-[var(--card)] p-2 shadow-sm">
+                    <Activity className="h-4 w-4 text-[var(--muted-foreground)]" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-slate-950">{item.title}</p>
+                      <p className="font-medium text-[var(--foreground)]">{item.title}</p>
                       <Badge tone={item.read ? "slate" : "rose"}>{item.read ? t.dashboard("read") : t.dashboard("unread")}</Badge>
                     </div>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">{item.body}</p>
+                    <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">{item.body}</p>
                   </div>
                 </div>
               ))}
@@ -43,11 +43,11 @@ export function DashboardPage() {
           <SectionCard title={t.dashboard("conversationOverview")} subtitle={t.dashboard("conversationOverviewDesc")}>
             <div className="grid gap-4 md:grid-cols-2">
               {conversations.map((conversation) => (
-                <article key={conversation.id} className="rounded-[24px] border border-slate-200 bg-white p-4">
+                <article key={conversation.id} className="rounded-[24px] border border-[var(--border)] bg-[var(--card)] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-950">{conversation.title}</h3>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <h3 className="text-sm font-semibold text-[var(--foreground)]">{conversation.title}</h3>
+                      <p className="mt-1 text-sm text-[var(--muted-foreground)]">
                         {conversation.kind === "agent" ? t.dashboard("conversationKindAgent") : t.dashboard("conversationKindTeam")}
                       </p>
                     </div>
@@ -55,7 +55,7 @@ export function DashboardPage() {
                       {conversation.unread} {t.dashboard("unread")}
                     </Badge>
                   </div>
-                  <p className="mt-4 line-clamp-2 text-sm leading-6 text-slate-600">{conversation.lastMessage}</p>
+                  <p className="mt-4 line-clamp-2 text-sm leading-6 text-[var(--muted-foreground)]">{conversation.lastMessage}</p>
                 </article>
               ))}
             </div>
@@ -65,33 +65,33 @@ export function DashboardPage() {
         <div className="space-y-4">
           <SectionCard title={t.dashboard("resourceSummary")} subtitle={t.dashboard("resourceSummaryDesc")}>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-[22px] bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-slate-500">
+              <div className="rounded-[22px] bg-[var(--panel-muted)] p-4">
+                <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
                   <Bot className="h-4 w-4" />
                   <span className="text-sm font-medium">{t.dashboard("bot")}</span>
                 </div>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{agents.length}</p>
+                <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">{agents.length}</p>
               </div>
-              <div className="rounded-[22px] bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-slate-500">
+              <div className="rounded-[22px] bg-[var(--panel-muted)] p-4">
+                <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
                   <Users className="h-4 w-4" />
                   <span className="text-sm font-medium">{t.dashboard("team")}</span>
                 </div>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{teams.length}</p>
+                <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">{teams.length}</p>
               </div>
-              <div className="rounded-[22px] bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-slate-500">
+              <div className="rounded-[22px] bg-[var(--panel-muted)] p-4">
+                <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
                   <MessageSquareText className="h-4 w-4" />
                   <span className="text-sm font-medium">{t.dashboard("conversations")}</span>
                 </div>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{conversations.length}</p>
+                <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">{conversations.length}</p>
               </div>
-              <div className="rounded-[22px] bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-slate-500">
+              <div className="rounded-[22px] bg-[var(--panel-muted)] p-4">
+                <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
                   <FolderOpen className="h-4 w-4" />
                   <span className="text-sm font-medium">{t.dashboard("runs")}</span>
                 </div>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{runs.length}</p>
+                <p className="mt-3 text-3xl font-semibold text-[var(--foreground)]">{runs.length}</p>
               </div>
             </div>
           </SectionCard>
@@ -99,10 +99,10 @@ export function DashboardPage() {
           <SectionCard title={t.dashboard("agentStatus")} subtitle={t.dashboard("agentStatusDesc")}>
             <div className="space-y-3">
               {agents.map((agent) => (
-                <div key={agent.id} className="flex items-center justify-between rounded-[22px] bg-slate-50 px-4 py-3">
+                <div key={agent.id} className="flex items-center justify-between rounded-[22px] bg-[var(--panel-muted)] px-4 py-3">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">{agent.name}</p>
-                    <p className="text-sm text-slate-500">{agent.role}</p>
+                    <p className="text-sm font-semibold text-[var(--foreground)]">{agent.name}</p>
+                    <p className="text-sm text-[var(--muted-foreground)]">{agent.role}</p>
                   </div>
                   <Badge tone={agent.status === "online" ? "emerald" : agent.status === "busy" ? "amber" : "slate"}>
                     {agent.status === "online" ? t.dashboard("online") : agent.status === "busy" ? t.dashboard("busy") : t.dashboard("offline")}

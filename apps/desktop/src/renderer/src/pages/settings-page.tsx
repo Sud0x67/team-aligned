@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Circle, CircleDot, Languages, MoonStar, SunMedium } from "lucide-react";
+import {
+  Check,
+  Circle,
+  CircleDot,
+  Eye,
+  EyeOff,
+  Languages,
+  LoaderCircle,
+  MoonStar,
+  SunMedium,
+} from "lucide-react";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 import { PageShell } from "../components/pages/page-shell";
@@ -9,11 +19,6 @@ import { SectionCard } from "../components/pages/section-card";
 const providerDisplayLabels = {
   qwen: "百炼 (DashScope)",
   openai: "OpenAI",
-} as const;
-
-const providerModelOptions = {
-  qwen: ["qwen-max", "qwen-plus", "qwen-turbo"],
-  openai: ["gpt-5", "gpt-5-mini", "gpt-4.1"],
 } as const;
 
 function ChoiceCard({
@@ -34,14 +39,14 @@ function ChoiceCard({
       onClick={onClick}
       className={`rounded-[24px] border px-5 py-5 text-left transition ${
         selected
-          ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_8%,white)] text-slate-950 shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_12%,transparent)]"
-          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+          ? "border-[var(--primary)] bg-[var(--accent)] text-[var(--foreground)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_12%,transparent)]"
+          : "border-[var(--border)] bg-[var(--panel)] text-[var(--foreground)] hover:border-[color-mix(in_srgb,var(--primary)_18%,var(--border))] hover:bg-[var(--panel-muted)]"
       }`}
     >
       <div className="flex items-start gap-4">
         <div
           className={`mt-0.5 shrink-0 ${
-            selected ? "text-[var(--primary)]" : "text-slate-500"
+            selected ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"
           }`}
         >
           {icon}
@@ -51,12 +56,12 @@ function ChoiceCard({
             {selected ? (
               <CircleDot className="h-5 w-5 text-[var(--primary)]" />
             ) : (
-              <Circle className="h-5 w-5 text-slate-500" />
+              <Circle className="h-5 w-5 text-[var(--muted-foreground)]" />
             )}
             <p className="text-[15px] font-semibold">{title}</p>
           </div>
           {description ? (
-            <p className="mt-2 pl-8 text-sm leading-6 text-slate-500">{description}</p>
+            <p className="mt-2 pl-8 text-sm leading-6 text-[var(--muted-foreground)]">{description}</p>
           ) : null}
         </div>
       </div>
@@ -82,8 +87,8 @@ function ToggleSwitch({
         onChange={(event) => onChange(event.target.checked)}
         className="peer sr-only"
       />
-      <span className="h-7 w-12 rounded-full border border-[color-mix(in_srgb,var(--primary)_30%,transparent)] bg-slate-200 transition peer-checked:bg-[var(--primary)] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-1 peer-focus-visible:outline-[color-mix(in_srgb,var(--primary)_35%,transparent)]" />
-      <span className="pointer-events-none absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition peer-checked:translate-x-5" />
+      <span className="h-7 w-12 rounded-full border border-[var(--border)] bg-[var(--muted)] transition peer-checked:border-[color-mix(in_srgb,var(--primary)_30%,transparent)] peer-checked:bg-[var(--primary)] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-1 peer-focus-visible:outline-[color-mix(in_srgb,var(--primary)_35%,transparent)]" />
+      <span className="pointer-events-none absolute left-1 top-1 h-5 w-5 rounded-full border border-[var(--border)] bg-[var(--card)] shadow-sm transition peer-checked:translate-x-5 peer-checked:border-transparent" />
     </label>
   );
 }
@@ -93,6 +98,8 @@ export function SettingsPage() {
   const t = createTranslator(settings.language);
 
   const [providerForms, setProviderForms] = useState(providers);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
     providers.find((provider) => provider.isActive)?.id ?? providers[0]?.id ?? "openai",
   );
@@ -107,6 +114,20 @@ export function SettingsPage() {
       return providers.find((provider) => provider.isActive)?.id ?? providers[0]?.id ?? "openai";
     });
   }, [providers]);
+
+  useEffect(() => {
+    setShowApiKey(false);
+  }, [selectedProviderId]);
+
+  useEffect(() => {
+    if (saveState !== "saved") return;
+
+    const timeoutId = window.setTimeout(() => {
+      setSaveState("idle");
+    }, 1600);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [saveState]);
 
   const notificationItems = [
     {
@@ -125,6 +146,23 @@ export function SettingsPage() {
 
   const selectedProvider =
     providerForms.find((provider) => provider.id === selectedProviderId) ?? providerForms[0] ?? null;
+
+  const handleSaveProvider = async () => {
+    if (!selectedProvider || saveState === "saving") return;
+
+    setSaveState("saving");
+    await updateProvider({
+      id: selectedProvider.id,
+      label: selectedProvider.label,
+      baseUrl: selectedProvider.baseUrl,
+      apiKey: selectedProvider.apiKey,
+      defaultModel: selectedProvider.defaultModel,
+      supportsToolCalling: selectedProvider.supportsToolCalling,
+      supportsStreaming: selectedProvider.supportsStreaming,
+      isActive: true,
+    });
+    setSaveState("saved");
+  };
 
   return (
     <PageShell title={t.settings("title")}>
@@ -169,10 +207,10 @@ export function SettingsPage() {
               {notificationItems.map((item) => (
                 <label
                   key={item.key}
-                  className="flex items-center justify-between gap-4 rounded-[24px] border border-slate-200 bg-white px-4 py-4"
+                  className="flex items-center justify-between gap-4 rounded-[24px] border border-[var(--border)] bg-[var(--panel)] px-4 py-4"
                 >
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">{item.title}</p>
+                    <p className="text-sm font-semibold text-[var(--foreground)]">{item.title}</p>
                   </div>
                   <ToggleSwitch
                     checked={settings[item.key]}
@@ -191,14 +229,14 @@ export function SettingsPage() {
           <SectionCard title={t.settings("modelConfig")}>
             {selectedProvider ? (
               <div className="space-y-4">
-                <div className="rounded-[28px] border border-slate-200 bg-white p-5">
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--panel)] p-5">
                   <div className="grid gap-5">
                     <div className="space-y-2">
-                      <p className="text-sm font-semibold text-slate-700">{t.settings("providerPicker")}</p>
+                      <p className="text-sm font-semibold text-[var(--muted-foreground)]">{t.settings("providerPicker")}</p>
                       <select
                         value={selectedProviderId}
                         onChange={(event) => setSelectedProviderId(event.target.value)}
-                        className="w-full rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4 text-[15px] text-slate-950 outline-none transition focus:border-slate-400"
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                       >
                         {providerForms.map((provider) => (
                           <option key={provider.id} value={provider.id}>
@@ -209,7 +247,7 @@ export function SettingsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-sm font-semibold text-slate-700">{t.settings("baseUrlField")}</p>
+                      <p className="text-sm font-semibold text-[var(--muted-foreground)]">{t.settings("baseUrlField")}</p>
                       <input
                         value={selectedProvider.baseUrl}
                         onChange={(event) =>
@@ -221,31 +259,41 @@ export function SettingsPage() {
                             ),
                           )
                         }
-                        className="w-full rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4 text-[15px] text-slate-950 outline-none transition focus:border-slate-400"
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-sm font-semibold text-slate-700">{t.settings("apiKeyField")}</p>
+                      <p className="text-sm font-semibold text-[var(--muted-foreground)]">{t.settings("apiKeyField")}</p>
+                      <div className="relative">
+                        <input
+                          type={showApiKey ? "text" : "password"}
+                          value={selectedProvider.apiKey}
+                          onChange={(event) =>
+                            setProviderForms((current) =>
+                              current.map((item) =>
+                                item.id === selectedProvider.id
+                                  ? { ...item, apiKey: event.target.value }
+                                  : item,
+                              ),
+                            )
+                          }
+                          className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 pr-14 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                        />
+                        <button
+                          type="button"
+                          aria-label={showApiKey ? t.settings("hideApiKey") : t.settings("showApiKey")}
+                          onClick={() => setShowApiKey((current) => !current)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                        >
+                          {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-[var(--muted-foreground)]">{t.settings("modelField")}</p>
                       <input
-                        type="password"
-                        value={selectedProvider.apiKey}
-                        onChange={(event) =>
-                          setProviderForms((current) =>
-                            current.map((item) =>
-                              item.id === selectedProvider.id
-                                ? { ...item, apiKey: event.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                        className="w-full rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4 text-[15px] text-slate-950 outline-none transition focus:border-slate-400"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-sm font-semibold text-slate-700">{t.settings("modelField")}</p>
-                      <select
                         value={selectedProvider.defaultModel}
                         onChange={(event) =>
                           setProviderForms((current) =>
@@ -256,18 +304,12 @@ export function SettingsPage() {
                             ),
                           )
                         }
-                        className="w-full rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4 text-[15px] text-slate-950 outline-none transition focus:border-slate-400"
-                      >
-                        {providerModelOptions[selectedProvider.id].map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                      />
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="flex items-center justify-between rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
                         <span>{t.settings("toolCalling")}</span>
                         <ToggleSwitch
                           checked={selectedProvider.supportsToolCalling}
@@ -283,7 +325,7 @@ export function SettingsPage() {
                           }
                         />
                       </label>
-                      <label className="flex items-center justify-between rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
                         <span>{t.settings("streaming")}</span>
                         <ToggleSwitch
                           checked={selectedProvider.supportsStreaming}
@@ -303,21 +345,27 @@ export function SettingsPage() {
 
                     <div className="flex gap-3">
                       <button
-                        onClick={() =>
-                          updateProvider({
-                            id: selectedProvider.id,
-                            label: selectedProvider.label,
-                            baseUrl: selectedProvider.baseUrl,
-                            apiKey: selectedProvider.apiKey,
-                            defaultModel: selectedProvider.defaultModel,
-                            supportsToolCalling: selectedProvider.supportsToolCalling,
-                            supportsStreaming: selectedProvider.supportsStreaming,
-                            isActive: true,
-                          })
-                        }
-                        className="rounded-full bg-[var(--primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+                        onClick={() => void handleSaveProvider()}
+                        disabled={saveState === "saving"}
+                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-white transition-all duration-300 ${
+                          saveState === "saved"
+                            ? "scale-[1.02] bg-[var(--success)] shadow-[0_10px_24px_rgba(16,185,129,0.24)]"
+                            : "bg-[var(--primary)] hover:opacity-90"
+                        } disabled:cursor-not-allowed disabled:opacity-80`}
                       >
-                        {t.settings("saveAndUseProvider")}
+                        {saveState === "saving" ? (
+                          <>
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                            {t.settings("savingProvider")}
+                          </>
+                        ) : saveState === "saved" ? (
+                          <>
+                            <Check className="h-4 w-4" />
+                            {t.settings("providerSaved")}
+                          </>
+                        ) : (
+                          t.settings("saveAndUseProvider")
+                        )}
                       </button>
                     </div>
                   </div>

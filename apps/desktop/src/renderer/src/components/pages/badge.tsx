@@ -8,12 +8,12 @@ export function Badge({
   tone?: "slate" | "indigo" | "emerald" | "amber" | "rose" | "cyan";
 }) {
   const tones: Record<string, string> = {
-    slate: "bg-slate-100 text-slate-700 border-slate-200",
-    indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    amber: "bg-amber-50 text-amber-700 border-amber-200",
-    rose: "bg-rose-50 text-rose-700 border-rose-200",
-    cyan: "bg-cyan-50 text-cyan-700 border-cyan-200",
+    slate: "border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)]",
+    indigo: "border-indigo-500/20 bg-indigo-500/10 text-indigo-500",
+    emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-500",
+    amber: "border-amber-500/20 bg-amber-500/10 text-amber-500",
+    rose: "border-rose-500/20 bg-rose-500/10 text-rose-500",
+    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-500",
   };
 
   return (

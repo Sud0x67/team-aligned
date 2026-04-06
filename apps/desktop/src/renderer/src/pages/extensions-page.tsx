@@ -102,7 +102,7 @@ export function ExtensionsPage() {
                     ) : (
                       <button
                         onClick={() => toggleExtension(extension.id)}
-                        className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[color-mix(in_srgb,var(--muted)_88%,white)]"
+                        className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[var(--panel-muted)]"
                       >
                         <DownloadCloud className="h-3.5 w-3.5" />
                         {t.extensions("installAndEnable")}

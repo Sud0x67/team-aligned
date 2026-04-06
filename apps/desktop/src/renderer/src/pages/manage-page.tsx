@@ -55,7 +55,7 @@ function AgentAvatar({ agent }: { agent: AgentRecord }) {
             ? "bg-emerald-500"
             : agent.status === "busy"
               ? "bg-amber-500"
-              : "bg-slate-400"
+              : "bg-[color-mix(in_srgb,var(--muted-foreground)_60%,transparent)]"
         }`}
       />
     </div>
@@ -282,7 +282,7 @@ export function ManagePage() {
                           ? "bg-emerald-500/10 text-emerald-500"
                           : agent.status === "busy"
                             ? "bg-amber-500/10 text-amber-500"
-                            : "bg-slate-500/10 text-slate-500"
+                            : "bg-[color-mix(in_srgb,var(--muted-foreground)_12%,transparent)] text-[var(--muted-foreground)]"
                       }`}
                     >
                       {agent.status === "online"

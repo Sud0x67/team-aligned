@@ -10,9 +10,9 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="rounded-[24px] border border-dashed border-slate-300 bg-white/70 p-6 text-center">
-      <h3 className="text-lg font-semibold text-slate-950">{title}</h3>
-      <p className="mx-auto mt-2 max-w-xl text-sm leading-7 text-slate-600">
+    <div className="rounded-[24px] border border-dashed border-[var(--border)] bg-[var(--card)] p-6 text-center">
+      <h3 className="text-lg font-semibold text-[var(--foreground)]">{title}</h3>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-7 text-[var(--muted-foreground)]">
         {description}
       </p>
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
