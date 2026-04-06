@@ -30,6 +30,10 @@ export function ChatComposer({
   const [attachments, setAttachments] = useState<AttachmentAssetRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    tone: "error" | "info";
+    message: string;
+  } | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const fileInputId = useId();
 
@@ -82,6 +86,7 @@ export function ChatComposer({
 
   const applySuggestion = (value: string) => {
     if (!activeToken) return;
+    setFeedback(null);
     setInput((current) => current.replace(/(?:^|\s)([@/][^\s]*)$/, (match, token: string) => match.replace(token, value)));
   };
 
@@ -89,10 +94,20 @@ export function ChatComposer({
     const value = input.trim();
     if ((!value && attachments.length === 0) || sending || uploading) return;
     setSending(true);
+    setFeedback(null);
     try {
       await onSend({ input: value, attachments });
       setInput("");
       setAttachments([]);
+      setFeedback(null);
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message:
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : t.chat("sendFailed"),
+      });
     } finally {
       setSending(false);
     }
@@ -102,7 +117,12 @@ export function ChatComposer({
     <div className="rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
         <textarea
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            setInput(event.target.value);
+            if (feedback?.tone === "error") {
+              setFeedback(null);
+            }
+          }}
           onKeyDown={(event) => {
             if (suggestionState && suggestionState.items.length > 0) {
               if (event.key === "ArrowDown") {
@@ -127,7 +147,6 @@ export function ChatComposer({
               if (event.key === "Escape") {
                 event.preventDefault();
                 setActiveSuggestionIndex(0);
-                setInput((current) => `${current} `);
                 return;
               }
             }
@@ -196,7 +215,11 @@ export function ChatComposer({
                 const files = Array.from(event.target.files ?? []);
                 if (files.length === 0) return;
                 setUploading(true);
-                void Promise.all(
+                setFeedback({
+                  tone: "info",
+                  message: t.chat("attachmentsUploading"),
+                });
+                void Promise.allSettled(
                   files.map(async (file) => {
                     const dataUrl = await fileToDataUrl(file);
                     return window.teamaligned.saveAttachmentAsset({
@@ -206,8 +229,34 @@ export function ChatComposer({
                     });
                   }),
                 )
-                  .then((assets) => {
-                    setAttachments((current) => [...current, ...assets]);
+                  .then((results) => {
+                    const succeeded = results
+                      .filter(
+                        (result): result is PromiseFulfilledResult<AttachmentAssetRecord> =>
+                          result.status === "fulfilled",
+                      )
+                      .map((result) => result.value);
+                    const failedCount = results.length - succeeded.length;
+
+                    if (succeeded.length > 0) {
+                      setAttachments((current) => [...current, ...succeeded]);
+                    }
+
+                    if (failedCount > 0) {
+                      setFeedback({
+                        tone: "error",
+                        message:
+                          failedCount === files.length
+                            ? t.chat("attachmentUploadFailed")
+                            : `${t.chat("attachmentUploadPartial")} ${succeeded.length} / ${files.length}`,
+                      });
+                      return;
+                    }
+
+                    setFeedback({
+                      tone: "info",
+                      message: `${t.chat("attachmentsReady")} ${succeeded.length} ${t.common("items")}`,
+                    });
                   })
                   .finally(() => {
                     setUploading(false);
@@ -256,6 +305,18 @@ export function ChatComposer({
                 </button>
               </span>
             ))}
+          </div>
+        ) : null}
+
+        {feedback ? (
+          <div
+            className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${
+              feedback.tone === "error"
+                ? "border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[color-mix(in_srgb,var(--danger)_8%,transparent)] text-[var(--danger)]"
+                : "border-[color-mix(in_srgb,var(--primary)_16%,transparent)] bg-[color-mix(in_srgb,var(--primary)_8%,transparent)] text-[var(--muted-foreground)]"
+            }`}
+          >
+            {feedback.message}
           </div>
         ) : null}
     </div>

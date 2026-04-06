@@ -22,6 +22,8 @@ export function ChatPage() {
     runSteps,
     agents,
     teams,
+    skillCatalog,
+    mcpCatalog,
     sendInput,
     controlRun,
     settings,
@@ -121,6 +123,20 @@ export function ChatPage() {
       .map((agent) => ({ id: agent.id, name: agent.name, role: agent.role }));
   }, [activeConversation, agents, teams]);
 
+  const activeSkillLabel = useMemo(() => {
+    const activeSkillId = activeConversation?.meta.activeSkill;
+    if (!activeSkillId) return null;
+    const skill = skillCatalog.find((item) => item.id === activeSkillId);
+    if (!skill) return activeSkillId;
+    return settings.language === "zh" ? skill.displayName || skill.name : skill.name;
+  }, [activeConversation?.meta.activeSkill, settings.language, skillCatalog]);
+
+  const pinnedMcpLabel = useMemo(() => {
+    const pinnedMcpId = activeConversation?.meta.pinnedMcp;
+    if (!pinnedMcpId) return null;
+    return mcpCatalog.find((item) => item.id === pinnedMcpId)?.name ?? pinnedMcpId;
+  }, [activeConversation?.meta.pinnedMcp, mcpCatalog]);
+
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
     await sendInput({
@@ -181,6 +197,20 @@ export function ChatPage() {
                   <p className="truncate text-sm font-semibold text-[var(--foreground)]">
                     {activeConversation.title}
                   </p>
+                  {activeSkillLabel || pinnedMcpLabel ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {activeSkillLabel ? (
+                        <span className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]">
+                          {t.chat("currentSkillLabel")} {activeSkillLabel}
+                        </span>
+                      ) : null}
+                      {pinnedMcpLabel ? (
+                        <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted-foreground)]">
+                          {t.chat("currentMcpLabel")} {pinnedMcpLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
