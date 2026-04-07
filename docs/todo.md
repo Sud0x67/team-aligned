@@ -2,7 +2,7 @@
 
 ## 当前原则
 
-更新时间：2026-04-06
+更新时间：2026-04-08
 
 从现在开始，`teamaligned` 进入**范围冻结**阶段：
 
@@ -56,6 +56,7 @@
 ### Skills / MCP / Tool Layer
 
 - [x] Skills registry 同步、安装、白名单、激活
+- [x] Skill 安装进度反馈与移除
 - [x] Skill prompt 注入
 - [x] Skill 脚本与附属文件能力接入 runtime
 - [x] MCP registry 同步
@@ -74,6 +75,7 @@
 - [x] agent workspace / team workspace 初始化
 - [x] artifact / MEMORY.md / shared-memory.md 落盘
 - [x] avatars / attachments 物理目录
+- [x] 默认本地数据目录统一为 `~/.teamaligned`
 - [x] `attachments / artifacts / tool_invocations / run_steps` 正式表
 - [x] `messages / conversations / runs` 结构化列与索引
 - [x] `agents / teams / providers / notifications` 结构化列与索引
@@ -91,7 +93,7 @@
 
 #### 1. 群聊稳定性与失败恢复
 
-- [ ] 修复“管理页发起对话不能直接进入目标群组会话”的链路阻断
+- [x] 修复“管理页发起对话不能直接进入目标群组会话”的链路阻断
 - [ ] 系统化验证群聊复杂任务下的稳定性
 - [ ] 明确失败态恢复路径
 - [ ] 补强 pause / resume / cancel 的边界场景
@@ -107,11 +109,11 @@
 #### 3. Skill / MCP 收尾
 
 - [ ] 在消息流和 run 详情里更明确地展示当前 Skill 已生效
-- [ ] Skill 安装成功后补齐下一步使用引导
+- [x] Skill 安装 / 移除增加进行中反馈
 - [ ] MCP 增加 tool 级白名单
 - [ ] MCP 增加常见服务的配置模板优化
 - [ ] MCP 配置成功后补齐下一步使用引导
-- [ ] 附件上传失败增加用户可见错误提示
+- [x] 附件上传失败增加用户可见错误提示
 
 ### P1：数据与导出
 

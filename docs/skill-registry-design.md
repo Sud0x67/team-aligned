@@ -6,7 +6,7 @@
 - TeamAligned 启动时会尝试同步 Skill catalog
 - 扩展页的 Skills tab 展示 catalog 中的 skill
 - 点击安装后，会把对应 skill 目录完整复制到本地全局目录
-- 全局安装路径为 `~/<app-user-data>/teamaligned/skills/<skill-id>/<version>/`
+- 全局安装路径为 `~/.teamaligned/skills/<skill-id>/<version>/`
 - Agent 使用 `skillWhitelist` 控制允许加载哪些 skill
 - 当前新安装 skill 会默认加入所有 Agent 的白名单，后续再收紧为显式配置
 
@@ -52,8 +52,6 @@ skills/
 
 ## 后续待补
 
-1. GitHub 远端仓库创建与推送
-2. Agent 管理页上的 skillWhitelist 配置 UI
-3. Skill 升级、卸载、版本固定
-4. Team 级 skillWhitelist
-5. 从 `SKILL.md` frontmatter 自动生成 catalog
+1. Skill 升级与版本固定
+2. Team 级 skillWhitelist
+3. 从 `SKILL.md` frontmatter 自动生成 catalog

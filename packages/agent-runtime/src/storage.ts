@@ -171,8 +171,11 @@ export class AppStorage {
   init() {
     if (this.databaseHasData()) {
       this.loadState();
-      this.normalizeManagedPaths();
+      const migratedPaths = this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
+      if (migratedPaths) {
+        this.persist();
+      }
       return;
     }
 
@@ -1506,40 +1509,51 @@ export class AppStorage {
   }
 
   private normalizeManagedPaths() {
+    let changed = false;
+    const normalize = (value: string | null | undefined) => {
+      const next = this.normalizeManagedPath(value);
+      if (next !== (value ?? null)) {
+        changed = true;
+      }
+      return next;
+    };
+
     const profileAvatarPath = this.state.settingsEntries["profile.avatarPath"];
     if (profileAvatarPath && profileAvatarPath !== "null") {
-      this.state.settingsEntries["profile.avatarPath"] =
-        this.normalizeManagedPath(profileAvatarPath) ?? profileAvatarPath;
+      this.state.settingsEntries["profile.avatarPath"] = normalize(profileAvatarPath) ?? profileAvatarPath;
     }
 
     this.state.agents = this.state.agents.map((agent) => ({
       ...agent,
-      workspacePath: this.normalizeManagedPath(agent.workspacePath) ?? agent.workspacePath,
-      avatarPath: this.normalizeManagedPath(agent.avatarPath),
+      workspacePath: normalize(agent.workspacePath) ?? agent.workspacePath,
+      avatarPath: normalize(agent.avatarPath),
     }));
     this.state.teams = this.state.teams.map((team) => ({
       ...team,
-      workspacePath: this.normalizeManagedPath(team.workspacePath) ?? team.workspacePath,
-      avatarPath: this.normalizeManagedPath(team.avatarPath),
+      workspacePath: normalize(team.workspacePath) ?? team.workspacePath,
+      avatarPath: normalize(team.avatarPath),
     }));
     this.state.skillCatalog = this.state.skillCatalog.map((skill) => ({
       ...skill,
-      installPath: this.normalizeManagedPath(skill.installPath),
+      installPath: normalize(skill.installPath),
     }));
-    this.state.runs = this.state.runs.map((run) => ({
-      ...run,
-      metadata: this.normalizeRunMetadata(run.metadata),
-    }));
+    this.state.runs = this.state.runs.map((run) => {
+      const metadata = this.normalizeRunMetadata(run.metadata);
+      if (JSON.stringify(metadata) !== JSON.stringify(run.metadata)) {
+        changed = true;
+      }
+      return { ...run, metadata };
+    });
     this.state.attachments = this.state.attachments.map((attachment) => ({
       ...attachment,
-      path: this.normalizeManagedPath(attachment.path) ?? attachment.path,
+      path: normalize(attachment.path) ?? attachment.path,
     }));
     this.state.artifacts = this.state.artifacts.map((artifact) => ({
       ...artifact,
-      path: this.normalizeManagedPath(artifact.path) ?? artifact.path,
-      workspacePath: this.normalizeManagedPath(artifact.workspacePath) ?? artifact.workspacePath,
+      path: normalize(artifact.path) ?? artifact.path,
+      workspacePath: normalize(artifact.workspacePath) ?? artifact.workspacePath,
     }));
-    this.persist();
+    return changed;
   }
 
   private readProviders() {

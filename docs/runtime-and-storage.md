@@ -78,6 +78,13 @@
 
 如果用户显式指定了 workspace 路径，则对应 Agent / Team 的工作目录会改用用户提供的位置。
 
+当前实现还保留一个很窄的旧目录兼容策略：
+
+- 启动时会从旧的 `~/teamaligned` 和 Electron `userData/teamaligned` 目录复制缺失文件到 `~/.teamaligned`
+- 复制过程不覆盖 `~/.teamaligned` 中已经存在的文件
+- 旧数据库里指向 `~/teamaligned/...` 的受管资源路径，会在加载时规范化为 `~/.teamaligned/...`
+- 新写入的数据一律以 `~/.teamaligned` 为根目录
+
 ## 结合原型新增的本地数据对象
 
 基于 Figma 原型，除了 Agent、Team、Conversation 之外，还应补充以下本地对象：
