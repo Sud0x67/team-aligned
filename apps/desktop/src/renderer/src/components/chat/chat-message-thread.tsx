@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Bot, Paperclip, ShieldAlert } from "lucide-react";
 import type { AttachmentAssetRecord, MessageRecord, RunRecord } from "@shared";
 import { createTranslator } from "../../i18n";
@@ -30,21 +31,65 @@ function isImageAttachment(attachment: AttachmentAssetRecord) {
 }
 
 export function ChatMessageThread({
+  conversationId,
   messages,
   run,
   showInternalMessages,
+  pendingSystemMessage,
 }: {
+  conversationId: string;
   messages: MessageRecord[];
   run: RunRecord | null;
   showInternalMessages: boolean;
+  pendingSystemMessage: string | null;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
   const visibleMessages = getConversationVisibleMessages(messages, showInternalMessages);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const lastRunIdRef = useRef<string | null>(null);
+
+  const updateShouldStickToBottom = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const distanceToBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldStickToBottomRef.current = distanceToBottom <= 80;
+  };
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const anchor = bottomAnchorRef.current;
+    if (!container || !anchor) return;
+
+    if (!shouldStickToBottomRef.current) return;
+    anchor.scrollIntoView({ block: "end" });
+  }, [visibleMessages, pendingSystemMessage, run?.id, run?.stepIndex, run?.status]);
+
+  useEffect(() => {
+    if (lastRunIdRef.current === run?.id) return;
+    lastRunIdRef.current = run?.id ?? null;
+    shouldStickToBottomRef.current = true;
+  }, [run?.id]);
+
+  useEffect(() => {
+    shouldStickToBottomRef.current = true;
+  }, [conversationId]);
+
+  useEffect(() => {
+    shouldStickToBottomRef.current = true;
+  }, [showInternalMessages]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--background)] px-5 py-4">
+      <div
+        ref={scrollContainerRef}
+        onScroll={updateShouldStickToBottom}
+        className="min-h-0 flex-1 overflow-y-auto bg-[var(--background)] px-5 py-4"
+      >
         <div className="space-y-4">
           {visibleMessages.map((message) => {
             const isUser = message.senderKind === "user";
@@ -183,24 +228,26 @@ export function ChatMessageThread({
             );
           })}
 
-          {run ? (
-            <div className="rounded-2xl border border-dashed border-[color-mix(in_srgb,var(--primary)_20%,transparent)] bg-[color-mix(in_srgb,var(--primary)_6%,transparent)] px-4 py-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Bot className="h-4 w-4 text-[var(--primary)]" />
-                  <p className="text-sm font-semibold text-[var(--foreground)]">
-                    {t.chat("currentRun")}：{run.title}
-                  </p>
-                </div>
-                <span className="rounded-full bg-[var(--card)] px-3 py-1 text-xs font-semibold text-[var(--primary)]">
-                  {run.status}
+          {pendingSystemMessage ? (
+            <div className="flex justify-start">
+              <div className="max-w-[68%]">
+                <span className="mb-1 block text-[11px] text-[var(--muted-foreground)]">
+                  {t.chat("systemThinking")}
                 </span>
+                <div className="rounded-2xl rounded-tl-md border border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--accent)] px-4 py-3 text-[14px] leading-7 text-[var(--accent-foreground)] shadow-sm">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-[var(--primary)]">
+                    <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
+                    <span className="inline-flex gap-1">
+                      <span className="animate-pulse">{t.chat("thinking")}</span>
+                    </span>
+                  </div>
+                  <p className="whitespace-pre-wrap">{pendingSystemMessage}</p>
+                </div>
               </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                {t.chat("currentStep")} {run.stepIndex} / {run.totalSteps} · {run.kind}
-              </p>
             </div>
           ) : null}
+
+          <div ref={bottomAnchorRef} />
         </div>
       </div>
     </div>

@@ -14,6 +14,12 @@ import type {
 } from "@teamaligned/shared";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
+type TokenUsageSummary = {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+};
+
 type DeepAgentSession = {
   signature: string;
   agent: ReturnType<typeof createDeepAgent>;
@@ -101,6 +107,91 @@ export function extractAgentText(result: unknown): string {
   }
 
   return "";
+}
+
+function toNullableNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function buildTokenUsageSummary(inputTokens: unknown, outputTokens: unknown, totalTokens: unknown) {
+  const normalizedInput = toNullableNumber(inputTokens);
+  const normalizedOutput = toNullableNumber(outputTokens);
+  const normalizedTotal =
+    toNullableNumber(totalTokens) ??
+    (normalizedInput !== null || normalizedOutput !== null
+      ? (normalizedInput ?? 0) + (normalizedOutput ?? 0)
+      : null);
+
+  if (normalizedInput === null && normalizedOutput === null && normalizedTotal === null) {
+    return null;
+  }
+
+  return {
+    inputTokens: normalizedInput,
+    outputTokens: normalizedOutput,
+    totalTokens: normalizedTotal,
+  } satisfies TokenUsageSummary;
+}
+
+function extractTokenUsage(result: unknown): TokenUsageSummary | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+
+  const usageMetadata =
+    "usage_metadata" in result && result.usage_metadata && typeof result.usage_metadata === "object"
+      ? result.usage_metadata
+      : null;
+  if (usageMetadata) {
+    return buildTokenUsageSummary(
+      "input_tokens" in usageMetadata ? usageMetadata.input_tokens : null,
+      "output_tokens" in usageMetadata ? usageMetadata.output_tokens : null,
+      "total_tokens" in usageMetadata ? usageMetadata.total_tokens : null,
+    );
+  }
+
+  const responseMetadata =
+    "response_metadata" in result &&
+    result.response_metadata &&
+    typeof result.response_metadata === "object"
+      ? result.response_metadata
+      : null;
+  if (responseMetadata) {
+    const tokenUsage =
+      "tokenUsage" in responseMetadata &&
+      responseMetadata.tokenUsage &&
+      typeof responseMetadata.tokenUsage === "object"
+        ? responseMetadata.tokenUsage
+        : null;
+    if (tokenUsage) {
+      return buildTokenUsageSummary(
+        "promptTokens" in tokenUsage ? tokenUsage.promptTokens : null,
+        "completionTokens" in tokenUsage ? tokenUsage.completionTokens : null,
+        "totalTokens" in tokenUsage ? tokenUsage.totalTokens : null,
+      );
+    }
+  }
+
+  const usage =
+    "usage" in result && result.usage && typeof result.usage === "object" ? result.usage : null;
+  if (usage) {
+    return buildTokenUsageSummary(
+      "prompt_tokens" in usage ? usage.prompt_tokens : null,
+      "completion_tokens" in usage ? usage.completion_tokens : null,
+      "total_tokens" in usage ? usage.total_tokens : null,
+    );
+  }
+
+  if ("messages" in result && Array.isArray(result.messages)) {
+    for (let index = result.messages.length - 1; index >= 0; index -= 1) {
+      const nestedUsage = extractTokenUsage(result.messages[index]);
+      if (nestedUsage) {
+        return nestedUsage;
+      }
+    }
+  }
+
+  return null;
 }
 
 function toAgentMessages(history: MessageRecord[]) {
@@ -327,7 +418,7 @@ export async function invokeSingleChatDeepAgent(input: {
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
-}) {
+}): Promise<{ text: string; usage: TokenUsageSummary | null }> {
   const {
     sessions,
     conversationId,
@@ -451,7 +542,10 @@ export async function invokeSingleChatDeepAgent(input: {
       session.initialized = true;
       const finalText = extractAgentText(finalOutput) || streamedText.trim();
       if (finalText) {
-        return finalText;
+        return {
+          text: finalText,
+          usage: extractTokenUsage(finalOutput),
+        };
       }
     } catch {
       // Fallback to non-streaming invoke below.
@@ -466,7 +560,10 @@ export async function invokeSingleChatDeepAgent(input: {
   session.initialized = true;
 
   const text = extractAgentText(result);
-  return text || "模型已完成调用，但没有返回可显示的文本内容。";
+  return {
+    text: text || "模型已完成调用，但没有返回可显示的文本内容。",
+    usage: extractTokenUsage(result),
+  };
 }
 
 function extractStreamText(chunk: unknown) {

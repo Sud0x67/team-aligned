@@ -109,6 +109,10 @@ function now() {
   return Date.now();
 }
 
+function sqliteNullable<T>(value: T | null | undefined) {
+  return value ?? null;
+}
+
 const agentPalette = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#3b82f6"];
 const teamPalette = ["#7c3aed", "#0ea5e9", "#14b8a6", "#8b5cf6"];
 
@@ -446,7 +450,7 @@ export class AppStorage {
     if (conversation) {
       conversation.lastMessage = input.content.replace(/\n+/g, " ").slice(0, 120);
       conversation.lastActivityAt = now();
-      if (input.senderKind !== "user") {
+      if (input.senderKind !== "user" && input.visibility === "public") {
         conversation.unread += 1;
       }
     }
@@ -1129,8 +1133,8 @@ export class AppStorage {
           agent.role,
           agent.status,
           agent.workspacePath,
-          agent.avatarPath,
-          agent.modelId,
+          sqliteNullable(agent.avatarPath),
+          agent.modelId ?? defaultProviders[0]?.defaultModel ?? "qwen-max",
           JSON.stringify(agent),
         );
       }
@@ -1140,7 +1144,7 @@ export class AppStorage {
           team.name,
           team.objective,
           team.workspacePath,
-          team.avatarPath,
+          sqliteNullable(team.avatarPath),
           JSON.stringify(team),
         );
       }
@@ -1153,8 +1157,8 @@ export class AppStorage {
           conversation.unread,
           conversation.lastMessage,
           conversation.lastActivityAt,
-          conversation.meta.activeSkill,
-          conversation.meta.pinnedMcp,
+          sqliteNullable(conversation.meta.activeSkill),
+          sqliteNullable(conversation.meta.pinnedMcp),
           conversation.meta.showInternalMessages ? 1 : 0,
           JSON.stringify(conversation),
         );
@@ -1171,7 +1175,7 @@ export class AppStorage {
           message.content,
           JSON.stringify(message.mentions),
           message.createdAt,
-          message.runId,
+          sqliteNullable(message.runId),
           this.extractAttachmentsFromMessage(message).length > 0 ? 1 : 0,
           JSON.stringify(message),
         );
@@ -1207,8 +1211,8 @@ export class AppStorage {
           notification.body,
           notification.read ? 1 : 0,
           notification.createdAt,
-          notification.relatedConversationId,
-          notification.relatedRunId,
+          sqliteNullable(notification.relatedConversationId),
+          sqliteNullable(notification.relatedRunId),
           JSON.stringify(notification),
         );
       }
@@ -1504,8 +1508,8 @@ export class AppStorage {
         role: this.preferStructuredValue(row.role, payload.role),
         status: this.preferStructuredValue(row.status, payload.status),
         workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
-        avatarPath: this.preferStructuredValue(row.avatar_path, payload.avatarPath),
-        modelId: this.preferStructuredValue(row.model_id, payload.modelId),
+        avatarPath: row.avatar_path ?? payload.avatarPath ?? null,
+        modelId: row.model_id ?? payload.modelId ?? defaultProviders[0]?.defaultModel ?? "qwen-max",
       } satisfies AgentRecord;
     });
   }
@@ -1534,7 +1538,7 @@ export class AppStorage {
         name: this.preferStructuredValue(row.name, payload.name),
         objective: this.preferStructuredValue(row.objective, payload.objective),
         workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
-        avatarPath: this.preferStructuredValue(row.avatar_path, payload.avatarPath),
+        avatarPath: row.avatar_path ?? payload.avatarPath ?? null,
       } satisfies TeamRecord;
     });
   }
@@ -1650,7 +1654,7 @@ export class AppStorage {
         ...payload,
         id: row.id || payload.id,
         conversationId: this.preferStructuredValue(row.conversation_id, payload.conversationId),
-        senderId: this.preferStructuredValue(row.sender_id, payload.senderId),
+        senderId: row.sender_id ?? payload.senderId ?? null,
         senderName: this.preferStructuredValue(row.sender_name, payload.senderName),
         senderKind: this.preferStructuredValue(row.sender_kind, payload.senderKind),
         messageType: this.preferStructuredValue(row.message_type, payload.messageType),
@@ -1658,7 +1662,7 @@ export class AppStorage {
         content: this.preferStructuredValue(row.content, payload.content),
         mentions: row.mentions_json ? (JSON.parse(row.mentions_json) as string[]) : payload.mentions,
         createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
-        runId: this.preferStructuredValue(row.run_id, payload.runId),
+        runId: row.run_id ?? payload.runId ?? null,
       } satisfies MessageRecord;
     });
   }

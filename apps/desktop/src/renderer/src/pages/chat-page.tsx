@@ -26,6 +26,7 @@ export function ChatPage() {
     mcpCatalog,
     sendInput,
     controlRun,
+    markConversationRead,
     settings,
   } = useAppStore();
   const t = createTranslator(settings.language);
@@ -67,7 +68,16 @@ export function ChatPage() {
 
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
-  const activeMessages = activeConversation ? messages[activeConversation.id] ?? [] : [];
+  const activeMessages = useMemo(
+    () => (activeConversation ? messages[activeConversation.id] ?? [] : []),
+    [activeConversation, messages],
+  );
+
+  useEffect(() => {
+    if (!activeConversation || activeConversation.unread <= 0) return;
+    void markConversationRead(activeConversation.id);
+  }, [activeConversation, markConversationRead]);
+
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
   const latestConversationRun = useMemo(() => {
     if (!activeConversation) return null;
@@ -108,6 +118,66 @@ export function ChatPage() {
     );
   }, [activeConversation, detailRunId, toolInvocations]);
 
+  const latestSystemMessage = useMemo(() => {
+    if (!activeConversation) return null;
+    const scopedMessages = detailRunId
+      ? activeMessages.filter((message) => message.runId === detailRunId)
+      : activeMessages;
+    const latest = [...scopedMessages]
+      .filter((message) => message.visibility === "system")
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+    return latest?.content ?? null;
+  }, [activeConversation, activeMessages, detailRunId]);
+
+  const pendingSystemMessage = useMemo(() => {
+    if (!activeRun) return null;
+
+    const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
+    const hasFinalPublicReply = runMessages.some(
+      (message) =>
+        message.visibility === "public" &&
+        message.senderKind !== "user" &&
+        message.metadata?.streaming !== true,
+    );
+
+    if (hasFinalPublicReply) {
+      return null;
+    }
+
+    const latest = [...runMessages]
+      .filter((message) => message.visibility === "system")
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+
+    return latest?.content ?? t.chat("thinking");
+  }, [activeMessages, activeRun, t]);
+
+  const conversationTokenUsage = useMemo(() => {
+    if (!activeConversation) {
+      return { total: 0, tracked: false };
+    }
+
+    const runsInConversation = runs.filter((run) => run.conversationId === activeConversation.id);
+    const trackedTotal = runsInConversation.reduce((sum, run) => {
+      const total =
+        typeof run.metadata?.totalTokens === "number"
+          ? run.metadata.totalTokens
+          : typeof run.metadata?.tokenUsage === "number"
+            ? run.metadata.tokenUsage
+            : null;
+      return sum + (total ?? 0);
+    }, 0);
+
+    if (trackedTotal > 0) {
+      return { total: trackedTotal, tracked: true };
+    }
+
+    const estimatedTotal = activeMessages
+      .filter((message) => message.visibility !== "internal")
+      .reduce((sum, message) => sum + Math.max(1, Math.ceil(message.content.length / 4)), 0);
+
+    return { total: estimatedTotal, tracked: false };
+  }, [activeConversation, activeMessages, runs]);
+
   const mentionCandidates = useMemo(() => {
     if (!activeConversation) return [];
     if (activeConversation.kind === "agent") {
@@ -146,6 +216,14 @@ export function ChatPage() {
     });
   };
 
+  const handleSelectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversation && conversation.unread > 0) {
+      void markConversationRead(conversationId);
+    }
+  };
+
   const handlePause = async () => {
     if (!activeConversation) return;
     await controlRun({ conversationId: activeConversation.id, action: "pause" });
@@ -168,7 +246,7 @@ export function ChatPage() {
           <ChatConversationList
             conversations={filteredConversations}
             activeConversationId={activeConversationId}
-            onSelectConversation={setActiveConversationId}
+            onSelectConversation={handleSelectConversation}
             search={search}
             onSearchChange={setSearch}
           />
@@ -245,9 +323,11 @@ export function ChatPage() {
 
             <div className="min-h-0 flex-1 overflow-hidden">
               <ChatMessageThread
+                conversationId={activeConversation.id}
                 messages={activeMessages}
                 run={activeRun}
                 showInternalMessages={showInternal}
+                pendingSystemMessage={pendingSystemMessage}
               />
             </div>
 
@@ -258,21 +338,12 @@ export function ChatPage() {
                 artifacts={conversationArtifacts}
                 attachments={conversationAttachments}
                 toolInvocations={conversationToolInvocations}
+                tokenUsage={conversationTokenUsage}
+                latestSystemMessage={latestSystemMessage}
+                onPause={handlePause}
+                onResume={handleResume}
+                onCancel={handleCancel}
               />
-
-              {activeRun ? (
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <button className="button-secondary !px-4 !py-2 text-sm" onClick={handlePause}>
-                    {t.chat("pause")}
-                  </button>
-                  <button className="button-secondary !px-4 !py-2 text-sm" onClick={handleResume}>
-                    {t.chat("resume")}
-                  </button>
-                  <button className="button-secondary !px-4 !py-2 text-sm" onClick={handleCancel}>
-                    {t.chat("cancel")}
-                  </button>
-                </div>
-              ) : null}
 
               <ChatComposer
                 conversationId={activeConversation.id}

@@ -1,5 +1,15 @@
-import type { ReactNode } from "react";
-import { Activity, FileStack, Paperclip, Wrench } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  FileStack,
+  Paperclip,
+  Pause,
+  Play,
+  Wrench,
+  X,
+} from "lucide-react";
 import type {
   ArtifactRecord,
   RunRecord,
@@ -30,6 +40,10 @@ function formatJson(value: string) {
   } catch {
     return value;
   }
+}
+
+function isActiveRun(status: RunStatus) {
+  return !["completed", "failed", "cancelled"].includes(status);
 }
 
 function getRunStatusTone(status: RunStatus) {
@@ -145,51 +159,182 @@ export function ChatRunDetails({
   artifacts,
   attachments,
   toolInvocations,
+  tokenUsage,
+  latestSystemMessage,
+  onPause,
+  onResume,
+  onCancel,
 }: {
   run: RunRecord | null;
   runSteps: RunStepRecord[];
   artifacts: ArtifactRecord[];
   attachments: StoredAttachmentRecord[];
   toolInvocations: ToolInvocationRecord[];
+  tokenUsage: { total: number; tracked: boolean };
+  latestSystemMessage: string | null;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
+  const [expanded, setExpanded] = useState(false);
 
-  const sortedSteps = [...runSteps].sort((a, b) => a.stepIndex - b.stepIndex);
-  const recentArtifacts = [...artifacts].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6);
-  const recentAttachments = [...attachments].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6);
-  const recentToolInvocations = [...toolInvocations].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6);
+  const sortedSteps = useMemo(
+    () => [...runSteps].sort((a, b) => a.stepIndex - b.stepIndex),
+    [runSteps],
+  );
+  const recentArtifacts = useMemo(
+    () => [...artifacts].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6),
+    [artifacts],
+  );
+  const recentAttachments = useMemo(
+    () => [...attachments].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6),
+    [attachments],
+  );
+  const recentToolInvocations = useMemo(
+    () => [...toolInvocations].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6),
+    [toolInvocations],
+  );
 
-  if (!run && recentArtifacts.length === 0 && recentAttachments.length === 0 && recentToolInvocations.length === 0) {
+  if (
+    !run &&
+    recentArtifacts.length === 0 &&
+    recentAttachments.length === 0 &&
+    recentToolInvocations.length === 0 &&
+    tokenUsage.total === 0
+  ) {
     return null;
   }
 
+  const summaryText = latestSystemMessage
+    ? trimText(latestSystemMessage.replace(/\n+/g, " "), 88)
+    : run
+      ? `${run.title} · ${t.chat("currentStep")} ${run.stepIndex} / ${run.totalSteps}`
+      : t.chat("runHistoryReady");
+
+  if (!expanded) {
+    return (
+      <div className="mb-3 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="min-w-0 flex-1 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--foreground)]">{t.chat("runDetails")}</span>
+              {run ? (
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getRunStatusTone(run.status)}`}>
+                  {getStatusLabel(t, run.status)}
+                </span>
+              ) : null}
+              <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--muted-foreground)]">
+                {tokenUsage.tracked ? t.chat("tokenUsage") : t.chat("tokenEstimate")}
+                {tokenUsage.total.toLocaleString()}
+              </span>
+            </div>
+            <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">{summaryText}</p>
+          </button>
+
+          {run && isActiveRun(run.status) ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="shrink-0 rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            >
+              {t.chat("cancel")}
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="shrink-0 rounded-xl p-2 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+            aria-label={t.chat("expandRunDetails")}
+          >
+            <ChevronUp className="h-4 w-4 rotate-180" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--background)] p-4">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-[var(--foreground)]">{t.chat("runDetails")}</p>
+    <div className="mb-3 flex max-h-[42vh] min-h-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
+      <div className="mb-4 flex shrink-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-[var(--foreground)]">{t.chat("runDetails")}</p>
+            {run ? (
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getRunStatusTone(run.status)}`}>
+                {getStatusLabel(t, run.status)}
+              </span>
+            ) : null}
+            <span className="rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] text-[var(--muted-foreground)]">
+              {tokenUsage.tracked ? t.chat("tokenUsage") : t.chat("tokenEstimate")}
+              {tokenUsage.total.toLocaleString()}
+            </span>
+          </div>
           <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-            {run
-              ? `${run.title} · ${t.chat("currentStep")} ${run.stepIndex} / ${run.totalSteps}`
-              : t.chat("noRunDetails")}
+            {summaryText}
           </p>
         </div>
-        {run ? (
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getRunStatusTone(run.status)}`}>
-            {getStatusLabel(t, run.status)}
-          </span>
-        ) : null}
+
+        <div className="flex items-center gap-2">
+          {run?.status === "running" || run?.status === "pausing" ? (
+            <button
+              type="button"
+              onClick={onPause}
+              className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Pause className="h-3.5 w-3.5" />
+                {t.chat("pause")}
+              </span>
+            </button>
+          ) : null}
+          {run?.status === "paused" || run?.status === "resuming" ? (
+            <button
+              type="button"
+              onClick={onResume}
+              className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Play className="h-3.5 w-3.5" />
+                {t.chat("resume")}
+              </span>
+            </button>
+          ) : null}
+          {run && isActiveRun(run.status) ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <X className="h-3.5 w-3.5" />
+                {t.chat("cancel")}
+              </span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="rounded-xl p-2 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+            aria-label={t.chat("collapseRunDetails")}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-2">
+      <div className="min-h-0 overflow-y-auto pr-1">
+        <div className="grid gap-3 xl:grid-cols-2">
         <Section icon={<Activity className="h-4 w-4" />} title={t.chat("stepTimeline")} empty={t.chat("noSteps")}>
           <div className="space-y-2">
             {sortedSteps.map((step) => (
-              <div
-                key={step.id}
-                className={`rounded-xl border px-3 py-2 ${getStepTone(step)}`}
-              >
+              <div key={step.id} className={`rounded-xl border px-3 py-2 ${getStepTone(step)}`}>
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-medium text-[var(--foreground)]">{step.label}</p>
                   <span className="text-xs text-[var(--muted-foreground)]">
@@ -289,6 +434,7 @@ export function ChatRunDetails({
             ))}
           </div>
         </Section>
+        </div>
       </div>
     </div>
   );

@@ -30,7 +30,7 @@ export function getConversationVisibleMessages(
   showInternalMessages: boolean,
 ) {
   return messages.filter((message) => {
-    if (message.visibility === "system") return true;
+    if (message.visibility === "system") return false;
     if (message.visibility === "public") return true;
     return showInternalMessages;
   });

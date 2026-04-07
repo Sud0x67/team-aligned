@@ -32,6 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const settings = useAppStore((state) => state.settings);
   const profile = useAppStore((state) => state.profile);
   const notifications = useAppStore((state) => state.notifications);
+  const conversations = useAppStore((state) => state.conversations);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const markNotificationsRead = useAppStore((state) => state.markNotificationsRead);
   const [collapsed, setCollapsed] = useState(false);
@@ -58,6 +59,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const unreadNotifications = useMemo(
     () => notifications.filter((item) => !item.read),
     [notifications],
+  );
+  const unreadConversationCount = useMemo(
+    () => conversations.reduce((sum, conversation) => sum + conversation.unread, 0),
+    [conversations],
   );
 
   const title = pageTitles[location.pathname] ?? "teamaligned";
@@ -95,11 +100,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 ].join(" ")
               }
             >
-              <Icon className="h-5 w-5 shrink-0" />
+              <span className="relative shrink-0">
+                <Icon className="h-5 w-5" />
+                {collapsed && to === "/" && unreadConversationCount > 0 ? (
+                  <span className="absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--primary)] px-1 text-[10px] leading-none text-white">
+                    {unreadConversationCount > 99 ? "99+" : unreadConversationCount}
+                  </span>
+                ) : null}
+              </span>
               {!collapsed ? <span>{label}</span> : null}
-              {!collapsed && to === "/" && unreadNotifications.length > 0 ? (
+              {!collapsed && to === "/" && unreadConversationCount > 0 ? (
                 <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--primary)] px-1.5 text-[11px] text-white">
-                  {unreadNotifications.length}
+                  {unreadConversationCount > 99 ? "99+" : unreadConversationCount}
                 </span>
               ) : null}
             </NavLink>

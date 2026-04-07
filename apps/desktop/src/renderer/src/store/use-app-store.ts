@@ -41,6 +41,7 @@ type AppStore = AppSnapshot & {
   updateProvider: (payload: UpdateProviderInput) => Promise<void>;
   testProviderConnection: (payload: ProviderConnectionTestInput) => Promise<ProviderConnectionTestResult>;
   markNotificationsRead: () => Promise<void>;
+  markConversationRead: (conversationId: string) => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   applySnapshot: (snapshot: AppSnapshot) => void;
 };
@@ -150,6 +151,14 @@ export const useAppStore = create<AppStore>((set) => {
     testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
     markNotificationsRead: async () =>
       runSnapshotAction(() => window.teamaligned.markNotificationsRead()),
+    markConversationRead: async (conversationId) => {
+      set((state) => ({
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation,
+        ),
+      }));
+      await runSnapshotAction(() => window.teamaligned.markConversationRead(conversationId));
+    },
     openWorkspace: async (path) => {
       await window.teamaligned.openWorkspace(path);
     },

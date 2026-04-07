@@ -55,6 +55,8 @@ const api: TeamalignedApi = {
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput): Promise<AttachmentAssetRecord> =>
     ipcRenderer.invoke("teamaligned:save-attachment-asset", payload),
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
+  markConversationRead: (conversationId: string) =>
+    ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),
   openWorkspace: (path: string) => ipcRenderer.invoke("teamaligned:open-workspace", path),
   subscribe: (listener: (snapshot: AppSnapshot) => void) => {
     const wrapped = (_event: unknown, snapshot: AppSnapshot) => listener(snapshot);

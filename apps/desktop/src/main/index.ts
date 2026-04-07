@@ -173,6 +173,9 @@ app.whenReady().then(async () => {
     async (_event, payload: SaveAttachmentAssetInput) => runtime?.saveAttachmentAsset(payload),
   );
   ipcMain.handle("teamaligned:mark-notifications-read", async () => runtime?.markNotificationsRead());
+  ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
+    runtime?.markConversationRead(conversationId),
+  );
   ipcMain.handle("teamaligned:open-workspace", async (_event, workspacePath: string) => {
     await shell.openPath(workspacePath);
   });

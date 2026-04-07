@@ -100,7 +100,7 @@ export function ChatConversationList({
                         {conversation.title}
                       </p>
                     </div>
-                    {conversation.unread > 0 ? (
+                    {conversation.unread > 0 && !active ? (
                       <span className="grid h-6 min-w-6 place-items-center rounded-full bg-[var(--primary)] px-2 text-xs font-semibold text-white">
                         {conversation.unread}
                       </span>

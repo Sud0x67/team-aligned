@@ -456,6 +456,7 @@ export interface TeamalignedApi {
   saveAvatarAsset: (payload: SaveAvatarAssetInput) => Promise<string>;
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   markNotificationsRead: () => Promise<AppSnapshot>;
+  markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
   openWorkspace: (path: string) => Promise<void>;
   subscribe: (listener: (snapshot: AppSnapshot) => void) => () => void;
 }

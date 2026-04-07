@@ -616,6 +616,12 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async markConversationRead(conversationId: string) {
+    this.storage.resetUnread(conversationId);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
   private getAvailableMcpServersForConversation(conversation: ConversationRecord) {
     const pinnedMcp = conversation.meta.pinnedMcp;
     const allowedIds =
@@ -940,21 +946,22 @@ export class TeamalignedRuntime extends EventEmitter {
             runId,
             agent,
             input,
-            response,
+            response.text,
             activeSkillLabel,
           );
           const memoryPath = this.appendMemory(
             workspacePath,
             "memory/MEMORY.md",
-            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response)}`,
+            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response.text)}`,
           );
           const currentRun = this.storage.getRun(runId);
+          const usage = response.usage;
           const streamMessageId = currentRun?.metadata?.streamMessageId;
           if (typeof streamMessageId === "string") {
             this.storage.updateMessage(
               streamMessageId,
               {
-                content: response,
+                content: response.text,
                 metadata: {
                   skill: activeSkillRecord?.id ?? activeSkill,
                   skillLabel: activeSkillLabel,
@@ -971,7 +978,7 @@ export class TeamalignedRuntime extends EventEmitter {
               senderKind: "agent",
               messageType: "agent",
               visibility: "public",
-              content: response,
+              content: response.text,
               mentions: ["user"],
               runId,
               metadata: { skill: activeSkillRecord?.id ?? activeSkill, skillLabel: activeSkillLabel },
@@ -985,6 +992,15 @@ export class TeamalignedRuntime extends EventEmitter {
               memoryPath,
               transcriptPath: transcriptPaths.globalTranscriptPath,
               workspaceTranscriptPath: transcriptPaths.workspaceTranscriptPath,
+              ...(usage?.inputTokens !== null && usage?.inputTokens !== undefined
+                ? { inputTokens: usage.inputTokens }
+                : {}),
+              ...(usage?.outputTokens !== null && usage?.outputTokens !== undefined
+                ? { outputTokens: usage.outputTokens }
+                : {}),
+              ...(usage?.totalTokens !== null && usage?.totalTokens !== undefined
+                ? { totalTokens: usage.totalTokens }
+                : {}),
             },
           });
           this.addRunMessage(
