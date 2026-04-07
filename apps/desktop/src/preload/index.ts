@@ -28,6 +28,7 @@ const api: TeamalignedApi = {
   createTeam: (payload: CreateTeamInput) => ipcRenderer.invoke("teamaligned:create-team", payload),
   refreshSkillCatalog: () => ipcRenderer.invoke("teamaligned:refresh-skill-catalog"),
   installSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:install-skill", skillId),
+  removeSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:remove-skill", skillId),
   refreshMcpCatalog: () => ipcRenderer.invoke("teamaligned:refresh-mcp-catalog"),
   connectMcp: (payload: ConnectMcpInput) => ipcRenderer.invoke("teamaligned:connect-mcp", payload),
   checkMcpHealth: (serverId: string) => ipcRenderer.invoke("teamaligned:check-mcp-health", serverId),
@@ -57,6 +58,7 @@ const api: TeamalignedApi = {
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),
+  selectDirectory: () => ipcRenderer.invoke("teamaligned:select-directory"),
   openWorkspace: (path: string) => ipcRenderer.invoke("teamaligned:open-workspace", path),
   subscribe: (listener: (snapshot: AppSnapshot) => void) => {
     const wrapped = (_event: unknown, snapshot: AppSnapshot) => listener(snapshot);

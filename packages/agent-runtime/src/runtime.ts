@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { parseSlashCommand } from "@teamaligned/shared";
 import type {
@@ -79,6 +79,11 @@ function sleep(ms: number) {
 function trimOutput(text: string, max = 2400) {
   const value = text.trim();
   return value.length <= max ? value : `${value.slice(0, max)}\n...`;
+}
+
+function isSafeChildPath(parentPath: string, childPath: string) {
+  const relativePath = relative(resolve(parentPath), resolve(childPath));
+  return relativePath !== "" && !relativePath.startsWith("..") && !relativePath.startsWith("/");
 }
 
 function trimHeadline(text: string, max = 120) {
@@ -378,6 +383,36 @@ export class TeamalignedRuntime extends EventEmitter {
       type: "extension",
       title: "Skill 已安装",
       body: `${skill.displayName || skill.name} 已安装到全局目录。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async removeSkill(skillId: string) {
+    const skill = this.storage.getSkillCatalogEntry(skillId);
+    if (!skill) {
+      this.storage.createNotification({
+        type: "system",
+        title: "Skill 移除失败",
+        body: `未找到 Skill：${skillId}`,
+        relatedConversationId: null,
+        relatedRunId: null,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
+
+    if (skill.installPath && isSafeChildPath(this.storage.skillInstallRoot, skill.installPath)) {
+      rmSync(skill.installPath, { recursive: true, force: true });
+    }
+
+    this.storage.markSkillRemoved(skill.id);
+    this.storage.createNotification({
+      type: "extension",
+      title: "Skill 已移除",
+      body: `${skill.displayName || skill.name} 已从全局目录移除。`,
       relatedConversationId: null,
       relatedRunId: null,
     });

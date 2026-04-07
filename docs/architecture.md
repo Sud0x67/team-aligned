@@ -290,7 +290,7 @@ Skills 已经采用“远端 registry + 本地全局安装 + Agent 白名单”�
 当前能力包括：
 
 - 从 GitHub skills 仓库同步 catalog
-- 安装整个 skill 目录到 `~/teamaligned/skills`
+- 安装整个 skill 目录到 `~/.teamaligned/skills`
 - 读取 `SKILL.md`
 - 允许 Agent 配置 skill 白名单
 - `/skills` 查看和切换当前会话 skill
@@ -340,7 +340,7 @@ MCP 当前尚未完成：
 
 ### 1. 配置层
 
-路径：`~/teamaligned/settings.json`
+路径：`~/.teamaligned/settings.json`
 
 负责：
 
@@ -353,7 +353,7 @@ MCP 当前尚未完成：
 
 ### 2. 结构化运行态
 
-路径：`~/teamaligned/app.db`
+路径：`~/.teamaligned/app.db`
 
 当前主要表包括：
 
@@ -379,7 +379,7 @@ MCP 当前尚未完成：
 
 ### 3. 文件层
 
-路径位于 `~/teamaligned` 下的多个目录：
+路径位于 `~/.teamaligned` 下的多个目录：
 
 - `transcripts/`
 - `workspaces/agents/*`

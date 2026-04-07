@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import {
@@ -170,12 +171,14 @@ export class AppStorage {
   init() {
     if (this.databaseHasData()) {
       this.loadState();
+      this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
       return;
     }
 
     if (existsSync(this.filePath)) {
       this.loadLegacyState();
+      this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
       this.persist();
       this.backupLegacyState();
@@ -696,6 +699,27 @@ export class AppStorage {
         agent.skillWhitelist.push(skill.id);
       }
     }
+    this.persist();
+  }
+
+  markSkillRemoved(skillId: string) {
+    const skill = this.getSkillCatalogEntry(skillId);
+    if (!skill) return;
+
+    skill.installed = false;
+    skill.installedVersion = null;
+    skill.installPath = null;
+
+    for (const agent of this.state.agents) {
+      agent.skillWhitelist = agent.skillWhitelist.filter((item) => item !== skill.id);
+    }
+
+    for (const conversation of this.state.conversations) {
+      if (conversation.meta.activeSkill === skill.id) {
+        conversation.meta.activeSkill = null;
+      }
+    }
+
     this.persist();
   }
 
@@ -1440,6 +1464,82 @@ export class AppStorage {
         : {}),
       ...(row.memory_path ? { memoryPath: row.memory_path } : {}),
     };
+  }
+
+  private normalizeManagedPath(value: string | null | undefined) {
+    if (!value) return value ?? null;
+
+    for (const legacyRoot of [join(homedir(), "teamaligned")]) {
+      const prefix = `${legacyRoot}/`;
+      if (value === legacyRoot) {
+        return this.rootDir;
+      }
+      if (value.startsWith(prefix)) {
+        return join(this.rootDir, value.slice(prefix.length));
+      }
+    }
+
+    return value;
+  }
+
+  private normalizeRunMetadata(metadata: RunRecord["metadata"]) {
+    if (!metadata) return metadata;
+    return {
+      ...metadata,
+      artifactPath:
+        typeof metadata.artifactPath === "string"
+          ? this.normalizeManagedPath(metadata.artifactPath)
+          : metadata.artifactPath,
+      transcriptPath:
+        typeof metadata.transcriptPath === "string"
+          ? this.normalizeManagedPath(metadata.transcriptPath)
+          : metadata.transcriptPath,
+      workspaceTranscriptPath:
+        typeof metadata.workspaceTranscriptPath === "string"
+          ? this.normalizeManagedPath(metadata.workspaceTranscriptPath)
+          : metadata.workspaceTranscriptPath,
+      memoryPath:
+        typeof metadata.memoryPath === "string"
+          ? this.normalizeManagedPath(metadata.memoryPath)
+          : metadata.memoryPath,
+    };
+  }
+
+  private normalizeManagedPaths() {
+    const profileAvatarPath = this.state.settingsEntries["profile.avatarPath"];
+    if (profileAvatarPath && profileAvatarPath !== "null") {
+      this.state.settingsEntries["profile.avatarPath"] =
+        this.normalizeManagedPath(profileAvatarPath) ?? profileAvatarPath;
+    }
+
+    this.state.agents = this.state.agents.map((agent) => ({
+      ...agent,
+      workspacePath: this.normalizeManagedPath(agent.workspacePath) ?? agent.workspacePath,
+      avatarPath: this.normalizeManagedPath(agent.avatarPath),
+    }));
+    this.state.teams = this.state.teams.map((team) => ({
+      ...team,
+      workspacePath: this.normalizeManagedPath(team.workspacePath) ?? team.workspacePath,
+      avatarPath: this.normalizeManagedPath(team.avatarPath),
+    }));
+    this.state.skillCatalog = this.state.skillCatalog.map((skill) => ({
+      ...skill,
+      installPath: this.normalizeManagedPath(skill.installPath),
+    }));
+    this.state.runs = this.state.runs.map((run) => ({
+      ...run,
+      metadata: this.normalizeRunMetadata(run.metadata),
+    }));
+    this.state.attachments = this.state.attachments.map((attachment) => ({
+      ...attachment,
+      path: this.normalizeManagedPath(attachment.path) ?? attachment.path,
+    }));
+    this.state.artifacts = this.state.artifacts.map((artifact) => ({
+      ...artifact,
+      path: this.normalizeManagedPath(artifact.path) ?? artifact.path,
+      workspacePath: this.normalizeManagedPath(artifact.workspacePath) ?? artifact.workspacePath,
+    }));
+    this.persist();
   }
 
   private readProviders() {

@@ -378,6 +378,7 @@ export function ManagePage() {
           descriptionField: t.manage("descriptionField"),
           capabilities: t.manage("capabilities"),
           workspacePath: t.manage("workspacePath"),
+          browseDirectory: t.extensions("browseDirectory"),
           cancel: t.manage("cancel"),
           create: t.manage("create"),
         }}
@@ -404,6 +405,7 @@ export function ManagePage() {
           teamObjective: t.manage("teamObjective"),
           chooseMembers: t.manage("chooseMembers"),
           workspacePath: t.manage("workspacePath"),
+          browseDirectory: t.extensions("browseDirectory"),
           cancel: t.manage("cancel"),
           create: t.manage("create"),
         }}

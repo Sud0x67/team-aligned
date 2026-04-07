@@ -3,14 +3,17 @@ import {
   Blocks,
   CheckCircle2,
   DownloadCloud,
+  FolderOpen,
   Globe,
   Link2,
+  Loader2,
   Plus,
   Puzzle,
   RefreshCw,
   Search,
   Settings2,
   ShieldAlert,
+  Trash2,
   Unplug,
   X,
 } from "lucide-react";
@@ -71,6 +74,7 @@ export function ExtensionsPage() {
     mcpConnections,
     refreshSkillCatalog,
     installSkill,
+    removeSkill,
     refreshMcpCatalog,
     connectMcp,
     checkMcpHealth,
@@ -83,6 +87,11 @@ export function ExtensionsPage() {
   const [mcpForm, setMcpForm] = useState<ConnectMcpInput | null>(null);
   const [customHeadersText, setCustomHeadersText] = useState("");
   const [mcpFormError, setMcpFormError] = useState<string | null>(null);
+  const [skillAction, setSkillAction] = useState<{
+    skillId: string;
+    type: "install" | "remove";
+  } | null>(null);
+  const [skillActionError, setSkillActionError] = useState<string | null>(null);
 
   const connectionMap = useMemo(
     () => new Map(mcpConnections.map((connection) => [connection.serverId, connection])),
@@ -91,6 +100,27 @@ export function ExtensionsPage() {
 
   const visibleSkills = useMemo(() => skillCatalog, [skillCatalog]);
   const visibleMcps = useMemo(() => mcpCatalog, [mcpCatalog]);
+
+  const runSkillAction = async (skillId: string, type: "install" | "remove") => {
+    if (skillAction) return;
+    if (type === "remove" && !window.confirm(t.extensions("removeSkillConfirm"))) {
+      return;
+    }
+
+    setSkillAction({ skillId, type });
+    setSkillActionError(null);
+    try {
+      if (type === "install") {
+        await installSkill(skillId);
+      } else {
+        await removeSkill(skillId);
+      }
+    } catch (error) {
+      setSkillActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillAction(null);
+    }
+  };
 
   const openMcpEditor = (server: McpCatalogRecord) => {
     const existing = connectionMap.get(server.id);
@@ -122,6 +152,12 @@ export function ExtensionsPage() {
     setMcpForm(null);
     setCustomHeadersText("");
     setMcpFormError(null);
+  };
+
+  const selectMcpWorkingDirectory = async () => {
+    const directory = await window.teamaligned.selectDirectory();
+    if (!directory) return;
+    setMcpForm((current) => ({ ...(current as ConnectMcpInput), cwd: directory }));
   };
 
   const saveMcpConfig = async () => {
@@ -190,17 +226,28 @@ export function ExtensionsPage() {
 
         {tab === "skills" ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {skillActionError ? (
+              <div className="md:col-span-2 rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-[13px] text-red-500">
+                {skillActionError}
+              </div>
+            ) : null}
             {visibleSkills.map((item) => {
               const title = settings.language === "zh" ? item.displayName || item.name : item.name;
               const subtitle =
                 settings.language === "zh" && item.name !== item.displayName ? item.name : null;
               const installed = item.installed;
               const Icon = getExtensionIcon(item.name, installed);
+              const activeAction = skillAction?.skillId === item.id ? skillAction.type : null;
               return (
                 <div
                   key={item.id}
-                  className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-all hover:shadow-sm"
+                  className="relative flex items-start gap-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-all hover:shadow-sm"
                 >
+                  {activeAction ? (
+                    <div className="absolute inset-x-0 bottom-0 h-1 bg-[color-mix(in_srgb,var(--primary)_12%,transparent)]">
+                      <div className="h-full w-1/3 rounded-full bg-[var(--primary)] opacity-80 skill-progress-bar" />
+                    </div>
+                  ) : null}
                   <div
                     className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
                       installed
@@ -219,20 +266,43 @@ export function ExtensionsPage() {
                           <p className="mt-0.5 text-[12px] text-[var(--muted-foreground)]">{subtitle}</p>
                         ) : null}
                       </div>
-                      {installed ? (
-                        <span className="flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-medium text-[var(--primary)]">
-                          <CheckCircle2 className="h-3 w-3" />
-                          {t.extensions("installed")}
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => installSkill(item.id)}
-                          className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[var(--panel-muted)]"
-                        >
-                          <DownloadCloud className="h-3.5 w-3.5" />
-                          {t.extensions("installAndEnable")}
-                        </button>
-                      )}
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {installed && !activeAction ? (
+                          <span className="flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-medium text-[var(--primary)]">
+                            <CheckCircle2 className="h-3 w-3" />
+                            {t.extensions("installed")}
+                          </span>
+                        ) : null}
+                        {activeAction ? (
+                          <button
+                            disabled
+                            className="flex cursor-wait items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] px-3 py-1 text-[12px] font-medium text-[var(--primary)]"
+                          >
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {activeAction === "install"
+                              ? t.extensions("installingSkill")
+                              : t.extensions("removingSkill")}
+                          </button>
+                        ) : installed ? (
+                          <button
+                            onClick={() => void runSkillAction(item.id, "remove")}
+                            disabled={!!skillAction}
+                            className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {t.extensions("removeSkill")}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => void runSkillAction(item.id, "install")}
+                            disabled={!!skillAction}
+                            className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[var(--panel-muted)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <DownloadCloud className="h-3.5 w-3.5" />
+                            {t.extensions("installAndEnable")}
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <p className="pr-8 text-[13px] leading-relaxed text-[var(--muted-foreground)]">
@@ -410,13 +480,23 @@ export function ExtensionsPage() {
                       <label className="mb-1.5 block text-[13px] text-[var(--muted-foreground)]">
                         {t.extensions("workingDirectory")}
                       </label>
-                      <input
-                        value={mcpForm.cwd ?? ""}
-                        onChange={(event) =>
-                          setMcpForm((current) => ({ ...(current as ConnectMcpInput), cwd: event.target.value }))
-                        }
-                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={mcpForm.cwd ?? ""}
+                          onChange={(event) =>
+                            setMcpForm((current) => ({ ...(current as ConnectMcpInput), cwd: event.target.value }))
+                          }
+                          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void selectMcpWorkingDirectory()}
+                          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm transition hover:opacity-90"
+                        >
+                          <FolderOpen className="h-4 w-4" />
+                          {t.extensions("browseDirectory")}
+                        </button>
+                      </div>
                     </div>
                   </>
                 ) : (

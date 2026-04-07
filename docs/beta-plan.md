@@ -28,7 +28,7 @@
 
 需要保证：
 
-- `~/teamaligned` 初始化稳定
+- `~/.teamaligned` 初始化稳定
 - 默认数据和空状态正确
 - 首次没有 provider 时有明确引导
 

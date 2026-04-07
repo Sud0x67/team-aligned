@@ -13,13 +13,13 @@
 应用主目录建议固定为：
 
 ```text
-~/teamaligned/
+~/.teamaligned/
 ```
 
 建议目录结构如下：
 
 ```text
-~/teamaligned/
+~/.teamaligned/
   settings.json
   app.db
   transcripts/
@@ -108,7 +108,7 @@
 
 ## `settings.json` 作为主配置文件
 
-建议把下面这些内容统一放在 `~/teamaligned/settings.json`：
+建议把下面这些内容统一放在 `~/.teamaligned/settings.json`：
 
 - 主题
 - 语言
@@ -156,7 +156,7 @@
     "team": "TeamAligned",
     "email": "alex@example.com",
     "bio": "关注本地优先 AI 工作流与多 Agent 协作体验。",
-    "avatarPath": "/Users/bobo/teamaligned/avatars/profile/alex-chen-ab12cd34.png"
+    "avatarPath": "/Users/bobo/.teamaligned/avatars/profile/alex-chen-ab12cd34.png"
   }
 }
 ```
@@ -199,7 +199,7 @@ SQLite 用于承担结构化实体、索引与统计能力。
 - `npm run db:generate`
   生成新的 migration
 - `npm run db:migrate`
-  对 `~/teamaligned/app.db` 应用 migration；如果检测到已有历史数据库，会先把当前基线标记为已应用，避免覆盖现有数据
+  对 `~/.teamaligned/app.db` 应用 migration；如果检测到已有历史数据库，会先把当前基线标记为已应用，避免覆盖现有数据
 
 其中：
 
@@ -479,7 +479,7 @@ MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保
 
 原型中已经支持用户、Agent、群组头像上传，因此建议本地资源单独落盘：
 
-- 头像文件：`~/teamaligned/avatars/`
-- 聊天附件：`~/teamaligned/artifacts/attachments/`
+- 头像文件：`~/.teamaligned/avatars/`
+- 聊天附件：`~/.teamaligned/artifacts/attachments/`
 
 数据库中只保存相对路径或资源引用，不保存大体积二进制。

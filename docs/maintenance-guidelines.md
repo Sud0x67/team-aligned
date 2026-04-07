@@ -74,8 +74,8 @@ beta 阶段最忌讳的是：
 
 当前持久层已确定：
 
-- `~/teamaligned/settings.json`
-- `~/teamaligned/app.db`
+- `~/.teamaligned/settings.json`
+- `~/.teamaligned/app.db`
 - `transcripts / workspaces / avatars / attachments / skills`
 
 后续清理应坚持：

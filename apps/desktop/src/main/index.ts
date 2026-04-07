@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { TeamalignedRuntime } from "@runtime";
 import type {
   AvatarAssetScope,
@@ -27,6 +27,18 @@ const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
 
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "teamaligned-asset",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+
 function hasRuntimeData(rootDir: string) {
   return [
     "settings.json",
@@ -38,17 +50,33 @@ function hasRuntimeData(rootDir: string) {
 }
 
 function resolveRuntimeRoot() {
-  return join(homedir(), "teamaligned");
+  return join(homedir(), ".teamaligned");
+}
+
+function copyMissingRuntimeEntries(sourceRoot: string, targetRoot: string) {
+  if (!existsSync(sourceRoot)) return;
+  mkdirSync(targetRoot, { recursive: true });
+
+  for (const entry of readdirSync(sourceRoot)) {
+    const sourcePath = join(sourceRoot, entry);
+    const targetPath = join(targetRoot, entry);
+
+    if (!existsSync(targetPath)) {
+      cpSync(sourcePath, targetPath, { recursive: true });
+      continue;
+    }
+
+    if (statSync(sourcePath).isDirectory() && statSync(targetPath).isDirectory()) {
+      copyMissingRuntimeEntries(sourcePath, targetPath);
+    }
+  }
 }
 
 function migrateLegacyRuntimeRoot(targetRoot: string) {
   mkdirSync(targetRoot, { recursive: true });
-  if (hasRuntimeData(targetRoot)) {
-    return;
-  }
 
   const legacyRoots = [
-    join(homedir(), ".teamaligned"),
+    join(homedir(), "teamaligned"),
     join(app.getPath("userData"), "teamaligned"),
   ];
 
@@ -59,9 +87,25 @@ function migrateLegacyRuntimeRoot(targetRoot: string) {
     if (!hasRuntimeData(legacyRoot)) {
       continue;
     }
-    cpSync(legacyRoot, targetRoot, { recursive: true });
-    break;
+    copyMissingRuntimeEntries(legacyRoot, targetRoot);
   }
+}
+
+function isPathInside(parentPath: string, childPath: string) {
+  const relativePath = relative(resolve(parentPath), resolve(childPath));
+  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
+}
+
+function registerAssetProtocol() {
+  protocol.handle("teamaligned-asset", (request) => {
+    const url = new URL(request.url);
+    const assetPath = resolve(decodeURIComponent(url.pathname.slice(1)));
+    const allowedRoots = [resolveRuntimeRoot()];
+    if (!allowedRoots.some((root) => isPathInside(root, assetPath))) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    return net.fetch(pathToFileURL(assetPath).toString());
+  });
 }
 
 async function createWindow() {
@@ -101,6 +145,7 @@ function broadcastSnapshot() {
 app.whenReady().then(async () => {
   const runtimeRoot = resolveRuntimeRoot();
   migrateLegacyRuntimeRoot(runtimeRoot);
+  registerAssetProtocol();
   runtime = new TeamalignedRuntime(runtimeRoot);
   await runtime.init();
   runtime.on("snapshot", broadcastSnapshot);
@@ -121,6 +166,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:refresh-skill-catalog", async () => runtime?.refreshSkillCatalog());
   ipcMain.handle("teamaligned:install-skill", async (_event, skillId: string) =>
     runtime?.installSkill(skillId),
+  );
+  ipcMain.handle("teamaligned:remove-skill", async (_event, skillId: string) =>
+    runtime?.removeSkill(skillId),
   );
   ipcMain.handle("teamaligned:refresh-mcp-catalog", async () => runtime?.refreshMcpCatalog());
   ipcMain.handle("teamaligned:connect-mcp", async (_event, payload: ConnectMcpInput) =>
@@ -176,6 +224,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
     runtime?.markConversationRead(conversationId),
   );
+  ipcMain.handle("teamaligned:select-directory", async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return null;
+    }
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory", "createDirectory"],
+      title: "选择 MCP 工作目录",
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
   ipcMain.handle("teamaligned:open-workspace", async (_event, workspacePath: string) => {
     await shell.openPath(workspacePath);
   });

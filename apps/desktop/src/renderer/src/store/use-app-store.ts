@@ -28,6 +28,7 @@ type AppStore = AppSnapshot & {
   createTeam: (payload: CreateTeamInput) => Promise<void>;
   refreshSkillCatalog: () => Promise<void>;
   installSkill: (skillId: string) => Promise<void>;
+  removeSkill: (skillId: string) => Promise<void>;
   refreshMcpCatalog: () => Promise<void>;
   connectMcp: (payload: ConnectMcpInput) => Promise<void>;
   checkMcpHealth: (serverId: string) => Promise<void>;
@@ -126,6 +127,12 @@ export const useAppStore = create<AppStore>((set) => {
       runLoadingSnapshotAction(() => window.teamaligned.refreshSkillCatalog()),
     installSkill: async (skillId) =>
       runLoadingSnapshotAction(() => window.teamaligned.installSkill(skillId)),
+    removeSkill: async (skillId) => {
+      if (typeof window.teamaligned.removeSkill !== "function") {
+        throw new Error("当前窗口还没有加载新版 preload，请重启应用后再移除 Skill。");
+      }
+      await runLoadingSnapshotAction(() => window.teamaligned.removeSkill(skillId));
+    },
     refreshMcpCatalog: async () =>
       runLoadingSnapshotAction(() => window.teamaligned.refreshMcpCatalog()),
     connectMcp: async (payload) =>

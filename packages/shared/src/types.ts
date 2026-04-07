@@ -439,6 +439,7 @@ export interface TeamalignedApi {
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
   refreshSkillCatalog: () => Promise<AppSnapshot>;
   installSkill: (skillId: string) => Promise<AppSnapshot>;
+  removeSkill: (skillId: string) => Promise<AppSnapshot>;
   refreshMcpCatalog: () => Promise<AppSnapshot>;
   connectMcp: (payload: ConnectMcpInput) => Promise<AppSnapshot>;
   checkMcpHealth: (serverId: string) => Promise<AppSnapshot>;
@@ -457,6 +458,7 @@ export interface TeamalignedApi {
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   markNotificationsRead: () => Promise<AppSnapshot>;
   markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
+  selectDirectory: () => Promise<string | null>;
   openWorkspace: (path: string) => Promise<void>;
   subscribe: (listener: (snapshot: AppSnapshot) => void) => () => void;
 }

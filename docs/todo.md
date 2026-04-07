@@ -68,8 +68,8 @@
 
 ### 本地持久化基线
 
-- [x] `~/teamaligned/settings.json`
-- [x] `~/teamaligned/app.db`
+- [x] `~/.teamaligned/settings.json`
+- [x] `~/.teamaligned/app.db`
 - [x] transcript JSONL 落盘
 - [x] agent workspace / team workspace 初始化
 - [x] artifact / MEMORY.md / shared-memory.md 落盘

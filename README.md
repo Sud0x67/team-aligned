@@ -86,7 +86,7 @@
 ## 当前说明
 
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
-- 当前桌面端本地数据目录统一使用 `~/teamaligned`；如果旧版本数据还在 `~/.teamaligned` 或 Electron `userData` 目录中，启动时会自动迁移。
+- 当前桌面端本地数据目录统一使用 `~/.teamaligned`；如果旧版本数据还在 `~/teamaligned` 或 Electron `userData` 目录中，启动时会自动补齐迁移。
 - 持久层当前采用三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。

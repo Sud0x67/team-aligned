@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { FolderOpen, X } from "lucide-react";
 import type { AgentRecord } from "@shared";
 import { AvatarBadge } from "../avatar-badge";
 import { AvatarPicker } from "../avatar-picker";
@@ -50,6 +50,17 @@ function ModalShell({
       </div>
     </div>
   );
+}
+
+async function pickWorkspaceDirectory(onSelect: (directory: string) => void) {
+  if (typeof window.teamaligned.selectDirectory !== "function") {
+    return;
+  }
+
+  const directory = await window.teamaligned.selectDirectory();
+  if (directory) {
+    onSelect(directory);
+  }
 }
 
 export function AgentFormModal({
@@ -118,11 +129,23 @@ export function AgentFormModal({
         </div>
         <div>
           <label className="mb-1.5 block text-[13px] text-[var(--muted-foreground)]">{labels.workspacePath}</label>
-          <input
-            value={form.workspacePath}
-            onChange={(event) => onChange({ ...form, workspacePath: event.target.value })}
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
-          />
+          <div className="flex gap-2">
+            <input
+              value={form.workspacePath}
+              onChange={(event) => onChange({ ...form, workspacePath: event.target.value })}
+              className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                void pickWorkspaceDirectory((workspacePath) => onChange({ ...form, workspacePath }))
+              }
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm transition hover:opacity-90"
+            >
+              <FolderOpen className="h-4 w-4" />
+              {labels.browseDirectory}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -239,11 +262,23 @@ export function TeamFormModal({
         </div>
         <div>
           <label className="mb-1.5 block text-[13px] text-[var(--muted-foreground)]">{labels.workspacePath}</label>
-          <input
-            value={form.workspacePath}
-            onChange={(event) => onChange({ ...form, workspacePath: event.target.value })}
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
-          />
+          <div className="flex gap-2">
+            <input
+              value={form.workspacePath}
+              onChange={(event) => onChange({ ...form, workspacePath: event.target.value })}
+              className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                void pickWorkspaceDirectory((workspacePath) => onChange({ ...form, workspacePath }))
+              }
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm transition hover:opacity-90"
+            >
+              <FolderOpen className="h-4 w-4" />
+              {labels.browseDirectory}
+            </button>
+          </div>
         </div>
       </div>
 

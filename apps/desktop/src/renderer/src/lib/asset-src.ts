@@ -4,7 +4,7 @@ export function resolveAssetSrc(src?: string | null) {
     return src;
   }
   if (src.startsWith("/")) {
-    return `file://${encodeURI(src)}`;
+    return `teamaligned-asset://local/${encodeURIComponent(src)}`;
   }
   return src;
 }
