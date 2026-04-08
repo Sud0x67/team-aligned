@@ -877,7 +877,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const transcriptPaths = this.storage.getConversationTranscriptPaths(conversation.id);
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
-      attachmentsRoot: this.storage.attachmentsRoot,
+      attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
       activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
       onInvocation: this.createToolInvocationObserver(conversation.id, runId),
     });
@@ -1094,7 +1094,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
-      attachmentsRoot: this.storage.attachmentsRoot,
+      attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
       activeSkill: null,
       onInvocation: this.createToolInvocationObserver(conversation.id, runId),
     });

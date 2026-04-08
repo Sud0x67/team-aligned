@@ -155,12 +155,12 @@ function createInvocationId(prefix: string) {
 
 export function buildRuntimeLangChainTools(input: {
   workspacePath: string;
-  attachmentsRoot: string;
+  attachmentRoots: string[];
   activeSkill: SkillCatalogRecord | null;
   onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
 }) {
   const workspaceRoot = resolve(input.workspacePath);
-  const allowedRoots = [workspaceRoot, resolve(input.attachmentsRoot)];
+  const allowedRoots = [workspaceRoot, ...input.attachmentRoots.map((root) => resolve(root))];
   if (input.activeSkill?.installPath) {
     allowedRoots.push(resolve(input.activeSkill.installPath));
   }

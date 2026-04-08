@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { nanoid } from "nanoid";
 import {
   defaultConversationMeta,
@@ -73,6 +73,7 @@ type PersistedState = {
 type WorkspaceLayout = {
   workspacePath: string;
   artifactsPath: string;
+  attachmentsPath: string;
   memoryPath: string;
   sessionsPath: string;
   memoryFilePath: string;
@@ -131,7 +132,6 @@ export class AppStorage {
   readonly profileAvatarRoot: string;
   readonly agentAvatarRoot: string;
   readonly teamAvatarRoot: string;
-  readonly attachmentsRoot: string;
   private readonly db: DatabaseSync;
   private state: PersistedState;
 
@@ -149,7 +149,6 @@ export class AppStorage {
     this.profileAvatarRoot = join(this.avatarsRoot, "profile");
     this.agentAvatarRoot = join(this.avatarsRoot, "agents");
     this.teamAvatarRoot = join(this.avatarsRoot, "teams");
-    this.attachmentsRoot = join(rootDir, "artifacts", "attachments");
 
     mkdirSync(rootDir, { recursive: true });
     mkdirSync(this.workspaceRoot, { recursive: true });
@@ -161,7 +160,6 @@ export class AppStorage {
     mkdirSync(this.profileAvatarRoot, { recursive: true });
     mkdirSync(this.agentAvatarRoot, { recursive: true });
     mkdirSync(this.teamAvatarRoot, { recursive: true });
-    mkdirSync(this.attachmentsRoot, { recursive: true });
 
     this.db = new DatabaseSync(this.dbPath);
     this.setupSchema();
@@ -1922,6 +1920,7 @@ export class AppStorage {
     options: { type: "agent" | "team"; title: string; summary: string },
   ): WorkspaceLayout {
     const artifactsPath = join(workspacePath, "artifacts");
+    const attachmentsPath = join(artifactsPath, "attachments");
     const memoryPath = join(workspacePath, "memory");
     const sessionsPath = join(workspacePath, "sessions");
     const memoryFilePath = join(memoryPath, "MEMORY.md");
@@ -1929,6 +1928,7 @@ export class AppStorage {
 
     mkdirSync(workspacePath, { recursive: true });
     mkdirSync(artifactsPath, { recursive: true });
+    mkdirSync(attachmentsPath, { recursive: true });
     mkdirSync(memoryPath, { recursive: true });
     mkdirSync(sessionsPath, { recursive: true });
 
@@ -1951,6 +1951,7 @@ export class AppStorage {
     return {
       workspacePath,
       artifactsPath,
+      attachmentsPath,
       memoryPath,
       sessionsPath,
       memoryFilePath,
@@ -2029,7 +2030,8 @@ export class AppStorage {
       .replace(/^-+|-+$/g, "")
       .slice(0, 48);
     const fileName = `${safeConversation || "conversation"}-${safeBaseName || "attachment"}-${nanoid(8)}.${inferredExtension}`;
-    const filePath = join(this.attachmentsRoot, fileName);
+    const attachmentsPath = this.getConversationAttachmentsPath(input.conversationId);
+    const filePath = join(attachmentsPath, fileName);
     const buffer = Buffer.from(base64Payload, "base64");
 
     writeFileSync(filePath, buffer);
@@ -2040,6 +2042,18 @@ export class AppStorage {
       mimeType,
       sizeBytes: buffer.byteLength,
     };
+  }
+
+  getConversationAttachmentRoots(conversationId: string) {
+    const roots = new Set<string>();
+    roots.add(this.getConversationAttachmentsPath(conversationId));
+
+    for (const attachment of this.state.attachments) {
+      if (attachment.conversationId !== conversationId) continue;
+      roots.add(dirname(attachment.path));
+    }
+
+    return Array.from(roots);
   }
 
   getConversationTranscriptPaths(conversationId: string) {
@@ -2061,28 +2075,40 @@ export class AppStorage {
   }
 
   private getWorkspaceSessionPath(conversationId: string) {
+    const layout = this.getConversationWorkspaceLayout(conversationId);
+    if (!layout) return null;
+    return join(layout.sessionsPath, `${conversationId}.jsonl`);
+  }
+
+  private getConversationAttachmentsPath(conversationId: string) {
+    const layout = this.getConversationWorkspaceLayout(conversationId);
+    if (!layout) {
+      throw new Error(`未找到会话 ${conversationId} 对应的 workspace。`);
+    }
+    return layout.attachmentsPath;
+  }
+
+  private getConversationWorkspaceLayout(conversationId: string) {
     const conversation = this.getConversation(conversationId);
     if (!conversation) return null;
 
     if (conversation.kind === "agent") {
       const agent = this.getAgent(conversation.targetId);
       if (!agent) return null;
-      const layout = this.ensureWorkspaceLayout(agent.workspacePath, {
+      return this.ensureWorkspaceLayout(agent.workspacePath, {
         type: "agent",
         title: agent.name,
         summary: agent.description,
       });
-      return join(layout.sessionsPath, `${conversationId}.jsonl`);
     }
 
     const team = this.getTeam(conversation.targetId);
     if (!team) return null;
-    const layout = this.ensureWorkspaceLayout(team.workspacePath, {
+    return this.ensureWorkspaceLayout(team.workspacePath, {
       type: "team",
       title: team.name,
       summary: team.objective,
     });
-    return join(layout.sessionsPath, `${conversationId}.jsonl`);
   }
 
   private seedIfEmpty(

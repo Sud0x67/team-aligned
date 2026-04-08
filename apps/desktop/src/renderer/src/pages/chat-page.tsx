@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Hash, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import type { AttachmentAssetRecord } from "@shared";
 import { useLocation } from "react-router-dom";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
+import { AvatarBadge } from "../components/avatar-badge";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
 import { ChatComposer } from "../components/chat/chat-composer";
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
@@ -13,6 +14,7 @@ import { getLatestActiveRun } from "../components/chat/chat-utils";
 export function ChatPage() {
   const location = useLocation();
   const {
+    profile,
     conversations,
     messages,
     runs,
@@ -180,11 +182,7 @@ export function ChatPage() {
 
   const mentionCandidates = useMemo(() => {
     if (!activeConversation) return [];
-    if (activeConversation.kind === "agent") {
-      return agents
-        .filter((agent) => agent.id === activeConversation.targetId)
-        .map((agent) => ({ id: agent.id, name: agent.name, role: agent.role }));
-    }
+    if (activeConversation.kind === "agent") return [];
 
     const team = teams.find((item) => item.id === activeConversation.targetId);
     if (!team) return [];
@@ -206,6 +204,13 @@ export function ChatPage() {
     if (!pinnedMcpId) return null;
     return mcpCatalog.find((item) => item.id === pinnedMcpId)?.name ?? pinnedMcpId;
   }, [activeConversation?.meta.pinnedMcp, mcpCatalog]);
+
+  const activeTarget = useMemo(() => {
+    if (!activeConversation) return null;
+    return activeConversation.kind === "agent"
+      ? agents.find((agent) => agent.id === activeConversation.targetId) ?? null
+      : teams.find((team) => team.id === activeConversation.targetId) ?? null;
+  }, [activeConversation, agents, teams]);
 
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
@@ -258,19 +263,27 @@ export function ChatPage() {
           <>
             <div className="flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--card)] px-5">
               <div className="flex min-w-0 items-center gap-3">
-                <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                    activeConversation.kind === "agent"
-                      ? "bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] text-[var(--primary)]"
-                      : "bg-[color-mix(in_srgb,#06b6d4_12%,transparent)] text-[#06b6d4]"
-                  }`}
-                >
-                  {activeConversation.kind === "agent" ? (
-                    <Bot className="h-4 w-4" />
-                  ) : (
-                    <Hash className="h-4 w-4" />
-                  )}
-                </div>
+                {activeTarget ? (
+                  <AvatarBadge
+                    src={activeTarget.avatarPath}
+                    fallback={activeTarget.avatar}
+                    alt={activeTarget.name}
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                    style={
+                      activeConversation.kind === "agent"
+                        ? { backgroundColor: activeTarget.avatarColor }
+                        : {
+                            backgroundColor: `${activeTarget.avatarColor}20`,
+                            color: activeTarget.avatarColor,
+                          }
+                    }
+                    textClassName={
+                      activeConversation.kind === "agent"
+                        ? "text-sm font-semibold text-white"
+                        : "text-sm font-semibold"
+                    }
+                  />
+                ) : null}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-[var(--foreground)]">
                     {activeConversation.title}
@@ -309,15 +322,7 @@ export function ChatPage() {
                   >
                     {showInternal ? t.chat("teamContextVisible") : t.chat("teamContext")}
                   </button>
-                ) : (
-                  <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-600">
-                    {t.chat("online")}
-                  </span>
-                )}
-
-                <span className="rounded-full bg-[var(--muted)] px-3 py-1.5 text-[11px] text-[var(--muted-foreground)]">
-                  {settings.activeProviderId === "openai" ? t.chat("providerOpenAI") : t.chat("providerQwen")}
-                </span>
+                ) : null}
               </div>
             </div>
 
@@ -328,6 +333,9 @@ export function ChatPage() {
                 run={activeRun}
                 showInternalMessages={showInternal}
                 pendingSystemMessage={pendingSystemMessage}
+                showMentions={activeConversation.kind === "team"}
+                profile={profile}
+                agents={agents}
               />
             </div>
 

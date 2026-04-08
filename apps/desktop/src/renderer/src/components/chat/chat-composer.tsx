@@ -1,9 +1,42 @@
-import { useEffect, useId, useMemo, useState } from "react";
-import { AtSign, Command, Paperclip, Send, X } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { AtSign, Paperclip, Send, SmilePlus, X } from "lucide-react";
 import type { AttachmentAssetRecord } from "@shared";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
+
+const emojiChoices = [
+  "😀",
+  "😄",
+  "😊",
+  "🙂",
+  "😉",
+  "😍",
+  "🤔",
+  "🫡",
+  "😮",
+  "😂",
+  "😭",
+  "😅",
+  "👍",
+  "👎",
+  "👏",
+  "🙌",
+  "🙏",
+  "💪",
+  "👌",
+  "🤝",
+  "❤️",
+  "🔥",
+  "✨",
+  "🎉",
+  "🚀",
+  "✅",
+  "❌",
+  "⚠️",
+  "📌",
+  "📎",
+];
 
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -35,7 +68,9 @@ export function ChatComposer({
     message: string;
   } | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const fileInputId = useId();
+  const emojiPanelRef = useRef<HTMLDivElement | null>(null);
 
   const activeToken = useMemo(() => {
     const match = input.match(/(?:^|\s)([@/][^\s]*)$/);
@@ -84,6 +119,17 @@ export function ChatComposer({
     setActiveSuggestionIndex(0);
   }, [suggestionState?.type, suggestionState?.items.length]);
 
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!emojiPanelRef.current?.contains(event.target as Node)) {
+        setEmojiOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [emojiOpen]);
+
   const applySuggestion = (value: string) => {
     if (!activeToken) return;
     setFeedback(null);
@@ -113,6 +159,60 @@ export function ChatComposer({
     }
   };
 
+  const showMentionButton = mentionCandidates.length > 0;
+
+  const uploadFiles = async (files: File[], successMessage: string) => {
+    if (files.length === 0) return;
+    setUploading(true);
+    setFeedback({
+      tone: "info",
+      message: t.chat("attachmentsUploading"),
+    });
+
+    try {
+      const results = await Promise.allSettled(
+        files.map(async (file) => {
+          const dataUrl = await fileToDataUrl(file);
+          return window.teamaligned.saveAttachmentAsset({
+            conversationId,
+            dataUrl,
+            fileName: file.name || `clipboard-image-${Date.now()}.png`,
+          });
+        }),
+      );
+
+      const succeeded = results
+        .filter(
+          (result): result is PromiseFulfilledResult<AttachmentAssetRecord> =>
+            result.status === "fulfilled",
+        )
+        .map((result) => result.value);
+      const failedCount = results.length - succeeded.length;
+
+      if (succeeded.length > 0) {
+        setAttachments((current) => [...current, ...succeeded]);
+      }
+
+      if (failedCount > 0) {
+        setFeedback({
+          tone: "error",
+          message:
+            failedCount === files.length
+              ? t.chat("attachmentUploadFailed")
+              : `${t.chat("attachmentUploadPartial")} ${succeeded.length} / ${files.length}`,
+        });
+        return;
+      }
+
+      setFeedback({
+        tone: "info",
+        message: `${successMessage} ${succeeded.length} ${t.common("items")}`,
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
         <textarea
@@ -124,6 +224,10 @@ export function ChatComposer({
             }
           }}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) {
+              return;
+            }
+
             if (suggestionState && suggestionState.items.length > 0) {
               if (event.key === "ArrowDown") {
                 event.preventDefault();
@@ -154,6 +258,19 @@ export function ChatComposer({
               event.preventDefault();
               void submit();
             }
+          }}
+          onPaste={(event) => {
+            const imageFiles = Array.from(event.clipboardData.items)
+              .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+              .map((item, index) => item.getAsFile() ?? new File([], `clipboard-image-${index + 1}.png`))
+              .filter((file): file is File => file.size > 0);
+
+            if (imageFiles.length === 0) {
+              return;
+            }
+
+            event.preventDefault();
+            void uploadFiles(imageFiles, t.chat("pastedImagesReady"));
           }}
           rows={3}
           placeholder={t.chat("directMessageHint")}
@@ -186,23 +303,54 @@ export function ChatComposer({
 
         <div className="mt-3 flex items-end justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-              onClick={() => setInput((current) => `${current}${current ? " " : ""}/command `)}
-            >
-              <Command className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-              onClick={() => setInput((current) => `${current}${current ? " " : ""}@`)}
-            >
-              <AtSign className="h-5 w-5" />
-            </button>
+            {showMentionButton ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                onClick={() => setInput((current) => `${current}${current ? " " : ""}@`)}
+              >
+                <AtSign className="h-5 w-5" />
+              </button>
+            ) : null}
+            <div ref={emojiPanelRef} className="relative">
+              <button
+                type="button"
+                className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                aria-label={t.chat("emoji")}
+                title={t.chat("emoji")}
+                onClick={() => setEmojiOpen((current) => !current)}
+              >
+                <SmilePlus className="h-5 w-5" />
+              </button>
+
+              {emojiOpen ? (
+                <div className="absolute bottom-11 left-0 z-20 w-[220px] rounded-2xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-xl">
+                  <div className="mb-2 text-xs font-medium text-[var(--muted-foreground)]">
+                    {t.chat("emojiPickerTitle")}
+                  </div>
+                  <div className="grid grid-cols-6 gap-2">
+                    {emojiChoices.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="grid h-8 w-8 place-items-center rounded-xl text-lg transition hover:bg-[var(--muted)]"
+                        onClick={() => {
+                          setInput((current) => `${current}${emoji}`);
+                          setEmojiOpen(false);
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <label
               htmlFor={fileInputId}
               className="shrink-0 cursor-pointer rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              aria-label={t.chat("attachment")}
+              title={t.chat("attachment")}
             >
               <Paperclip className="h-5 w-5" />
             </label>
@@ -214,52 +362,8 @@ export function ChatComposer({
               onChange={(event) => {
                 const files = Array.from(event.target.files ?? []);
                 if (files.length === 0) return;
-                setUploading(true);
-                setFeedback({
-                  tone: "info",
-                  message: t.chat("attachmentsUploading"),
-                });
-                void Promise.allSettled(
-                  files.map(async (file) => {
-                    const dataUrl = await fileToDataUrl(file);
-                    return window.teamaligned.saveAttachmentAsset({
-                      conversationId,
-                      dataUrl,
-                      fileName: file.name,
-                    });
-                  }),
-                )
-                  .then((results) => {
-                    const succeeded = results
-                      .filter(
-                        (result): result is PromiseFulfilledResult<AttachmentAssetRecord> =>
-                          result.status === "fulfilled",
-                      )
-                      .map((result) => result.value);
-                    const failedCount = results.length - succeeded.length;
-
-                    if (succeeded.length > 0) {
-                      setAttachments((current) => [...current, ...succeeded]);
-                    }
-
-                    if (failedCount > 0) {
-                      setFeedback({
-                        tone: "error",
-                        message:
-                          failedCount === files.length
-                            ? t.chat("attachmentUploadFailed")
-                            : `${t.chat("attachmentUploadPartial")} ${succeeded.length} / ${files.length}`,
-                      });
-                      return;
-                    }
-
-                    setFeedback({
-                      tone: "info",
-                      message: `${t.chat("attachmentsReady")} ${succeeded.length} ${t.common("items")}`,
-                    });
-                  })
+                void uploadFiles(files, t.chat("attachmentsReady"))
                   .finally(() => {
-                    setUploading(false);
                     event.target.value = "";
                   });
               }}

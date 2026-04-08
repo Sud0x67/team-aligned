@@ -386,7 +386,7 @@ MCP 当前尚未完成：
 - `avatars/profile`
 - `avatars/agents`
 - `avatars/teams`
-- `artifacts/attachments`
+- `workspaces/**/artifacts/attachments`
 - `skills/*`
 
 当前唯一保留的兼容迁移是：启动时从旧的 `~/teamaligned` 和 Electron `userData/teamaligned` 目录补齐缺失文件到 `~/.teamaligned`，并把旧数据库中指向 `~/teamaligned/...` 的受管资源路径规范化到新根目录。新数据不再写入旧目录。

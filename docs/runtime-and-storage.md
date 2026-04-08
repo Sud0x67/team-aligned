@@ -23,8 +23,6 @@
   settings.json
   app.db
   transcripts/
-  artifacts/
-    attachments/
 
   skills/
     summarize/SKILL.md
@@ -39,6 +37,7 @@
     agents/
       designer/
         artifacts/
+          attachments/
         memory/
           MEMORY.md
         sessions/
@@ -46,6 +45,7 @@
     teams/
       landing-page/
         artifacts/
+          attachments/
         shared-memory.md
         sessions/
           2026-04-05-001.jsonl
@@ -63,8 +63,6 @@
   结构化运行状态
 - `transcripts/`
   全局会话审计流水
-- `artifacts/attachments/`
-  聊天附件统一存储目录
 - `avatars/profile/`
   个人头像资源
 - `avatars/agents/`
@@ -279,8 +277,8 @@ Markdown / JSON / JSONL 文件负责：
   Team 共享记忆
 - `workspaces/**/artifacts/*`
   实际产物文件
-- `artifacts/attachments/*`
-  全局聊天附件
+- `workspaces/**/artifacts/attachments/*`
+  与 Agent / Team workspace 绑定的聊天附件
 - `avatars/**`
   头像资源文件
 - `skills/**`
@@ -487,6 +485,6 @@ MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保
 原型中已经支持用户、Agent、群组头像上传，因此建议本地资源单独落盘：
 
 - 头像文件：`~/.teamaligned/avatars/`
-- 聊天附件：`~/.teamaligned/artifacts/attachments/`
+- 聊天附件：`~/.teamaligned/workspaces/**/artifacts/attachments/`
 
 数据库中只保存相对路径或资源引用，不保存大体积二进制。

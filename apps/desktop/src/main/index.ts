@@ -96,11 +96,26 @@ function isPathInside(parentPath: string, childPath: string) {
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
 }
 
+function getAllowedAssetRoots() {
+  const roots = new Set<string>([resolveRuntimeRoot()]);
+  const snapshot = runtime?.getSnapshot();
+
+  for (const agent of snapshot?.agents ?? []) {
+    roots.add(resolve(agent.workspacePath));
+  }
+
+  for (const team of snapshot?.teams ?? []) {
+    roots.add(resolve(team.workspacePath));
+  }
+
+  return Array.from(roots);
+}
+
 function registerAssetProtocol() {
   protocol.handle("teamaligned-asset", (request) => {
     const url = new URL(request.url);
     const assetPath = resolve(decodeURIComponent(url.pathname.slice(1)));
-    const allowedRoots = [resolveRuntimeRoot()];
+    const allowedRoots = getAllowedAssetRoots();
     if (!allowedRoots.some((root) => isPathInside(root, assetPath))) {
       return new Response("Forbidden", { status: 403 });
     }

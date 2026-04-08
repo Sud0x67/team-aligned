@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Bot, Paperclip, ShieldAlert } from "lucide-react";
-import type { AttachmentAssetRecord, MessageRecord, RunRecord } from "@shared";
+import type { AgentRecord, AttachmentAssetRecord, MessageRecord, RunRecord, UserProfile } from "@shared";
 import { createTranslator } from "../../i18n";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { useAppStore } from "../../store/use-app-store";
+import { AvatarBadge } from "../avatar-badge";
 import { getConversationVisibleMessages } from "./chat-utils";
 
 function formatTime(timestamp: number) {
@@ -30,18 +31,65 @@ function isImageAttachment(attachment: AttachmentAssetRecord) {
   return attachment.mimeType.startsWith("image/");
 }
 
+function buildAvatarProps(
+  message: MessageRecord,
+  input: {
+    profile: UserProfile;
+    agentMap: Map<string, AgentRecord>;
+  },
+) {
+  if (message.senderKind === "user") {
+    return {
+      src: input.profile.avatarPath,
+      fallback: input.profile.name.slice(0, 1) || "你",
+      alt: input.profile.name || "你",
+      style: { backgroundColor: "var(--primary)" },
+      textClassName: "text-xs font-semibold text-white",
+    };
+  }
+
+  if (message.senderKind === "agent") {
+    const agent = input.agentMap.get(message.senderId);
+    if (agent) {
+      return {
+        src: agent.avatarPath,
+        fallback: agent.avatar,
+        alt: agent.name,
+        style: { backgroundColor: agent.avatarColor },
+        textClassName: "text-xs font-semibold text-white",
+      };
+    }
+
+    return {
+      src: null,
+      fallback: message.senderName.slice(0, 1) || "A",
+      alt: message.senderName,
+      style: { backgroundColor: "var(--primary)" },
+      textClassName: "text-xs font-semibold text-white",
+    };
+  }
+
+  return null;
+}
+
 export function ChatMessageThread({
   conversationId,
   messages,
   run,
   showInternalMessages,
   pendingSystemMessage,
+  showMentions,
+  profile,
+  agents,
 }: {
   conversationId: string;
   messages: MessageRecord[];
   run: RunRecord | null;
   showInternalMessages: boolean;
   pendingSystemMessage: string | null;
+  showMentions: boolean;
+  profile: UserProfile;
+  agents: AgentRecord[];
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -50,6 +98,7 @@ export function ChatMessageThread({
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const lastRunIdRef = useRef<string | null>(null);
+  const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
 
   const updateShouldStickToBottom = () => {
     const container = scrollContainerRef.current;
@@ -98,22 +147,40 @@ export function ChatMessageThread({
             const isCommandCard = message.metadata?.cardType === "command_result";
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
+            const avatar = buildAvatarProps(message, { profile, agentMap });
 
             return (
               <div
                 key={message.id}
                 className={`flex ${isUser ? "justify-end" : "justify-start"}`}
               >
-                <div
-                  className={[
-                    "max-w-[68%]",
-                    isUser ? "items-end" : "",
-                  ].join(" ")}
-                >
+                <div className={`flex max-w-[72%] items-start gap-2.5 ${isUser ? "flex-row-reverse" : ""}`}>
+                  {avatar ? (
+                    <AvatarBadge
+                      src={avatar.src}
+                      fallback={avatar.fallback}
+                      alt={avatar.alt}
+                      className="mt-0.5 h-8 w-8 shrink-0 rounded-full"
+                      style={avatar.style}
+                      textClassName={avatar.textClassName}
+                    />
+                  ) : null}
+                  <div
+                    className={[
+                      "min-w-0",
+                      isUser ? "items-end" : "",
+                    ].join(" ")}
+                  >
                   {!isUser ? (
-                    <span className="mb-1 block text-[11px] text-[var(--muted-foreground)]">
-                      {message.senderName} · {formatTime(message.createdAt)}
-                    </span>
+                    <div className="mb-1.5 flex items-center gap-1.5 pl-0.5 text-[11px]">
+                      <span className="truncate font-medium text-[var(--foreground)]">
+                        {message.senderName}
+                      </span>
+                      <span className="text-[var(--muted-foreground)]">·</span>
+                      <span className="text-[var(--muted-foreground)]">
+                        {formatTime(message.createdAt)}
+                      </span>
+                    </div>
                   ) : null}
 
                   <div
@@ -198,7 +265,7 @@ export function ChatMessageThread({
                     </div>
                   ) : null}
 
-                  {message.mentions.length > 0 ? (
+                  {showMentions && message.mentions.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {message.mentions.map((mention) => (
                         <span
@@ -219,10 +286,11 @@ export function ChatMessageThread({
                   ) : null}
 
                   {isUser ? (
-                    <span className="mt-1 block text-right text-[11px] text-[var(--muted-foreground)]">
+                    <span className="mt-1.5 block pr-0.5 text-right text-[11px] text-[var(--muted-foreground)]">
                       {formatTime(message.createdAt)}
                     </span>
                   ) : null}
+                </div>
                 </div>
               </div>
             );
