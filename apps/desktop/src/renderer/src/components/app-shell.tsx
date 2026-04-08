@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderCog,
-  LayoutDashboard,
   MessageSquare,
   MoonStar,
   Settings,
@@ -44,7 +43,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { to: "/", label: t.common("conversations"), icon: MessageSquare },
     { to: "/manage", label: t.manage("title"), icon: FolderCog },
     { to: "/extensions", label: t.extensions("title"), icon: Blocks },
-    { to: "/dashboard", label: t.dashboard("title"), icon: LayoutDashboard },
     { to: "/settings", label: t.settings("title"), icon: Settings },
   ];
 
@@ -52,7 +50,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     "/": t.common("conversations"),
     "/manage": t.manage("title"),
     "/extensions": t.extensions("title"),
-    "/dashboard": t.dashboard("title"),
     "/settings": t.settings("title"),
   };
 

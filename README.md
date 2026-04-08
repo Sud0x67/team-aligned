@@ -65,7 +65,7 @@
 ## 当前已实现
 
 - 可启动的 Electron 桌面应用壳
-- 聊天主界面、管理、扩展、仪表盘、设置页面
+- 聊天主界面、管理、扩展、设置页面
 - 单 Agent 私聊与 Team 群聊
 - 单 Agent 私聊已接入真实 Qwen / OpenAI 模型调用
 - Team 群聊已接入真实 manager / specialist 模型协作链路
@@ -89,6 +89,7 @@
 - 当前桌面端本地数据目录统一使用 `~/.teamaligned`；如果旧版本数据还在 `~/teamaligned` 或 Electron `userData` 目录中，启动时会自动补齐迁移。
 - 持久层当前采用三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
 - 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
+- 仪表盘当前已从主导航移除，避免分散 beta 阶段的核心注意力；后续如需保留，会以重构后的辅助页重新评估。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
 - `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP 暂不支持。
 - Skills 当前已经完成 registry、安装、白名单、prompt 注入，以及 skill bundle / scripts 作为 runtime tools 的接入。

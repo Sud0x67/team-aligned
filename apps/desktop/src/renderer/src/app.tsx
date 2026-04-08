@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./components/app-shell";
 import { AppErrorBoundary } from "./components/app-error-boundary";
-import { DashboardPage } from "./pages/dashboard-page";
 import { ExtensionsPage } from "./pages/extensions-page";
 import { ManagePage } from "./pages/manage-page";
 import { ChatPage } from "./pages/chat-page";
@@ -31,7 +30,7 @@ function AppRoutes() {
         <Route path="/" element={<ChatPage />} />
         <Route path="/manage" element={<ManagePage />} />
         <Route path="/extensions" element={<ExtensionsPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<Navigate to="/" replace />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

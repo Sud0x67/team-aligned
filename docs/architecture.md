@@ -45,7 +45,7 @@ teamaligned
 - Electron 主进程
 - preload IPC 桥接
 - React renderer
-- 对话、管理、扩展、仪表盘、设置页面
+- 对话、管理、扩展、设置页面
 - 通知面板与个人资料弹窗
 - 聊天附件上传、图片预览、`@` 选择器、`/` 自动补全
 
@@ -81,7 +81,6 @@ teamaligned
 - `/`：会话
 - `/manage`：管理
 - `/extensions`：扩展
-- `/dashboard`：仪表盘
 - `/settings`：设置
 
 同时存在两个全局浮层能力：
@@ -435,16 +434,6 @@ MCP 当前尚未完成：
 - `mcp_catalog`
 - `mcp_connections`
 - 本地 `skills/` 安装目录
-
-### 仪表盘
-
-依赖：
-
-- `runs`
-- `conversations`
-- `agents`
-- `teams`
-- `notifications`
 
 ### 设置页
 
