@@ -8,7 +8,7 @@
 - preload 桥接层
 - React renderer
 - Tailwind UI
-- 聊天、管理、扩展、仪表盘、设置页面
+- 聊天、管理、扩展、设置页面
 - Electron 打包配置
 - 单聊与群聊主界面
 - run 详情、附件预览、命令结果卡片
@@ -21,3 +21,4 @@
 - 聊天输入、`@` 选择器、`/` 自动补全
 - 模型配置、MCP 配置与健康检查
 - run / artifact / attachment / tool invocation 展示
+- 通知中心与系统通知入口

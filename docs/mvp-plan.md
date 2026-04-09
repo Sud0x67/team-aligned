@@ -7,7 +7,7 @@
 MVP 要证明三件事：
 
 1. 用户可以像聊天软件一样使用单聊和群聊
-2. Agent 可以在本地执行任务，并且支持暂停、继续和取消
+2. Agent 可以在本地执行任务，并且支持取消当前任务
 3. Skills、MCP、workspace、memory 这些能力能以清晰的产品方式接入
 
 ## 当前状态（2026-04-06）
@@ -15,9 +15,9 @@ MVP 要证明三件事：
 当前仓库已经完成了 MVP 的“可体验骨架”部分：
 
 - Electron 桌面应用壳可运行
-- 对话、管理、扩展、仪表盘、设置五个页面已落地
+- 对话、管理、扩展、设置页面已落地
 - 单聊与群聊可以切换并交互
-- `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel` 已接入消息流
+- `/skills`、`/command`、`/mcp` 已接入消息流
 - 单聊已接入真实 Qwen / OpenAI 模型调用
 - 群聊已接入真实 manager / specialist 协作链路
 - Skills 已支持 registry、安装、白名单和 prompt 注入
@@ -28,10 +28,10 @@ MVP 要证明三件事：
 
 当前还没有完全完成的部分主要是：
 
-- Skill 脚本执行链
-- 文件 / 搜索 / 命令工具层的完整接线
-- MCP / run / artifact 的可视化
-- Drizzle migration 与更完整的数据层工程化
+- 群聊稳定性与失败恢复
+- 通知机制测试与确认
+- MCP tool 级白名单与配置模板
+- transcript / artifact / memory 导出与检索
 - 导出、全文检索与发布能力
 
 ## MVP 目标
@@ -45,7 +45,7 @@ MVP 要证明三件事：
 - 与单个 Agent 私聊
 - 在群组里和多个 Agent 协作
 - 使用 `/skills`、`/command`、`/mcp` 这类命令式交互
-- 对复杂任务执行暂停、继续、取消
+- 在运行中取消当前任务
 - 管理 Agent 与群组
 - 配置 OpenAI / Qwen
 - 浏览并安装基础扩展

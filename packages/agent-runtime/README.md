@@ -5,7 +5,8 @@
 当前已实现：
 
 - 会话 snapshot 组装
-- `/skills`、`/command`、`/mcp` 与 run 控制
+- `/skills`、`/command`、`/mcp`
+- run 启动、取消与状态同步
 - 单 Agent run 与 Team 群组 run 编排
 - 群聊上下文同步与内部消息
 - DeepAgents / LangChain / LangGraph 单聊调用链
@@ -17,6 +18,7 @@
 
 当前仍待继续补强的方向：
 
+- 聊天与 run 反馈的进一步统一
 - MCP tool 级白名单
 - OAuth 型 MCP
 - 更强的 failure recovery / checkpoint

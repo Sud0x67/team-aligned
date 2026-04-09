@@ -227,7 +227,7 @@ TeamalignedRuntime
 - `@` 选择器
 - `/` 自动补全
 - 流式输出
-- pause / resume / cancel
+- 发送后等待回复与取消当前任务
 
 ## 群聊架构
 
@@ -450,12 +450,13 @@ MCP 当前尚未完成：
 - Figma 对齐后的核心 UI 已落成
 - 单聊真实模型调用
 - 群聊真实 manager / specialist 编排
-- slash command：`/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel`
+- slash command：`/skills`、`/command`、`/mcp`
 - Skills registry / 安装 / 激活 / 脚本执行
 - MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入
 - workspace 文件 / 搜索 / 命令工具层
 - 附件上传与图片预览
 - run 详情、artifact、attachment、tool invocation 可视化
+- 应用内通知中心与系统通知主链路
 - `settings.json` + `app.db` + 文件层三层持久化
 - Drizzle schema 与 migration
 
@@ -475,9 +476,11 @@ MCP 当前尚未完成：
 
 如果后续继续开发，建议优先顺序是：
 
-1. MCP tool 级白名单
-2. 导出 / transcript / artifact 打包
-3. 全文搜索
-4. 测试与发布链路
+1. 聊天主链路体验打磨与通知机制验证
+2. 群聊失败恢复与统一错误态
+3. MCP tool 级白名单与配置模板
+4. 导出 / transcript / artifact 打包
+5. 全文搜索
+6. 测试与发布链路
 
 这几项完成后，系统会从“高级可体验原型”更进一步走向“可长期使用的本地应用”。

@@ -1,152 +1,163 @@
 # 开发 TODO
 
-## 当前原则
+## 当前判断
 
-更新时间：2026-04-08
+更新时间：2026-04-10
 
-从现在开始，`teamaligned` 进入**范围冻结**阶段：
+当前 `teamaligned` 已经不是“功能没接上”的阶段，而是一个**可体验、可真实执行、正在收口到 beta** 的本地桌面应用。
 
-- 不再继续开发新的产品 feature
-- 只补当前实现已经暴露出来的缺口
-- 优先做稳定性、可维护性、导出能力、测试与发布准备
+这一阶段的重点不再是继续扩张功能面，而是：
 
-这份文档只保留：
-
-- 已完成的关键基线
-- 当前仍未完成、但必须收尾的工作
-- 后续阶段需要记住但不立即开发的候选项
-- 明确不再进入当前阶段的扩展项
+1. 打磨聊天主链路
+2. 验证通知与系统集成
+3. 收口群聊稳定性与错误恢复
+4. 完成导出、检索、测试、发布这些 beta 必需项
 
 ## 已完成基线
 
 下面这些能力已经完成，不再作为当前主 TODO：
 
-### 桌面应用与页面骨架
+### 桌面端与页面骨架
 
 - [x] Electron + React + Vite 桌面应用壳
-- [x] 对话、管理、扩展、仪表盘、设置五个主页面
+- [x] 会话、管理、扩展、设置四个主页面
 - [x] 左侧导航、顶部栏、通知入口、个人资料入口
-- [x] Figma 对齐后的首版 UI
 - [x] 浅色 / 深色主题切换
 - [x] 中英文切换
+- [x] 基于 Figma 的首版 UI 对齐
 
-### 对话与交互基线
+### 聊天与运行时
 
 - [x] 单 Agent 私聊
 - [x] Team 群聊
-- [x] `/pause`、`/resume`、`/cancel` run 控制
-- [x] `/command` 本地真实命令执行
-- [x] 消息、通知、run 状态在 UI 中联动展示
-- [x] 附件上传、图片预览、命令结果卡片
-- [x] `@` 选择器
-- [x] `/` 自动补全
+- [x] 单聊接入真实 Qwen / OpenAI
+- [x] 群聊接入真实 manager / specialist 协作链路
+- [x] slash command：`/skills`、`/command`、`/mcp`
+- [x] slash 结果直接以聊天消息形式展示
+- [x] 单聊 / 群聊输入区支持附件上传
+- [x] 图片附件预览
+- [x] 命令结果卡片
 - [x] run 详情、artifact、attachment、tool invocation 可视化
-
-### 模型与运行时基线
-
-- [x] 接入 DeepAgents
-- [x] 接入 LangChain
-- [x] 接入 LangGraph
-- [x] 单聊接入真实 Qwen / DashScope
-- [x] 单聊接入真实 OpenAI
-- [x] 群聊接入真实 manager / specialist 模型协作链路
-- [x] specialist 受控直接 `@用户` / manager relay 规则
-- [x] 设置页 provider 配置驱动单聊模型调用
-- [x] 单聊流式输出
+- [x] 运行中锁定输入区，并支持取消当前任务
+- [x] 思考中状态与消息流联动
+- [x] 会话未读数与已读行为
 
 ### Skills / MCP / Tool Layer
 
-- [x] Skills registry 同步、安装、白名单、激活
-- [x] Skill 安装进度反馈与移除
+- [x] Skills registry 同步、全局安装、激活、移除
+- [x] Agent Skill 白名单
 - [x] Skill prompt 注入
-- [x] Skill 脚本与附属文件能力接入 runtime
+- [x] Skill 脚本与附属文件接入 runtime
 - [x] MCP registry 同步
-- [x] 支持 `stdio npx` MCP
-- [x] 支持 `HTTP + headers` MCP
+- [x] `stdio npx` MCP
+- [x] `HTTP + headers` MCP
 - [x] MCP 本地配置、健康检查、tool discovery
 - [x] Agent / Team MCP 白名单
 - [x] MCP discovered tools 注入 runtime
-- [x] 文件、搜索、命令工具层并入 agent runtime
+- [x] workspace 文件、搜索、命令工具层接入 runtime
 
-### 本地持久化基线
+### 持久层与本地数据
 
 - [x] `~/.teamaligned/settings.json`
 - [x] `~/.teamaligned/app.db`
-- [x] transcript JSONL 落盘
-- [x] agent workspace / team workspace 初始化
-- [x] artifact / MEMORY.md / shared-memory.md 落盘
+- [x] transcript JSONL
+- [x] agent / team workspace 初始化
 - [x] avatars / attachments 物理目录
-- [x] 默认本地数据目录统一为 `~/.teamaligned`
 - [x] `attachments / artifacts / tool_invocations / run_steps` 正式表
-- [x] `messages / conversations / runs` 结构化列与索引
-- [x] `agents / teams / providers / notifications` 结构化列与索引
+- [x] `messages / conversations / runs / agents / teams / providers / notifications` 结构化列与索引
 - [x] Drizzle schema 与 migration
 
-## 当前仍未完成的工作
+### 通知
 
-下面这些项是当前阶段真正需要继续收尾的内容。
+- [x] 应用内通知中心
+- [x] 系统通知主链路
+- [x] 前台不触发系统通知
+- [x] 设置页系统通知引导
 
-当前第一阶段链路审查结果见：
+## 当前阶段真正要完成的工作
 
-- [Beta 第一阶段审查](./beta-phase-1-audit.md)
+### P0：聊天与通知体验收口
 
-### P0：稳定性与运行时收口
+#### 1. 单聊 / 群聊聊天体验
 
-#### 1. 群聊稳定性与失败恢复
+- [ ] 继续打磨单聊消息流体验
+  - 思考中、流式输出、结果落点更自然
+  - slash、附件、命令反馈更像聊天，而不是控制台
+- [ ] 继续打磨群聊体验
+  - manager / specialist 发言层次更清晰
+  - 内部协作展开 / 折叠更易懂
+  - 多轮群聊时未读、通知、最近消息摘要保持稳定
+- [ ] 统一 run 与消息之间的关系
+  - 让“正在做什么”和“已经回复什么”在视觉上更一致
+  - 避免 run 详情和聊天主线程重复表达
 
-- [x] 修复“管理页发起对话不能直接进入目标群组会话”的链路阻断
-- [ ] 系统化验证群聊复杂任务下的稳定性
-- [ ] 明确失败态恢复路径
-- [ ] 补强 pause / resume / cancel 的边界场景
-- [ ] 增强 checkpoint / 回放能力
+#### 2. 通知机制测试与确认
 
-#### 2. Provider 可靠性
+- [ ] 系统通知在 macOS 上做完整人工验证
+  - 前台不弹
+  - 后台可弹
+  - 点击通知回到会话
+- [ ] 验证通知设置和实际行为完全一致
+  - Agent 消息
+  - `@提及`
+  - 群组消息
+- [ ] 验证通知中心已读、清除、未读计数行为
+- [ ] 确认通知权限缺失时的引导是否足够清晰
 
-- [ ] 补字段级参数错误提示与更明确的下一步引导
-- [ ] 统一模型错误提示和失败态
-- [ ] 补充超时、重试、取消的边界处理
-- [ ] 校准流式输出在异常中断时的回退行为
+#### 3. Provider 可靠性
 
-#### 3. Skill / MCP 收尾
+- [ ] 统一 provider 错误提示与恢复路径
+- [ ] 校准超时、取消、流式中断时的表现
+- [ ] 让“测试连接”“保存并启用”“实际聊天失败”三处提示语义一致
 
-- [ ] 在消息流和 run 详情里更明确地展示当前 Skill 已生效
-- [x] Skill 安装 / 移除增加进行中反馈
+### P1：群聊稳定性与扩展能力收口
+
+#### 4. 群聊稳定性与失败恢复
+
+- [ ] 系统化验证复杂群聊任务
+- [ ] 收口失败态恢复路径
+- [ ] 减少群聊状态错乱、重复发言、长任务中断后的歧义
+- [ ] 补强 checkpoint / 回放能力
+
+#### 5. Skill / MCP 收尾
+
+- [ ] 更明确地展示当前 Skill 已生效
 - [ ] MCP 增加 tool 级白名单
-- [ ] MCP 增加常见服务的配置模板优化
-- [ ] MCP 配置成功后补齐下一步使用引导
-- [x] 附件上传失败增加用户可见错误提示
+- [ ] MCP 增加常见服务配置模板优化
+- [ ] MCP 配置成功后的下一步引导
 
-### P1：数据与导出
+### P2：数据、导出、检索
 
-#### 4. transcript / artifact / memory 关联完善
+#### 6. transcript / artifact / memory
 
-- [ ] 完善 transcript / artifact / memory 的导出级关联
-- [ ] 统一 run、artifact、transcript、memory 之间的跳转与引用
+- [ ] 完善 transcript / artifact / memory 的关联
+- [ ] 统一 run、artifact、transcript、memory 之间的跳转
 - [ ] 明确导出打包结构
 
-#### 5. 审计与导出
+#### 7. 导出与备份
 
 - [ ] 导出会话记录
 - [ ] 导出运行日志
 - [ ] 导出 artifacts
 - [ ] 导出 attachments
+- [ ] 明确 `~/.teamaligned` 的备份建议
 
-#### 6. 本地检索
+#### 8. 本地检索
 
 - [ ] 本地全文检索
-- [ ] artifact / transcript 搜索入口
+- [ ] transcript / artifact 搜索入口
 
-### P2：测试与发布
+### P3：测试与交付
 
-#### 7. 测试
+#### 9. 测试
 
-- [ ] 为共享类型和命令解析补单元测试
-- [ ] 为 runtime 补单元测试
-- [ ] 为 store 层补测试
-- [ ] 为关键 UI 页面补组件测试
-- [ ] 增加 Electron 端到端测试
+- [ ] 共享类型和命令解析单元测试
+- [ ] runtime 单元测试
+- [ ] store 测试
+- [ ] 关键聊天页面组件测试
+- [ ] Electron 端到端测试
 
-#### 8. 打包与发布
+#### 10. 打包与发布
 
 - [ ] 完善 Electron 打包配置
 - [ ] macOS 安装包体验检查
@@ -157,45 +168,41 @@
 
 ## 后续阶段待评估事项
 
-下面这些项已经被明确提出，但先作为后续阶段事项记录，避免和当前范围冻结阶段混在一起：
+下面这些项已经明确提出，但不属于当前 beta 收口范围：
 
-- [ ] 优化 Agent 聊天体验：围绕单聊主链路继续打磨消息展示、输入反馈、运行摘要、已读状态和错误反馈
-- [ ] 重构仪表盘页面：当前已从主导航移除，后续如需恢复，需要先重新梳理信息架构、指标层级和 beta 阶段真正需要展示的数据
-- [ ] 通知机制测试和确认：验证通知触发、已读、设置开关、异常状态与通知中心展示是否一致，参见 [通知方案设计](./notification-design.md)
-- [ ] MCP 支持 OAuth HTTP：实现授权链接、回调、token 保存与刷新；当前阶段先不推进
+- [ ] 重构仪表盘页面
+- [ ] MCP 支持 OAuth HTTP
+- [ ] 更深入的 Agent 聊天体验优化
+  - 更丰富的消息组件
+  - 更完整的聊天输入工具集
+  - 更强的 run 与历史上下文浏览能力
 
-## 当前阶段不再继续推进的扩展项
+## 当前阶段不继续推进的方向
 
-下面这些不是 bugfix 或工程化收尾，当前阶段不再继续开发：
-
-- workspace 级 skills 目录
-- OAuth 型 MCP（已记录到“后续阶段待评估事项”）
-- 编辑 Agent / 群组
-- 删除 Agent / 群组
-- 更多新的扩展中心能力
-- 新的页面、新的交互模式
-- 新的 provider 类型
-
-如果未来重新开启 feature 开发，再单独开新的 roadmap，不混入当前收尾清单。
+- 新的主页面
+- 新的模型 provider
+- 和 beta 主链路无关的新功能探索
+- 大规模 marketplace 能力扩张
 
 ## 建议执行顺序
 
-如果下一阶段继续推进，建议按下面顺序做：
+1. 聊天体验收口
+2. 通知机制完整验证
+3. Provider / 群聊失败恢复
+4. MCP tool 级白名单与模板
+5. 导出与检索
+6. 测试与发布链路
 
-1. 群聊稳定性、失败恢复、统一错误态
-2. MCP tool 级白名单与配置模板
-3. transcript / artifact / memory 导出链路
-4. 全文检索
-5. 测试与发布链路
+## 当前阶段完成标准
 
-## 当前阶段的完成标准
-
-当下面这些项都完成时，可以认为当前这一轮“收尾阶段”结束：
+当下面这些项都成立时，可以认为 beta 收口基本完成：
 
 - [x] 单聊和群聊都走真实模型与真实运行时
 - [x] Skills 与 MCP 主链路跑通
 - [x] 本地工具层进入 runtime
-- [ ] 群聊失败恢复与错误态基本稳定
+- [ ] 聊天主链路体验稳定且可理解
+- [ ] 通知链路在真实系统环境下验证通过
+- [ ] 群聊失败恢复基本稳定
 - [ ] transcript / artifact / memory 可稳定导出
 - [ ] 基础测试体系建立
 - [ ] 基础打包与发布链路建立

@@ -20,10 +20,10 @@
 已完成内容：
 
 - Electron + React + Vite 桌面壳
-- 五个主页面路由
+- 主页面路由骨架
 - 左侧导航、顶部栏、通知入口、头像入口
 - 单聊与群聊聊天页
-- `/skills`、`/command`、`/mcp`、`/pause`、`/resume`、`/cancel`
+- `/skills`、`/command`、`/mcp`
 - 管理页、扩展页、设置页、仪表盘首版
 - 头像上传、主题切换、语言切换
 - 本地 SQLite、JSONL transcript、workspace 目录落盘
@@ -49,7 +49,8 @@
 - 群聊 manager / specialist 真实协作已接入
 - Skills registry、安装、白名单和 prompt 注入已接入
 - MCP registry、健康检查、白名单和 runtime 注入已接入
-- 剩余主要是 Skill 脚本执行、工具层接线和 UI 可视化
+- Skill 脚本执行、工具层接线和 UI 可视化已基本落地
+- 当前剩余重点已经转向体验收口与稳定性
 
 验收：
 
@@ -112,11 +113,15 @@
 
 - [x] run 详情和 artifact 浏览
 - [x] 设置校验与测试连接
+- [x] 通知中心与系统通知主链路
+- [x] 仪表盘从主导航移除，聚焦核心链路
+- 聊天体验继续打磨
+- 通知机制测试与确认
 - 群聊稳定性、失败恢复与统一错误态
-- Skill / MCP 使用链路收口
+- MCP tool 级白名单与配置模板
 - transcript / artifact / memory 导出与检索
 - Electron 打包、应用图标、发布流程
-- UI 自动化与端到端测试
+- 自动化测试与端到端测试
 - 代码清理与结构收口
 
 验收：
