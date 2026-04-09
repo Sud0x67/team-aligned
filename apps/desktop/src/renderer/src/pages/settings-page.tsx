@@ -232,7 +232,7 @@ export function SettingsPage() {
   };
 
   return (
-    <PageShell title={t.settings("title")}>
+    <PageShell title={t.settings("title")} showHeader={false}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-4">
           <SectionCard title={t.settings("appearance")}>
