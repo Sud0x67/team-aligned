@@ -348,19 +348,25 @@ export function SelectionModal({
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[14px] font-medium text-[var(--foreground)]">{item.name}</p>
                     <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
                       {item.description}
                     </p>
                   </div>
                   <div
-                    className={`h-4 w-4 rounded-full border ${
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
                       selected
-                        ? "border-[var(--primary)] bg-[var(--primary)]"
+                        ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_12%,transparent)]"
                         : "border-[var(--border)] bg-transparent"
                     }`}
-                  />
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                        selected ? "bg-[var(--primary)]" : "bg-transparent"
+                      }`}
+                    />
+                  </div>
                 </div>
               </button>
             );

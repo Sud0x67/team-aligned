@@ -160,8 +160,10 @@ export const useAppStore = create<AppStore>((set) => {
     updateProvider: async (payload) =>
       runSnapshotAction(() => window.teamaligned.updateProvider(payload)),
     testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
-    markNotificationsRead: async () =>
-      runSnapshotAction(() => window.teamaligned.markNotificationsRead()),
+    markNotificationsRead: async () => {
+      set({ notifications: [] });
+      await runSnapshotAction(() => window.teamaligned.markNotificationsRead());
+    },
     markConversationRead: async (conversationId) => {
       set((state) => ({
         conversations: state.conversations.map((conversation) =>

@@ -652,9 +652,7 @@ export class AppStorage {
   }
 
   markNotificationsRead() {
-    for (const item of this.state.notifications) {
-      item.read = true;
-    }
+    this.state.notifications = [];
     this.persist();
   }
 

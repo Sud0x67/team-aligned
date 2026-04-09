@@ -156,11 +156,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <button
                 className="relative grid h-10 w-10 place-items-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
                 onClick={() => {
-                  const next = !notificationOpen;
-                  setNotificationOpen(next);
-                  if (next && unreadNotifications.length > 0) {
-                    void markNotificationsRead();
-                  }
+                  setNotificationOpen((current) => !current);
                 }}
               >
                 <Bell className="h-5 w-5" />
@@ -185,15 +181,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </p>
                     </div>
                     <button
-                      className="text-xs text-[var(--primary)]"
+                      className="text-xs text-[var(--primary)] disabled:cursor-not-allowed disabled:text-[var(--muted-foreground)]"
+                      disabled={notifications.length === 0}
                       onClick={() => void markNotificationsRead()}
                     >
-                      {t.common("markAllRead")}
+                      {t.common("clearNotifications")}
                     </button>
                   </div>
 
-                  <div className="space-y-2">
-                    {notifications.slice(0, 6).map((item) => (
+                  {notifications.length > 0 ? (
+                    <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                      {notifications.map((item) => (
                       <div
                         key={item.id}
                         className={`rounded-xl border px-4 py-3 ${
@@ -212,8 +210,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                           {item.body}
                         </p>
                       </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">
+                      {t.common("noNotifications")}
+                    </div>
+                  )}
                   </div>
                 </>
               ) : null}
