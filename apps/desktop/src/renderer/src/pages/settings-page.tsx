@@ -6,6 +6,7 @@ import {
   CircleDot,
   Eye,
   EyeOff,
+  ExternalLink,
   Languages,
   AlertCircle,
   LoaderCircle,
@@ -103,6 +104,7 @@ export function SettingsPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [providerMessage, setProviderMessage] = useState<string | null>(null);
+  const [notificationHelpMessage, setNotificationHelpMessage] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
     providers.find((provider) => provider.isActive)?.id ?? providers[0]?.id ?? "openai",
   );
@@ -222,6 +224,13 @@ export function SettingsPage() {
     setSaveState("saved");
   };
 
+  const handleOpenNotificationSettings = async () => {
+    const ok = await window.teamaligned.openNotificationSettings();
+    setNotificationHelpMessage(
+      ok ? t.settings("systemNotificationOpened") : t.settings("systemNotificationOpenFailed"),
+    );
+  };
+
   return (
     <PageShell title={t.settings("title")}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -279,6 +288,25 @@ export function SettingsPage() {
                   />
                 </label>
               ))}
+
+              <div className="rounded-[24px] border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
+                <p className="text-sm leading-7 text-[var(--muted-foreground)]">
+                  {t.settings("systemNotificationHelp")}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenNotificationSettings}
+                  className="mt-4 inline-flex items-center gap-2 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  {t.settings("openSystemNotificationSettings")}
+                </button>
+                {notificationHelpMessage ? (
+                  <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
+                    {notificationHelpMessage}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </SectionCard>
         </div>

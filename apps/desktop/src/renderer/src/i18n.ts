@@ -329,6 +329,12 @@ const translations = {
       providerSaved: "保存成功",
       showApiKey: "显示 API Key",
       hideApiKey: "隐藏 API Key",
+      openSystemNotificationSettings: "打开系统通知设置",
+      systemNotificationHelp:
+        "如果只在通知中心看到消息、没有横幅提醒，请打开系统通知设置，为 teamaligned 允许通知，并将提醒样式设为“横幅”或“提醒”。应用在前台时不会弹出系统通知。",
+      systemNotificationOpened:
+        "已打开系统通知设置。请为 teamaligned 开启通知，并把提醒样式切换为“横幅”或“提醒”。",
+      systemNotificationOpenFailed: "未能打开系统通知设置，请手动前往系统设置中的通知页面。",
       currentProvider: "当前使用",
       notEnabled: "未启用",
       setActive: "设为当前",
@@ -692,6 +698,13 @@ const translations = {
       providerSaved: "Saved",
       showApiKey: "Show API Key",
       hideApiKey: "Hide API Key",
+      openSystemNotificationSettings: "Open system notification settings",
+      systemNotificationHelp:
+        "If messages only appear in Notification Center and no banner appears, open system notification settings, allow notifications for teamaligned, and set the alert style to Banner or Alerts. System notifications never fire while the app is in the foreground.",
+      systemNotificationOpened:
+        "System notification settings opened. Please allow notifications for teamaligned and switch the alert style to Banner or Alerts.",
+      systemNotificationOpenFailed:
+        "Could not open system notification settings. Please open the Notifications page manually in system settings.",
       currentProvider: "Current",
       notEnabled: "Not enabled",
       setActive: "Set active",

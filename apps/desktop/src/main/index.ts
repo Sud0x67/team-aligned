@@ -343,6 +343,23 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
     runtime?.markConversationRead(conversationId),
   );
+  ipcMain.handle("teamaligned:open-notification-settings", async () => {
+    try {
+      if (process.platform === "darwin") {
+        await shell.openExternal("x-apple.systempreferences:com.apple.preference.notifications");
+        return true;
+      }
+
+      if (process.platform === "win32") {
+        await shell.openExternal("ms-settings:notifications");
+        return true;
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  });
   ipcMain.handle("teamaligned:select-directory", async () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return null;
