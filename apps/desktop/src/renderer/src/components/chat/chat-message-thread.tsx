@@ -78,6 +78,7 @@ export function ChatMessageThread({
   run,
   showInternalMessages,
   pendingSystemMessage,
+  pendingActor,
   showMentions,
   profile,
   agents,
@@ -87,6 +88,12 @@ export function ChatMessageThread({
   run: RunRecord | null;
   showInternalMessages: boolean;
   pendingSystemMessage: string | null;
+  pendingActor: {
+    name: string;
+    avatarPath: string | null;
+    avatar: string;
+    avatarColor: string;
+  } | null;
   showMentions: boolean;
   profile: UserProfile;
   agents: AgentRecord[];
@@ -300,18 +307,34 @@ export function ChatMessageThread({
 
           {pendingSystemMessage ? (
             <div className="flex justify-start">
-              <div className="max-w-[68%]">
-                <span className="mb-1 block text-[11px] text-[var(--muted-foreground)]">
-                  {t.chat("systemThinking")}
-                </span>
-                <div className="rounded-2xl rounded-tl-md border border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--accent)] px-4 py-3 text-[14px] leading-7 text-[var(--accent-foreground)] shadow-sm">
-                  <div className="mb-2 flex items-center gap-2 text-xs text-[var(--primary)]">
-                    <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
-                    <span className="inline-flex gap-1">
-                      <span className="animate-pulse">{t.chat("thinking")}</span>
+              <div className="flex max-w-[72%] items-start gap-2.5">
+                {pendingActor ? (
+                  <AvatarBadge
+                    src={pendingActor.avatarPath}
+                    fallback={pendingActor.avatar}
+                    alt={pendingActor.name}
+                    className="mt-0.5 h-8 w-8 shrink-0 rounded-full"
+                    style={{ backgroundColor: pendingActor.avatarColor }}
+                    textClassName="text-xs font-semibold text-white"
+                  />
+                ) : null}
+                <div className="min-w-0">
+                  <div className="mb-1.5 flex items-center gap-1.5 pl-0.5 text-[11px]">
+                    <span className="truncate font-medium text-[var(--foreground)]">
+                      {pendingActor?.name ?? t.chat("systemThinking")}
+                    </span>
+                    <span className="text-[var(--muted-foreground)]">·</span>
+                    <span className="text-[var(--muted-foreground)]">
+                      {t.chat("systemThinking")}
                     </span>
                   </div>
-                  <p className="whitespace-pre-wrap">{pendingSystemMessage}</p>
+                  <div className="rounded-2xl rounded-tl-md border border-transparent bg-[var(--muted)] px-4 py-3 text-[14px] leading-7 text-[var(--foreground)] shadow-sm">
+                    <div className="mb-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                      <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
+                      <span className="animate-pulse">{t.chat("thinking")}</span>
+                    </div>
+                    <p className="whitespace-pre-wrap">{pendingSystemMessage}</p>
+                  </div>
                 </div>
               </div>
             </div>

@@ -213,6 +213,48 @@ export function ChatPage() {
       : teams.find((team) => team.id === activeConversation.targetId) ?? null;
   }, [activeConversation, agents, teams]);
 
+  const pendingActor = useMemo(() => {
+    if (!activeConversation) return null;
+
+    if (activeConversation.kind === "agent" && activeTarget) {
+      return {
+        name: activeTarget.name,
+        avatarPath: activeTarget.avatarPath,
+        avatar: activeTarget.avatar,
+        avatarColor: activeTarget.avatarColor,
+      };
+    }
+
+    const latestAgentMessage = [...activeMessages]
+      .reverse()
+      .find((message) => message.senderKind === "agent");
+    if (!latestAgentMessage) {
+      return activeTarget
+        ? {
+            name: activeTarget.name,
+            avatarPath: activeTarget.avatarPath,
+            avatar: activeTarget.avatar,
+            avatarColor: activeTarget.avatarColor,
+          }
+        : null;
+    }
+
+    const matchedAgent = agents.find((agent) => agent.id === latestAgentMessage.senderId);
+    return matchedAgent
+      ? {
+          name: matchedAgent.name,
+          avatarPath: matchedAgent.avatarPath,
+          avatar: matchedAgent.avatar,
+          avatarColor: matchedAgent.avatarColor,
+        }
+      : {
+          name: latestAgentMessage.senderName,
+          avatarPath: null,
+          avatar: latestAgentMessage.senderName.slice(0, 1) || "A",
+          avatarColor: "var(--primary)",
+        };
+  }, [activeConversation, activeMessages, activeTarget, agents]);
+
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
     await sendInput({
@@ -324,6 +366,7 @@ export function ChatPage() {
                 run={activeRun}
                 showInternalMessages={showInternal}
                 pendingSystemMessage={pendingSystemMessage}
+                pendingActor={pendingActor}
                 showMentions={activeConversation.kind === "team"}
                 profile={profile}
                 agents={agents}

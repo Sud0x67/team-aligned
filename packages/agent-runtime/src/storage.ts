@@ -472,6 +472,39 @@ export class AppStorage {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  private shouldUseMessageAsConversationPreview(message: MessageRecord) {
+    if (message.visibility !== "public") {
+      return false;
+    }
+
+    if (message.senderKind === "system") {
+      return false;
+    }
+
+    if (message.messageType === "run") {
+      return false;
+    }
+
+    return true;
+  }
+
+  private summarizeConversationMessage(message: MessageRecord) {
+    return message.content.replace(/\n+/g, " ").trim().slice(0, 120);
+  }
+
+  private updateConversationPreview(conversationId: string) {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) return;
+
+    const previewMessage = [...this.listMessages(conversationId)]
+      .reverse()
+      .find((message) => this.shouldUseMessageAsConversationPreview(message));
+
+    if (previewMessage) {
+      conversation.lastMessage = this.summarizeConversationMessage(previewMessage);
+    }
+  }
+
   addMessage(input: Omit<MessageRecord, "id"> & { id?: string }, options?: { skipTranscript?: boolean }) {
     const message: MessageRecord = {
       ...input,
@@ -481,8 +514,10 @@ export class AppStorage {
     this.state.messages.push(message);
     const conversation = this.getConversation(input.conversationId);
     if (conversation) {
-      conversation.lastMessage = input.content.replace(/\n+/g, " ").slice(0, 120);
       conversation.lastActivityAt = now();
+      if (this.shouldUseMessageAsConversationPreview(message)) {
+        conversation.lastMessage = this.summarizeConversationMessage(message);
+      }
       if (input.senderKind !== "user" && input.visibility === "public") {
         conversation.unread += 1;
       }
@@ -509,8 +544,8 @@ export class AppStorage {
     if (conversation) {
       const latest = this.listMessages(message.conversationId).at(-1);
       if (latest?.id === message.id) {
-        conversation.lastMessage = message.content.replace(/\n+/g, " ").slice(0, 120);
         conversation.lastActivityAt = now();
+        this.updateConversationPreview(message.conversationId);
       }
     }
 
