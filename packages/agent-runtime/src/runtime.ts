@@ -253,6 +253,7 @@ export class TeamalignedRuntime extends EventEmitter {
         createdAt: Date.now(),
       });
       await this.handleSlashCommand(conversation, command.name, command.args);
+      this.storage.resetUnread(payload.conversationId);
       this.emitSnapshot();
       return this.getSnapshot();
     }
@@ -738,12 +739,12 @@ export class TeamalignedRuntime extends EventEmitter {
           : null) ?? currentMeta.activeSkill;
 
       if (args.length === 0) {
-        this.addSystemMessage(
-          conversation.id,
-          `当前可用技能：${availableSkills.map((skill) => skill.displayName || skill.name).join("、") || "暂无"}\n当前激活技能：${
-            currentSkillLabel ?? "默认"
-          }`,
-        );
+        this.addSlashFeedbackMessage(conversation, {
+          title: "Skill 会话状态",
+          body: `当前激活技能：${currentSkillLabel ?? "默认"}`,
+          items: availableSkills.map((skill) => skill.displayName || skill.name),
+          emptyText: "当前会话还没有可用 Skill。",
+        });
         return;
       }
 
@@ -756,15 +757,20 @@ export class TeamalignedRuntime extends EventEmitter {
           skill.id.toLowerCase() === selectedSkill.toLowerCase(),
       );
       if (!match) {
-        this.addSystemMessage(conversation.id, `当前会话不可用 Skill：${selectedSkill || "未指定"}。`);
+        this.addSlashFeedbackMessage(conversation, {
+          title: "Skill 不可用",
+          body: `当前会话不可用 Skill：${selectedSkill || "未指定"}。`,
+          tone: "error",
+        });
         return;
       }
       const meta = { ...currentMeta, activeSkill: match.id };
       this.storage.updateConversationMeta(conversation.id, meta);
-      this.addSystemMessage(
-        conversation.id,
-        `已为当前会话切换技能：${match.displayName || match.name}。后续回复会优先参考该技能。`,
-      );
+      this.addSlashFeedbackMessage(conversation, {
+        title: "Skill 已切换",
+        body: `已为当前会话切换技能：${match.displayName || match.name}。后续回复会优先参考该技能。`,
+        tone: "success",
+      });
       return;
     }
 
@@ -776,12 +782,12 @@ export class TeamalignedRuntime extends EventEmitter {
         currentMeta.pinnedMcp;
 
       if (args.length === 0) {
-        this.addSystemMessage(
-          conversation.id,
-          `当前可用 MCP：${availableServers.map((item) => item.name).join("、") || "暂无"}\n当前固定 MCP：${
-            currentMcpLabel ?? "未固定"
-          }`,
-        );
+        this.addSlashFeedbackMessage(conversation, {
+          title: "MCP 会话状态",
+          body: `当前固定 MCP：${currentMcpLabel ?? "未固定"}`,
+          items: availableServers.map((item) => item.name),
+          emptyText: "当前会话还没有可用 MCP。",
+        });
         return;
       }
 
@@ -796,19 +802,24 @@ export class TeamalignedRuntime extends EventEmitter {
         );
         const connection = match ? this.storage.getMcpConnection(match.id) : null;
         if (!match || !connection || connection.status !== "connected") {
-          this.addSystemMessage(conversation.id, `当前会话不可用 MCP：${selected || "未指定"}。`);
+          this.addSlashFeedbackMessage(conversation, {
+            title: "MCP 不可用",
+            body: `当前会话不可用 MCP：${selected || "未指定"}。`,
+            tone: "error",
+          });
           return;
         }
         this.storage.updateConversationMeta(conversation.id, {
           ...currentMeta,
           pinnedMcp: match.id,
         });
-        this.addSystemMessage(
-          conversation.id,
-          `已为当前会话固定 MCP：${match.name}。\n可用工具：${
-            connection.discoveredTools.map((tool) => tool.name).join("、") || "暂无"
-          }`,
-        );
+        this.addSlashFeedbackMessage(conversation, {
+          title: "MCP 已固定",
+          body: `已为当前会话固定 MCP：${match.name}。`,
+          items: connection.discoveredTools.map((tool) => tool.name),
+          emptyText: "当前没有发现可用工具。",
+          tone: "success",
+        });
         return;
       }
 
@@ -822,17 +833,20 @@ export class TeamalignedRuntime extends EventEmitter {
         );
         const connection = match ? this.storage.getMcpConnection(match.id) : null;
         if (!match) {
-          this.addSystemMessage(conversation.id, `未找到 MCP：${selected || "未指定"}。`);
+          this.addSlashFeedbackMessage(conversation, {
+            title: "未找到 MCP",
+            body: `未找到 MCP：${selected || "未指定"}。`,
+            tone: "error",
+          });
           return;
         }
-        this.addSystemMessage(
-          conversation.id,
-          `${match.name} 当前工具：${
-            connection?.discoveredTools.map((tool) => tool.name).join("、") ||
-            match.declaredTools.join("、") ||
-            "暂无"
-          }`,
-        );
+        this.addSlashFeedbackMessage(conversation, {
+          title: `${match.name} 工具列表`,
+          items:
+            connection?.discoveredTools.map((tool) => tool.name) ??
+            match.declaredTools,
+          emptyText: "当前没有发现可用工具。",
+        });
         return;
       }
 
@@ -845,38 +859,41 @@ export class TeamalignedRuntime extends EventEmitter {
       );
       const connection = match ? this.storage.getMcpConnection(match.id) : null;
       if (!match) {
-        this.addSystemMessage(conversation.id, `未找到 MCP：${selected || "未指定"}。`);
+        this.addSlashFeedbackMessage(conversation, {
+          title: "未找到 MCP",
+          body: `未找到 MCP：${selected || "未指定"}。`,
+          tone: "error",
+        });
         return;
       }
 
-      this.addSystemMessage(
-        conversation.id,
-        `${match.name}\n连接状态：${connection?.status ?? "disconnected"}\n协议：${match.transport}\n能力：${
-          match.capabilities.join("、") || "暂无"
-        }\n工具：${
-          connection?.discoveredTools.map((tool) => tool.name).join("、") ||
-          match.declaredTools.join("、") ||
-          "暂无"
-        }`,
-      );
+      this.addSlashFeedbackMessage(conversation, {
+        title: match.name,
+        body: `连接状态：${connection?.status ?? "disconnected"}\n协议：${match.transport}`,
+        items: [
+          `能力：${match.capabilities.join("、") || "暂无"}`,
+          `工具：${
+            connection?.discoveredTools.map((tool) => tool.name).join("、") ||
+            match.declaredTools.join("、") ||
+            "暂无"
+          }`,
+        ],
+      });
       return;
     }
 
     if (commandName === "command") {
       const shellCommand = args.join(" ").trim();
       if (!shellCommand) {
-        this.addSystemMessage(conversation.id, "用法：/command <你要执行的命令>");
+        this.addSlashFeedbackMessage(conversation, {
+          title: "命令用法",
+          body: "用法：/command <你要执行的命令>",
+          tone: "warning",
+        });
         return;
       }
       await this.startShellCommandRun(conversation, shellCommand);
       return;
-    }
-
-    if (commandName === "pause" || commandName === "resume" || commandName === "cancel") {
-      await this.controlRun({
-        conversationId: conversation.id,
-        action: commandName as RunControlPayload["action"],
-      });
     }
   }
 
@@ -1836,6 +1853,52 @@ export class TeamalignedRuntime extends EventEmitter {
       mentions: [],
       runId: null,
       metadata: null,
+      createdAt: Date.now(),
+    });
+  }
+
+  private addSlashFeedbackMessage(
+    conversation: ConversationRecord,
+    input: {
+      title: string;
+      body?: string;
+      items?: string[];
+      emptyText?: string;
+      tone?: "default" | "success" | "warning" | "error";
+    },
+  ) {
+    const agents = this.storage.listAgents();
+    const teams = this.storage.listTeams();
+    const manager =
+      conversation.kind === "team"
+        ? (() => {
+            const team = teams.find((item) => item.id === conversation.targetId);
+            return team ? chooseManager(team, agents) : null;
+          })()
+        : null;
+    const directAgent =
+      conversation.kind === "agent"
+        ? agents.find((item) => item.id === conversation.targetId) ?? null
+        : null;
+    const sender = directAgent ?? manager;
+    const items = input.items?.filter((item) => item.trim().length > 0) ?? [];
+    const contentLines = [
+      input.title,
+      input.body?.trim() ?? "",
+      ...(items.length > 0 ? items.map((item) => `- ${item}`) : input.emptyText ? [input.emptyText] : []),
+    ].filter((line) => line.trim().length > 0);
+
+    this.storage.addMessage({
+      conversationId: conversation.id,
+      senderId: sender?.id ?? "system",
+      senderName: sender?.name ?? conversation.title,
+      senderKind: sender ? "agent" : "system",
+      messageType: sender ? "agent" : "system",
+      visibility: "public",
+      content: contentLines.join("\n"),
+      mentions: [],
+      runId: null,
+      metadata: { slashFeedbackTone: input.tone ?? "default" },
       createdAt: Date.now(),
     });
   }

@@ -227,7 +227,9 @@ export function ChatMessageThread({
                             : t.chat("notificationLabel")}
                       </div>
                     ) : null}
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {!isCommandCard ? (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    ) : null}
                     {isStreaming ? (
                       <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
                         <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />

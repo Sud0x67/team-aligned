@@ -4,9 +4,6 @@ const supportedCommands = new Set([
   "skills",
   "command",
   "mcp",
-  "pause",
-  "resume",
-  "cancel",
 ]);
 
 export function parseSlashCommand(input: string): SlashCommand | null {
@@ -33,7 +30,4 @@ export const commandSuggestions = [
   { name: "/skills", description: "查看、切换或启用当前 Agent 可用技能" },
   { name: "/command", description: "在当前 workspace 中执行本地命令" },
   { name: "/mcp", description: "查看并调用当前可用的 MCP 能力" },
-  { name: "/pause", description: "暂停当前复杂任务" },
-  { name: "/resume", description: "恢复已暂停的任务" },
-  { name: "/cancel", description: "取消当前任务" },
 ];

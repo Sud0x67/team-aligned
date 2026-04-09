@@ -81,6 +81,7 @@ export function ChatPage() {
   }, [activeConversation, markConversationRead]);
 
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
+  const isConversationBusy = Boolean(activeRun);
   const latestConversationRun = useMemo(() => {
     if (!activeConversation) return null;
     return [...runs]
@@ -229,16 +230,6 @@ export function ChatPage() {
     }
   };
 
-  const handlePause = async () => {
-    if (!activeConversation) return;
-    await controlRun({ conversationId: activeConversation.id, action: "pause" });
-  };
-
-  const handleResume = async () => {
-    if (!activeConversation) return;
-    await controlRun({ conversationId: activeConversation.id, action: "resume" });
-  };
-
   const handleCancel = async () => {
     if (!activeConversation) return;
     await controlRun({ conversationId: activeConversation.id, action: "cancel" });
@@ -348,8 +339,6 @@ export function ChatPage() {
                 toolInvocations={conversationToolInvocations}
                 tokenUsage={conversationTokenUsage}
                 latestSystemMessage={latestSystemMessage}
-                onPause={handlePause}
-                onResume={handleResume}
                 onCancel={handleCancel}
               />
 
@@ -357,6 +346,8 @@ export function ChatPage() {
                 conversationId={activeConversation.id}
                 onSend={handleSend}
                 mentionCandidates={mentionCandidates}
+                busy={isConversationBusy}
+                onCancel={handleCancel}
               />
             </div>
           </>

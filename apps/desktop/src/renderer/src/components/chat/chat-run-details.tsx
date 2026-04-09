@@ -5,8 +5,6 @@ import {
   ChevronUp,
   FileStack,
   Paperclip,
-  Pause,
-  Play,
   Wrench,
   X,
 } from "lucide-react";
@@ -161,8 +159,6 @@ export function ChatRunDetails({
   toolInvocations,
   tokenUsage,
   latestSystemMessage,
-  onPause,
-  onResume,
   onCancel,
 }: {
   run: RunRecord | null;
@@ -172,8 +168,6 @@ export function ChatRunDetails({
   toolInvocations: ToolInvocationRecord[];
   tokenUsage: { total: number; tracked: boolean };
   latestSystemMessage: string | null;
-  onPause: () => void;
-  onResume: () => void;
   onCancel: () => void;
 }) {
   const language = useAppStore((state) => state.settings.language);
@@ -237,15 +231,17 @@ export function ChatRunDetails({
             <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">{summaryText}</p>
           </button>
 
-          {run && isActiveRun(run.status) ? (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="shrink-0 rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
-            >
-              {t.chat("cancel")}
-            </button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            {run && isActiveRun(run.status) ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              >
+                {t.chat("cancel")}
+              </button>
+            ) : null}
+          </div>
 
           <button
             type="button"
@@ -282,30 +278,6 @@ export function ChatRunDetails({
         </div>
 
         <div className="flex items-center gap-2">
-          {run?.status === "running" || run?.status === "pausing" ? (
-            <button
-              type="button"
-              onClick={onPause}
-              className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Pause className="h-3.5 w-3.5" />
-                {t.chat("pause")}
-              </span>
-            </button>
-          ) : null}
-          {run?.status === "paused" || run?.status === "resuming" ? (
-            <button
-              type="button"
-              onClick={onResume}
-              className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Play className="h-3.5 w-3.5" />
-                {t.chat("resume")}
-              </span>
-            </button>
-          ) : null}
           {run && isActiveRun(run.status) ? (
             <button
               type="button"

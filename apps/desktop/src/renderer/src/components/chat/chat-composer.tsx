@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { AtSign, Paperclip, Send, SmilePlus, X } from "lucide-react";
+import { AtSign, Paperclip, Send, SmilePlus, Square, X } from "lucide-react";
 import type { AttachmentAssetRecord } from "@shared";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { createTranslator } from "../../i18n";
@@ -51,10 +51,14 @@ export function ChatComposer({
   conversationId,
   onSend,
   mentionCandidates,
+  busy,
+  onCancel,
 }: {
   conversationId: string;
   onSend: (payload: { input: string; attachments: AttachmentAssetRecord[] }) => Promise<void>;
   mentionCandidates: Array<{ id: string; name: string; role: string }>;
+  busy: boolean;
+  onCancel: () => Promise<void>;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const commandSuggestions = useAppStore((state) => state.commandSuggestions);
@@ -138,7 +142,15 @@ export function ChatComposer({
 
   const submit = async () => {
     const value = input.trim();
-    if ((!value && attachments.length === 0) || sending || uploading) return;
+    if (busy || (!value && attachments.length === 0) || sending || uploading) {
+      if (busy) {
+        setFeedback({
+          tone: "info",
+          message: t.chat("awaitingReply"),
+        });
+      }
+      return;
+    }
     setSending(true);
     setFeedback(null);
     try {
@@ -160,6 +172,7 @@ export function ChatComposer({
   };
 
   const showMentionButton = mentionCandidates.length > 0;
+  const interactionLocked = busy || uploading;
 
   const uploadFiles = async (files: File[], successMessage: string) => {
     if (files.length === 0) return;
@@ -218,6 +231,9 @@ export function ChatComposer({
         <textarea
           value={input}
           onChange={(event) => {
+            if (busy) {
+              return;
+            }
             setInput(event.target.value);
             if (feedback?.tone === "error") {
               setFeedback(null);
@@ -225,6 +241,17 @@ export function ChatComposer({
           }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) {
+              return;
+            }
+
+            if (busy) {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                setFeedback({
+                  tone: "info",
+                  message: t.chat("awaitingReply"),
+                });
+              }
               return;
             }
 
@@ -259,7 +286,16 @@ export function ChatComposer({
               void submit();
             }
           }}
+          readOnly={busy}
           onPaste={(event) => {
+            if (busy) {
+              event.preventDefault();
+              setFeedback({
+                tone: "info",
+                message: t.chat("awaitingReply"),
+              });
+              return;
+            }
             const imageFiles = Array.from(event.clipboardData.items)
               .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
               .map((item, index) => item.getAsFile() ?? new File([], `clipboard-image-${index + 1}.png`))
@@ -273,11 +309,11 @@ export function ChatComposer({
             void uploadFiles(imageFiles, t.chat("pastedImagesReady"));
           }}
           rows={3}
-          placeholder={t.chat("directMessageHint")}
+          placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
           className="min-h-[104px] w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
         />
 
-        {suggestionState && suggestionState.items.length > 0 ? (
+        {!busy && suggestionState && suggestionState.items.length > 0 ? (
           <div className="mt-3 rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-2">
             <div className="space-y-1">
               {suggestionState.items.map((item, index) => (
@@ -307,6 +343,7 @@ export function ChatComposer({
               <button
                 type="button"
                 className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                disabled={interactionLocked}
                 onClick={() => setInput((current) => `${current}${current ? " " : ""}@`)}
               >
                 <AtSign className="h-5 w-5" />
@@ -318,6 +355,7 @@ export function ChatComposer({
                 className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
                 aria-label={t.chat("emoji")}
                 title={t.chat("emoji")}
+                disabled={interactionLocked}
                 onClick={() => setEmojiOpen((current) => !current)}
               >
                 <SmilePlus className="h-5 w-5" />
@@ -348,7 +386,11 @@ export function ChatComposer({
             </div>
             <label
               htmlFor={fileInputId}
-              className="shrink-0 cursor-pointer rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              className={`shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition ${
+                interactionLocked
+                  ? "cursor-not-allowed opacity-40"
+                  : "cursor-pointer hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              }`}
               aria-label={t.chat("attachment")}
               title={t.chat("attachment")}
             >
@@ -359,7 +401,12 @@ export function ChatComposer({
               type="file"
               multiple
               className="hidden"
+              disabled={interactionLocked}
               onChange={(event) => {
+                if (interactionLocked) {
+                  event.target.value = "";
+                  return;
+                }
                 const files = Array.from(event.target.files ?? []);
                 if (files.length === 0) return;
                 void uploadFiles(files, t.chat("attachmentsReady"))
@@ -370,13 +417,25 @@ export function ChatComposer({
             />
           </div>
 
-          <button
-            onClick={() => void submit()}
-            disabled={(!input.trim() && attachments.length === 0) || sending || uploading}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary)] text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </button>
+          {busy ? (
+            <button
+              type="button"
+              onClick={() => void onCancel()}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary)] text-white transition hover:opacity-90"
+              aria-label={t.chat("cancel")}
+              title={t.chat("cancel")}
+            >
+              <Square className="h-4 w-4 fill-current" />
+            </button>
+          ) : (
+            <button
+              onClick={() => void submit()}
+              disabled={(!input.trim() && attachments.length === 0) || sending || uploading}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary)] text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {attachments.length > 0 ? (
