@@ -13,6 +13,7 @@ import type {
   SaveAttachmentAssetInput,
   SendInputPayload,
   ProviderConnectionTestInput,
+  UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
   UpdateProfileInput,
@@ -177,6 +178,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:create-team", async (_event, payload: CreateTeamInput) =>
     runtime?.createTeam(payload),
+  );
+  ipcMain.handle("teamaligned:update-agent", async (_event, payload: UpdateAgentInput) =>
+    runtime?.updateAgent(payload),
   );
   ipcMain.handle("teamaligned:refresh-skill-catalog", async () => runtime?.refreshSkillCatalog());
   ipcMain.handle("teamaligned:install-skill", async (_event, skillId: string) =>

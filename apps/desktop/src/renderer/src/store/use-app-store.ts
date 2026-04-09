@@ -9,6 +9,7 @@ import type {
   ProviderConnectionTestResult,
   RunControlPayload,
   SendInputPayload,
+  UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
   UpdateProfileInput,
@@ -26,6 +27,7 @@ type AppStore = AppSnapshot & {
   controlRun: (payload: RunControlPayload) => Promise<void>;
   createAgent: (payload: CreateAgentInput) => Promise<void>;
   createTeam: (payload: CreateTeamInput) => Promise<void>;
+  updateAgent: (payload: UpdateAgentInput) => Promise<void>;
   refreshSkillCatalog: () => Promise<void>;
   installSkill: (skillId: string) => Promise<void>;
   removeSkill: (skillId: string) => Promise<void>;
@@ -123,6 +125,8 @@ export const useAppStore = create<AppStore>((set) => {
       runSnapshotAction(() => window.teamaligned.createAgent(payload)),
     createTeam: async (payload) =>
       runSnapshotAction(() => window.teamaligned.createTeam(payload)),
+    updateAgent: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateAgent(payload)),
     refreshSkillCatalog: async () =>
       runLoadingSnapshotAction(() => window.teamaligned.refreshSkillCatalog()),
     installSkill: async (skillId) =>

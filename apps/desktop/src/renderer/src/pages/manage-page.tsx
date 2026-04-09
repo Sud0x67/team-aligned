@@ -51,6 +51,7 @@ export function ManagePage() {
     settings,
     createAgent,
     createTeam,
+    updateAgent,
     openWorkspace,
     updateAgentSkills,
     updateAgentMcps,
@@ -62,6 +63,7 @@ export function ManagePage() {
   const [search, setSearch] = useState("");
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null);
   const [editingAgentSkills, setEditingAgentSkills] = useState<AgentRecord | null>(null);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [editingAgentMcps, setEditingAgentMcps] = useState<AgentRecord | null>(null);
@@ -121,7 +123,7 @@ export function ManagePage() {
 
   const submitAgent = async () => {
     if (!agentForm.name.trim() || !agentForm.role.trim()) return;
-    await createAgent({
+    const payload = {
       name: agentForm.name.trim(),
       role: agentForm.role.trim(),
       description: agentForm.description.trim() || t.chat("noDescriptionYet"),
@@ -131,9 +133,39 @@ export function ManagePage() {
         .filter(Boolean),
       workspacePath: agentForm.workspacePath.trim() || undefined,
       avatarPath: agentForm.avatarPath,
-    });
+    };
+
+    if (editingAgent) {
+      await updateAgent({
+        agentId: editingAgent.id,
+        ...payload,
+      });
+    } else {
+      await createAgent(payload);
+    }
+
+    setEditingAgent(null);
     setAgentForm(defaultAgentForm);
     setShowAgentForm(false);
+  };
+
+  const openCreateAgentForm = () => {
+    setEditingAgent(null);
+    setAgentForm(defaultAgentForm);
+    setShowAgentForm(true);
+  };
+
+  const openEditAgentForm = (agent: AgentRecord) => {
+    setEditingAgent(agent);
+    setAgentForm({
+      name: agent.name,
+      role: agent.role,
+      description: agent.description,
+      capabilities: agent.capabilities.join(", "),
+      workspacePath: agent.workspacePath,
+      avatarPath: agent.avatarPath,
+    });
+    setShowAgentForm(true);
   };
 
   const submitTeam = async () => {
@@ -243,7 +275,7 @@ export function ManagePage() {
                 </p>
               </div>
               <button
-                onClick={() => setShowAgentForm(true)}
+                onClick={openCreateAgentForm}
                 className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
               >
                 <Plus className="h-4 w-4" />
@@ -295,10 +327,9 @@ export function ManagePage() {
                       noMcpsConnected: t.manage("noMcpsConnected"),
                       completedTasks: t.manage("completedTasks"),
                       tasksUnit: t.manage("tasksUnit"),
-                      online: t.dashboard("online"),
-                      busy: t.dashboard("busy"),
-                      offline: t.dashboard("offline"),
+                      edit: t.manage("editAgent"),
                     }}
+                    onEdit={() => openEditAgentForm(agent)}
                     onConfigureSkills={() =>
                       installedSkills.length > 0 ? openSkillEditor(agent) : navigate("/extensions")
                     }
@@ -367,6 +398,8 @@ export function ManagePage() {
       <AgentFormModal
         open={showAgentForm}
         form={agentForm}
+        title={editingAgent ? t.manage("editAgent") : t.manage("createNewAgent")}
+        submitLabel={editingAgent ? t.manage("saveAgent") : t.manage("create")}
         labels={{
           createNewAgent: t.manage("createNewAgent"),
           avatar: t.manage("avatar"),
@@ -384,6 +417,7 @@ export function ManagePage() {
         }}
         onChange={setAgentForm}
         onClose={() => {
+          setEditingAgent(null);
           setShowAgentForm(false);
           setAgentForm(defaultAgentForm);
         }}

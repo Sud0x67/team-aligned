@@ -22,6 +22,7 @@ import type {
   SendInputPayload,
   TeamContext,
   TeamRecord,
+  UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
   UpdateProfileInput,
@@ -332,6 +333,12 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async createTeam(payload: Parameters<AppStorage["createTeam"]>[0]) {
     this.storage.createTeam(payload);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async updateAgent(payload: UpdateAgentInput) {
+    this.storage.updateAgent(payload);
     this.emitSnapshot();
     return this.getSnapshot();
   }

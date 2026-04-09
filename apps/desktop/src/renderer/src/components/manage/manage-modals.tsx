@@ -66,6 +66,8 @@ async function pickWorkspaceDirectory(onSelect: (directory: string) => void) {
 export function AgentFormModal({
   open,
   form,
+  title,
+  submitLabel,
   labels,
   onChange,
   onClose,
@@ -73,6 +75,8 @@ export function AgentFormModal({
 }: {
   open: boolean;
   form: AgentFormState;
+  title: string;
+  submitLabel: string;
   labels: Record<string, string>;
   onChange: (next: AgentFormState) => void;
   onClose: () => void;
@@ -81,7 +85,7 @@ export function AgentFormModal({
   if (!open) return null;
 
   return (
-    <ModalShell title={labels.createNewAgent} onClose={onClose}>
+    <ModalShell title={title} onClose={onClose}>
       <div className="space-y-4">
         <AvatarPicker
           label={labels.avatar}
@@ -160,7 +164,7 @@ export function AgentFormModal({
           onClick={onSubmit}
           className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
         >
-          {labels.create}
+          {submitLabel}
         </button>
       </div>
     </ModalShell>

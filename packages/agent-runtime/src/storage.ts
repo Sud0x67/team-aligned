@@ -44,6 +44,7 @@ import type {
   TeamContext,
   TeamRecord,
   ToolInvocationRecord,
+  UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateProfileInput,
   UpdateProviderInput,
@@ -409,6 +410,34 @@ export class AppStorage {
     });
     this.persist();
     return team;
+  }
+
+  updateAgent(input: UpdateAgentInput) {
+    const agent = this.getAgent(input.agentId);
+    if (!agent) return;
+
+    const nextWorkspacePath = input.workspacePath || agent.workspacePath;
+    this.ensureWorkspaceLayout(nextWorkspacePath, {
+      type: "agent",
+      title: input.name,
+      summary: input.description,
+    });
+
+    agent.name = input.name;
+    agent.role = input.role;
+    agent.description = input.description;
+    agent.capabilities = input.capabilities;
+    agent.workspacePath = nextWorkspacePath;
+    agent.avatarPath = input.avatarPath ?? null;
+    agent.avatar = input.name.slice(0, 1).toUpperCase() || "A";
+
+    const conversation = this.getConversation(`conv-${agent.id}`);
+    if (conversation) {
+      conversation.title = agent.name;
+      conversation.lastActivityAt = now();
+    }
+
+    this.persist();
   }
 
   listConversations(): ConversationRecord[] {

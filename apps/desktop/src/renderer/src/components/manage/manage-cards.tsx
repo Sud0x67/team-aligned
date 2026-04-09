@@ -12,25 +12,14 @@ import { AvatarBadge } from "../avatar-badge";
 
 export function AgentAvatar({ agent }: { agent: AgentRecord }) {
   return (
-    <div className="relative">
-      <AvatarBadge
-        src={agent.avatarPath}
-        fallback={agent.avatar}
-        alt={agent.name}
-        className="h-11 w-11 rounded-xl"
-        style={{ backgroundColor: agent.avatarColor }}
-        textClassName="text-sm font-semibold text-white"
-      />
-      <span
-        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--card)] ${
-          agent.status === "online"
-            ? "bg-emerald-500"
-            : agent.status === "busy"
-              ? "bg-amber-500"
-              : "bg-[color-mix(in_srgb,var(--muted-foreground)_60%,transparent)]"
-        }`}
-      />
-    </div>
+    <AvatarBadge
+      src={agent.avatarPath}
+      fallback={agent.avatar}
+      alt={agent.name}
+      className="h-11 w-11 rounded-xl"
+      style={{ backgroundColor: agent.avatarColor }}
+      textClassName="text-sm font-semibold text-white"
+    />
   );
 }
 
@@ -83,6 +72,7 @@ export function AgentCard({
   completedRunCount,
   language,
   labels,
+  onEdit,
   onConfigureSkills,
   onConfigureMcps,
   onOpenWorkspace,
@@ -104,10 +94,9 @@ export function AgentCard({
     noMcpsConnected: string;
     completedTasks: string;
     tasksUnit: string;
-    online: string;
-    busy: string;
-    offline: string;
+    edit: string;
   };
+  onEdit: () => void;
   onConfigureSkills: () => void;
   onConfigureMcps: () => void;
   onOpenWorkspace: () => void;
@@ -122,7 +111,12 @@ export function AgentCard({
             <p className="text-[12px] text-[var(--muted-foreground)]">{agent.role}</p>
           </div>
         </div>
-        <button className="rounded-lg p-1.5 opacity-0 transition-all hover:bg-[var(--muted)] group-hover:opacity-100">
+        <button
+          type="button"
+          title={labels.edit}
+          onClick={onEdit}
+          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+        >
           <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
         </button>
       </div>
@@ -223,26 +217,11 @@ export function AgentCard({
         <span className="truncate">{agent.workspacePath}</span>
       </button>
 
-      <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
+      <div className="flex items-center border-t border-[var(--border)] pt-3">
         <div className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)]">
           <Zap className="h-3.5 w-3.5" />
           {labels.completedTasks} {completedRunCount} {labels.tasksUnit}
         </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[11px] ${
-            agent.status === "online"
-              ? "bg-emerald-500/10 text-emerald-500"
-              : agent.status === "busy"
-                ? "bg-amber-500/10 text-amber-500"
-                : "bg-[color-mix(in_srgb,var(--muted-foreground)_12%,transparent)] text-[var(--muted-foreground)]"
-          }`}
-        >
-          {agent.status === "online"
-            ? labels.online
-            : agent.status === "busy"
-              ? labels.busy
-              : labels.offline}
-        </span>
       </div>
     </div>
   );

@@ -374,6 +374,16 @@ export interface CreateTeamInput {
   avatarPath?: string | null;
 }
 
+export interface UpdateAgentInput {
+  agentId: string;
+  name: string;
+  role: string;
+  description: string;
+  capabilities: string[];
+  workspacePath?: string;
+  avatarPath?: string | null;
+}
+
 export interface SendInputPayload {
   conversationId: string;
   input: string;
@@ -437,6 +447,7 @@ export interface TeamalignedApi {
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
+  updateAgent: (payload: UpdateAgentInput) => Promise<AppSnapshot>;
   refreshSkillCatalog: () => Promise<AppSnapshot>;
   installSkill: (skillId: string) => Promise<AppSnapshot>;
   removeSkill: (skillId: string) => Promise<AppSnapshot>;
