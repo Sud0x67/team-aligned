@@ -5,6 +5,7 @@ import type {
   ConnectMcpInput,
   CreateAgentInput,
   CreateTeamInput,
+  OpenConversationEvent,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SaveAvatarAssetInput,
@@ -60,8 +61,16 @@ const api: TeamalignedApi = {
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),
+  openNotificationSettings: () => ipcRenderer.invoke("teamaligned:open-notification-settings"),
   selectDirectory: () => ipcRenderer.invoke("teamaligned:select-directory"),
   openWorkspace: (path: string) => ipcRenderer.invoke("teamaligned:open-workspace", path),
+  subscribeOpenConversation: (listener: (payload: OpenConversationEvent) => void) => {
+    const wrapped = (_event: unknown, payload: OpenConversationEvent) => listener(payload);
+    ipcRenderer.on("teamaligned:open-conversation", wrapped);
+    return () => {
+      ipcRenderer.removeListener("teamaligned:open-conversation", wrapped);
+    };
+  },
   subscribe: (listener: (snapshot: AppSnapshot) => void) => {
     const wrapped = (_event: unknown, snapshot: AppSnapshot) => listener(snapshot);
     ipcRenderer.on("teamaligned:snapshot", wrapped);

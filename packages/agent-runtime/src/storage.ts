@@ -636,7 +636,7 @@ export class AppStorage {
   }
 
   createNotification(input: Omit<NotificationRecord, "id" | "read" | "createdAt"> & { createdAt?: number }) {
-    this.state.notifications.unshift({
+    const notification: NotificationRecord = {
       id: nanoid(),
       type: input.type,
       title: input.title,
@@ -645,8 +645,10 @@ export class AppStorage {
       createdAt: input.createdAt ?? now(),
       relatedConversationId: input.relatedConversationId,
       relatedRunId: input.relatedRunId,
-    });
+    };
+    this.state.notifications.unshift(notification);
     this.persist();
+    return notification;
   }
 
   markNotificationsRead() {

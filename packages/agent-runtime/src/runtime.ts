@@ -13,6 +13,7 @@ import type {
   ConversationRecord,
   McpCatalogRecord,
   MessageVisibility,
+  NotificationRecord,
   ProviderConnectionTestInput,
   ProviderConfig,
   RunControlPayload,
@@ -72,6 +73,8 @@ type ActiveRunController = {
   busy: boolean;
   childProcess: ReturnType<typeof spawn> | null;
 };
+
+type SystemNotificationChannel = "agent_message" | "mention" | "group_message" | null;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -204,6 +207,24 @@ export class TeamalignedRuntime extends EventEmitter {
 
   getSnapshot(): AppSnapshot {
     return this.storage.getSnapshot();
+  }
+
+  private createAppNotification(
+    input: Omit<NotificationRecord, "id" | "read" | "createdAt"> & { createdAt?: number },
+    channel: SystemNotificationChannel = null,
+  ) {
+    const notification = this.storage.createNotification(input);
+    this.emit("notification", { notification, channel });
+    return notification;
+  }
+
+  private getConversationNotificationChannel(conversationId: string): SystemNotificationChannel {
+    const conversation = this.storage.getConversation(conversationId);
+    if (!conversation) {
+      return null;
+    }
+
+    return conversation.kind === "agent" ? "agent_message" : "group_message";
   }
 
   async sendInput(payload: SendInputPayload) {
@@ -352,7 +373,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async refreshSkillCatalog() {
     const catalog = await fetchSkillCatalog();
     this.storage.replaceSkillCatalog(catalog);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: "extension",
       title: "Skill catalog 已同步",
       body: `已同步 ${catalog.length} 个 Skill 元数据。`,
@@ -366,7 +387,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async installSkill(skillId: string) {
     const skill = this.storage.getSkillCatalogEntry(skillId);
     if (!skill) {
-      this.storage.createNotification({
+      this.createAppNotification({
         type: "system",
         title: "Skill 安装失败",
         body: `未找到 Skill：${skillId}`,
@@ -386,7 +407,7 @@ export class TeamalignedRuntime extends EventEmitter {
       installPath: installed.installPath,
       version: installed.version,
     });
-    this.storage.createNotification({
+    this.createAppNotification({
       type: "extension",
       title: "Skill 已安装",
       body: `${skill.displayName || skill.name} 已安装到全局目录。`,
@@ -400,7 +421,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async removeSkill(skillId: string) {
     const skill = this.storage.getSkillCatalogEntry(skillId);
     if (!skill) {
-      this.storage.createNotification({
+      this.createAppNotification({
         type: "system",
         title: "Skill 移除失败",
         body: `未找到 Skill：${skillId}`,
@@ -416,7 +437,7 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     this.storage.markSkillRemoved(skill.id);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: "extension",
       title: "Skill 已移除",
       body: `${skill.displayName || skill.name} 已从全局目录移除。`,
@@ -430,7 +451,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async refreshMcpCatalog() {
     const catalog = await fetchMcpCatalog();
     this.storage.replaceMcpCatalog(catalog);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: "extension",
       title: "MCP catalog 已同步",
       body: `已同步 ${catalog.length} 个 MCP 元数据。`,
@@ -444,7 +465,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async connectMcp(payload: ConnectMcpInput) {
     const server = this.storage.getMcpCatalogEntry(payload.serverId);
     if (!server) {
-      this.storage.createNotification({
+      this.createAppNotification({
         type: "system",
         title: "MCP 连接失败",
         body: `未找到 MCP：${payload.serverId}`,
@@ -493,7 +514,7 @@ export class TeamalignedRuntime extends EventEmitter {
         });
 
     this.storage.upsertMcpConnection(checkedConnection);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: checkedConnection.status === "connected" ? "extension" : "system",
       title:
         checkedConnection.status === "connected"
@@ -518,7 +539,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const server = this.storage.getMcpCatalogEntry(serverId);
     const connection = this.storage.getMcpConnection(serverId);
     if (!server || !connection) {
-      this.storage.createNotification({
+      this.createAppNotification({
         type: "system",
         title: "MCP 检测失败",
         body: `未找到 MCP 连接：${serverId}`,
@@ -535,7 +556,7 @@ export class TeamalignedRuntime extends EventEmitter {
       workspacePath: connection.cwd || this.storage.workspaceRoot,
     });
     this.storage.upsertMcpConnection(checked);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: checked.status === "connected" ? "extension" : "system",
       title: checked.status === "connected" ? "MCP 检测通过" : "MCP 检测失败",
       body:
@@ -552,7 +573,7 @@ export class TeamalignedRuntime extends EventEmitter {
   async disconnectMcp(serverId: string) {
     const server = this.storage.getMcpCatalogEntry(serverId);
     this.storage.removeMcpConnection(serverId);
-    this.storage.createNotification({
+    this.createAppNotification({
       type: "extension",
       title: "MCP 已移除",
       body: `${server?.name ?? serverId} 已从本地连接列表中移除。`,
@@ -1051,13 +1072,16 @@ export class TeamalignedRuntime extends EventEmitter {
             `结果已写入产物：${artifactPath}\n记忆文件已更新：${memoryPath}`,
             "system",
           );
-          this.storage.createNotification({
-            type: "run_complete",
-            title: `${agent.name} 已完成当前任务`,
-            body: "可以在消息线程中查看结果。",
-            relatedConversationId: conversation.id,
-            relatedRunId: runId,
-          });
+          this.createAppNotification(
+            {
+              type: "agent_message",
+              title: `${agent.name} 发来新消息`,
+              body: trimHeadline(response.text || "点开查看最新回复。"),
+              relatedConversationId: conversation.id,
+              relatedRunId: runId,
+            },
+            "agent_message",
+          );
         },
       },
     ];
@@ -1396,13 +1420,23 @@ export class TeamalignedRuntime extends EventEmitter {
             });
           }
 
-          this.storage.createNotification({
-            type: "mention",
-            title: `${finalResponse.speaker.name} 在群组中 @ 了你`,
-            body: `${team.name} 中有新的阶段总结。`,
-            relatedConversationId: conversation.id,
-            relatedRunId: runId,
-          });
+          const isMention = plan.strategy === "specialist_question";
+          const notificationBody = trimHeadline(
+            finalResponse.content.replace(/^@你\s*/, "") || `${team.name} 中有新的回复。`,
+          );
+
+          this.createAppNotification(
+            {
+              type: isMention ? "mention" : "group_message",
+              title: isMention
+                ? `${finalResponse.speaker.name} 在 ${team.name} 中 @ 了你`
+                : `${team.name} 有新消息`,
+              body: notificationBody,
+              relatedConversationId: conversation.id,
+              relatedRunId: runId,
+            },
+            isMention ? "mention" : "group_message",
+          );
         },
       },
       {
@@ -1607,13 +1641,6 @@ export class TeamalignedRuntime extends EventEmitter {
     if (!step) {
       this.storage.updateRun(runId, { status: "completed" });
       this.addRunMessage(run.conversationId, runId, "任务已完成。", "system");
-      this.storage.createNotification({
-        type: "run_complete",
-        title: "任务已完成",
-        body: run.title,
-        relatedConversationId: run.conversationId,
-        relatedRunId: runId,
-      });
       this.activeRuns.delete(runId);
       this.emitSnapshot();
       return;
@@ -1672,13 +1699,23 @@ export class TeamalignedRuntime extends EventEmitter {
         `任务执行失败：${error instanceof Error ? error.message : String(error)}`,
         "system",
       );
-      this.storage.createNotification({
-        type: "run_failed",
-        title: "任务执行失败",
-        body: run.title,
-        relatedConversationId: run.conversationId,
-        relatedRunId: runId,
-      });
+      const notificationChannel = this.getConversationNotificationChannel(run.conversationId);
+      const conversation = this.storage.getConversation(run.conversationId);
+      this.createAppNotification(
+        {
+          type: "run_failed",
+          title:
+            conversation?.kind === "agent"
+              ? `${conversation.title} 回复失败`
+              : conversation?.kind === "team"
+                ? `${conversation.title} 协作失败`
+                : "任务执行失败",
+          body: error instanceof Error ? trimHeadline(error.message) : trimHeadline(String(error)),
+          relatedConversationId: run.conversationId,
+          relatedRunId: runId,
+        },
+        notificationChannel,
+      );
       this.activeRuns.delete(runId);
       this.emitSnapshot();
       return;

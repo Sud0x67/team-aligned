@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AppShell } from "./components/app-shell";
 import { AppErrorBoundary } from "./components/app-error-boundary";
 import { ExtensionsPage } from "./pages/extensions-page";
@@ -19,6 +19,24 @@ function RouteTitleSync() {
     document.body.classList.toggle("dark", settings.theme === "dark");
     window.localStorage.setItem("teamaligned_ui_language", settings.language);
   }, [settings.language, settings.theme, location.pathname]);
+
+  return null;
+}
+
+function NotificationRouteSync() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unsubscribe = window.teamaligned.subscribeOpenConversation(({ conversationId }) => {
+      navigate("/", {
+        state: { conversationId },
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [navigate]);
 
   return null;
 }
@@ -119,6 +137,7 @@ export function App() {
     <AppErrorBoundary language={language}>
       <HashRouter>
         <RouteTitleSync />
+        <NotificationRouteSync />
         <AppRoutes />
       </HashRouter>
     </AppErrorBoundary>

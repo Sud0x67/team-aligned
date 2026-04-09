@@ -27,6 +27,8 @@ export type RunStatus =
   | "cancelled";
 export type ExtensionType = "skill" | "mcp";
 export type NotificationType =
+  | "agent_message"
+  | "group_message"
   | "run_complete"
   | "mention"
   | "system"
@@ -229,6 +231,11 @@ export interface NotificationRecord {
   createdAt: number;
   relatedConversationId: string | null;
   relatedRunId: string | null;
+}
+
+export interface OpenConversationEvent {
+  conversationId: string;
+  relatedRunId?: string | null;
 }
 
 export interface ExtensionRecord {
@@ -469,8 +476,10 @@ export interface TeamalignedApi {
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   markNotificationsRead: () => Promise<AppSnapshot>;
   markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
+  openNotificationSettings: () => Promise<boolean>;
   selectDirectory: () => Promise<string | null>;
   openWorkspace: (path: string) => Promise<void>;
+  subscribeOpenConversation: (listener: (payload: OpenConversationEvent) => void) => () => void;
   subscribe: (listener: (snapshot: AppSnapshot) => void) => () => void;
 }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
+import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
 import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -9,6 +9,7 @@ import type {
   ConnectMcpInput,
   CreateAgentInput,
   CreateTeamInput,
+  NotificationRecord,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SendInputPayload,
@@ -27,6 +28,101 @@ const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
+const activeSystemNotifications = new Set<Notification>();
+
+type RuntimeNotificationChannel = "agent_message" | "mention" | "group_message" | null;
+
+function canDispatchSystemNotification(channel: RuntimeNotificationChannel, notification: NotificationRecord) {
+  if (!channel || !runtime) return false;
+  if (!Notification.isSupported()) return false;
+  if (!notification.relatedConversationId) return false;
+
+  const snapshot = runtime.getSnapshot();
+  const { settings } = snapshot;
+  const window = mainWindow;
+  const windowVisible = window
+    ? !window.isDestroyed() && window.isVisible() && !window.isMinimized() && window.isFocused()
+    : false;
+
+  if (windowVisible) {
+    return false;
+  }
+
+  if (channel === "agent_message") {
+    return settings.notifyAgentComplete;
+  }
+
+  if (channel === "mention") {
+    return settings.notifyMention;
+  }
+
+  if (channel === "group_message") {
+    return settings.notifyGroup;
+  }
+
+  return false;
+}
+
+function dispatchSystemNotification(input: {
+  channel: RuntimeNotificationChannel;
+  notification: NotificationRecord;
+}) {
+  if (!canDispatchSystemNotification(input.channel, input.notification)) {
+    return;
+  }
+
+  const conversationId = input.notification.relatedConversationId;
+  if (!conversationId) {
+    return;
+  }
+
+  const systemNotification = new Notification({
+    title: input.notification.title,
+    body: input.notification.body,
+    silent: false,
+  });
+  activeSystemNotifications.add(systemNotification);
+
+  const cleanup = () => {
+    activeSystemNotifications.delete(systemNotification);
+  };
+
+  systemNotification.on("show", () => {
+    if (process.platform === "darwin") {
+      app.dock?.bounce("informational");
+    }
+  });
+
+  systemNotification.on("click", async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      await createWindow();
+    }
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+
+    mainWindow.focus();
+    mainWindow.webContents.send("teamaligned:open-conversation", {
+      conversationId,
+      relatedRunId: input.notification.relatedRunId,
+    });
+    cleanup();
+  });
+
+  systemNotification.on("close", cleanup);
+  systemNotification.on("failed", cleanup);
+
+  systemNotification.show();
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -159,12 +255,16 @@ function broadcastSnapshot() {
 }
 
 app.whenReady().then(async () => {
+  app.setName("teamaligned");
   const runtimeRoot = resolveRuntimeRoot();
   migrateLegacyRuntimeRoot(runtimeRoot);
   registerAssetProtocol();
   runtime = new TeamalignedRuntime(runtimeRoot);
   await runtime.init();
   runtime.on("snapshot", broadcastSnapshot);
+  runtime.on("notification", (payload: { channel: RuntimeNotificationChannel; notification: NotificationRecord }) => {
+    dispatchSystemNotification(payload);
+  });
 
   ipcMain.handle("teamaligned:bootstrap", async () => runtime?.getSnapshot());
   ipcMain.handle("teamaligned:send-input", async (_event, payload: SendInputPayload) =>
