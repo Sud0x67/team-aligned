@@ -315,14 +315,14 @@ export function SettingsPage() {
           <SectionCard title={t.settings("modelConfig")}>
             {selectedProvider ? (
               <div className="space-y-4">
-                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--panel)] p-5">
-                  <div className="grid gap-5">
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--panel)] p-4">
+                  <div className="grid gap-4">
                     <div className="space-y-2">
                       <p className="text-sm font-semibold text-[var(--muted-foreground)]">{t.settings("providerPicker")}</p>
                       <select
                         value={selectedProviderId}
                         onChange={(event) => setSelectedProviderId(event.target.value)}
-                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-3.5 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                       >
                         {providerForms.map((provider) => (
                           <option key={provider.id} value={provider.id}>
@@ -345,7 +345,7 @@ export function SettingsPage() {
                             ),
                           )
                         }
-                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-3.5 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                       />
                     </div>
 
@@ -364,7 +364,7 @@ export function SettingsPage() {
                               ),
                             )
                           }
-                          className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 pr-14 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                          className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-3.5 pr-14 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                         />
                         <button
                           type="button"
@@ -390,12 +390,12 @@ export function SettingsPage() {
                             ),
                           )
                         }
-                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-4 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+                        className="w-full rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-5 py-3.5 text-[15px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
                       />
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
+                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm text-[var(--foreground)]">
                         <span>{t.settings("toolCalling")}</span>
                         <ToggleSwitch
                           checked={selectedProvider.supportsToolCalling}
@@ -411,7 +411,7 @@ export function SettingsPage() {
                           }
                         />
                       </label>
-                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-sm text-[var(--foreground)]">
+                      <label className="flex items-center justify-between rounded-[22px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm text-[var(--foreground)]">
                         <span>{t.settings("streaming")}</span>
                         <ToggleSwitch
                           checked={selectedProvider.supportsStreaming}
@@ -469,24 +469,28 @@ export function SettingsPage() {
                       </button>
                     </div>
 
-                    {providerMessage ? (
-                      <div
-                        className={`rounded-[20px] border px-4 py-3 text-sm leading-7 ${
-                          testState === "success"
-                            ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700"
-                            : "border-rose-500/20 bg-rose-500/5 text-rose-700"
-                        }`}
-                      >
-                        <div className="flex items-start gap-2">
-                          {testState === "success" ? (
-                            <Check className="mt-0.5 h-4 w-4 shrink-0" />
-                          ) : (
-                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                          )}
-                          <p className="whitespace-pre-wrap">{providerMessage}</p>
+                    <div className="min-h-[112px]">
+                      {providerMessage ? (
+                        <div
+                          className={`max-h-[148px] overflow-y-auto rounded-[20px] border px-4 py-3 text-sm leading-7 ${
+                            testState === "success"
+                              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700"
+                              : "border-rose-500/20 bg-rose-500/5 text-rose-700"
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {testState === "success" ? (
+                              <Check className="mt-0.5 h-4 w-4 shrink-0" />
+                            ) : (
+                              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                            )}
+                            <p className="whitespace-pre-wrap">{providerMessage}</p>
+                          </div>
                         </div>
-                      </div>
-                    ) : null}
+                      ) : (
+                        <div className="h-full rounded-[20px] border border-dashed border-transparent px-4 py-3" />
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
