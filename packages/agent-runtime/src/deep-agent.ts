@@ -2,8 +2,10 @@ import { createDeepAgent, FilesystemBackend } from "deepagents";
 import { MemorySaver } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import { readFileSync } from "node:fs";
 import type {
   AgentRecord,
+  AttachmentAssetRecord,
   McpCatalogRecord,
   McpConnectionRecord,
   MessageRecord,
@@ -24,6 +26,16 @@ type DeepAgentSession = {
   signature: string;
   agent: ReturnType<typeof createDeepAgent>;
   initialized: boolean;
+};
+
+type ChatInputMessage = {
+  role: "user" | "assistant";
+  content:
+    | string
+    | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >;
 };
 
 function isPlaceholderApiKey(value: string) {
@@ -194,7 +206,7 @@ function extractTokenUsage(result: unknown): TokenUsageSummary | null {
   return null;
 }
 
-function toAgentMessages(history: MessageRecord[]) {
+function toAgentMessages(history: MessageRecord[]): ChatInputMessage[] {
   return history
     .filter(
       (message) =>
@@ -206,6 +218,45 @@ function toAgentMessages(history: MessageRecord[]) {
       role: message.senderKind === "user" ? "user" : "assistant",
       content: message.content,
     }));
+}
+
+function buildImageDataUrl(attachment: AttachmentAssetRecord) {
+  const data = readFileSync(attachment.path).toString("base64");
+  return `data:${attachment.mimeType};base64,${data}`;
+}
+
+function buildLatestUserMessage(input: string, attachments: AttachmentAssetRecord[]): ChatInputMessage {
+  const imageAttachments = attachments.filter((attachment) => attachment.mimeType.startsWith("image/"));
+  if (imageAttachments.length === 0) {
+    return { role: "user", content: input };
+  }
+
+  const content: ChatInputMessage["content"] = [
+    {
+      type: "text",
+      text: [
+        input,
+        "",
+        "请理解并结合下面上传的图片内容进行回答。若图片无法读取，请明确说明。",
+      ].join("\n"),
+    },
+  ];
+
+  for (const attachment of imageAttachments) {
+    try {
+      content.push({
+        type: "image_url",
+        image_url: { url: buildImageDataUrl(attachment) },
+      });
+    } catch {
+      content.push({
+        type: "text",
+        text: `图片 ${attachment.name} 读取失败，路径：${attachment.path}`,
+      });
+    }
+  }
+
+  return { role: "user", content };
 }
 
 function buildSystemPrompt(input: {
@@ -414,6 +465,7 @@ export async function invokeSingleChatDeepAgent(input: {
   workspacePath: string;
   history: MessageRecord[];
   latestInput: string;
+  attachments?: AttachmentAssetRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
@@ -432,6 +484,7 @@ export async function invokeSingleChatDeepAgent(input: {
     workspacePath,
     history,
     latestInput,
+    attachments = [],
     additionalTools,
     runtimeToolSummary,
     onTextStream,
@@ -499,9 +552,11 @@ export async function invokeSingleChatDeepAgent(input: {
 
   sessions.set(conversationId, session);
 
-  const messages = session.initialized
-    ? [{ role: "user" as const, content: latestInput }]
-    : toAgentMessages(history);
+  const latestUserMessage = buildLatestUserMessage(latestInput, attachments);
+  const historyMessages = toAgentMessages(history);
+  const previousMessages =
+    historyMessages.at(-1)?.role === "user" ? historyMessages.slice(0, -1) : historyMessages;
+  const messages = session.initialized ? [latestUserMessage] : [...previousMessages, latestUserMessage];
 
   if (provider.supportsStreaming && onTextStream && typeof (session.agent as { streamEvents?: unknown }).streamEvents === "function") {
     try {

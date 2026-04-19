@@ -36,6 +36,7 @@
 - [x] slash 结果直接以聊天消息形式展示
 - [x] 单聊 / 群聊输入区支持附件上传
 - [x] 图片附件预览
+- [x] 单聊图片理解，多模态输入交给支持 vision 的模型
 - [x] 命令结果卡片
 - [x] run 详情、artifact、attachment、tool invocation 可视化
 - [x] 运行中锁定输入区，并支持取消当前任务

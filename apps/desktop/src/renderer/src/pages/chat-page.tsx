@@ -104,14 +104,13 @@ export function ChatPage() {
     if (!activeRun) return null;
 
     const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
-    const hasFinalPublicReply = runMessages.some(
+    const hasVisibleAgentReply = runMessages.some(
       (message) =>
         message.visibility === "public" &&
-        message.senderKind !== "user" &&
-        message.metadata?.streaming !== true,
+        message.senderKind !== "user",
     );
 
-    if (hasFinalPublicReply) {
+    if (hasVisibleAgentReply) {
       return null;
     }
 

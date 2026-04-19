@@ -230,6 +230,7 @@ TeamalignedRuntime
 - 自然语言消息
 - 附件上传
 - 图片附件预览
+- 图片附件作为单聊多模态输入
 - slash command
 - `@` 选择器
 - `/` 自动补全
@@ -462,6 +463,7 @@ MCP 当前尚未完成：
 - MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入
 - workspace 文件 / 搜索 / 命令工具层
 - 附件上传与图片预览
+- 单聊图片理解
 - run 详情、artifact、attachment、tool invocation 可视化
 - 应用内通知中心与系统通知主链路
 - `settings.json` + `app.db` + 文件层三层持久化

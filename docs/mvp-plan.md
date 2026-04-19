@@ -67,6 +67,7 @@ MVP 要证明三件事：
 单 Agent 私聊需要支持：
 
 - 自然语言输入
+- 图片附件理解，前提是当前模型支持 vision
 - `/skills` 查看当前 Agent 可用技能
 - `/mcp` 查看和调用当前可用的 MCP 能力
 - `/<skill-id>` 临时使用某个 Skill

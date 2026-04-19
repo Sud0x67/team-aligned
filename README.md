@@ -76,6 +76,7 @@
 - `settings.json` 作为用户配置主文件
 - `attachments / artifacts / tool_invocations / run_steps` 已进入正式 SQLite 表
 - 消息附件上传、落盘与消息流展示
+- 单聊图片附件可作为多模态输入交给支持 vision 的模型理解
 - Workspace 打开入口、通知、Provider/Profile/Settings 编辑
 - Agent、群组、个人资料头像上传与本地保存
 - 扩展中心、管理页、设置页的 Figma 对齐首版
@@ -98,7 +99,7 @@
 - 聊天页现在已经提供 run 详情、产物、附件与工具调用的可视化卡片。
 - 数据层已经有正式的 `attachments / artifacts / tool_invocations / run_steps` 表、`messages / conversations / runs / agents / teams / providers / notifications` 的结构化列与索引，并补上了 Drizzle migration。
 - 设置页现在支持 provider 参数校验、连通性测试和错误提示。
-- 单聊回复已经优先按流式方式更新到消息线程；聊天输入支持 `/` 自动补全、`@` 成员选择、命令结果卡片和图片附件预览。
+- 单聊回复已经优先按流式方式更新到消息线程；聊天输入支持 `/` 自动补全、`@` 成员选择、命令结果卡片、图片附件预览和图片理解。
 - slash 命令现在聚焦上下文快捷调用：内置 `/skills`、`/mcp`，以及一次性 Skill / Prompt Alias 调用。
 - 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。

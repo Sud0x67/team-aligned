@@ -313,7 +313,7 @@ export class TeamalignedRuntime extends EventEmitter {
     );
 
     if (conversation.kind === "agent") {
-      await this.startAgentRun(conversation, runtimeInput, slashDirectives);
+      await this.startAgentRun(conversation, runtimeInput, slashDirectives, attachments);
     } else {
       await this.startTeamRun(conversation, runtimeInput, slashDirectives);
     }
@@ -1038,6 +1038,7 @@ export class TeamalignedRuntime extends EventEmitter {
     conversation: ConversationRecord,
     input: string,
     slashContext: SlashDirectiveContext,
+    attachments: AttachmentAssetRecord[],
   ) {
     const snapshot = this.storage.getSnapshot();
     const agent = snapshot.agents.find((item) => item.id === conversation.targetId);
@@ -1109,6 +1110,7 @@ export class TeamalignedRuntime extends EventEmitter {
             workspacePath,
             history: this.storage.listMessages(conversation.id),
             latestInput: input,
+            attachments,
             onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
             additionalTools: runtimeTools.tools,
             runtimeToolSummary: runtimeTools.summary,
