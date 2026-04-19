@@ -72,6 +72,25 @@ function buildAvatarProps(
   return null;
 }
 
+function resolveMentionLabel(
+  mention: string,
+  input: {
+    profile: UserProfile;
+    agentMap: Map<string, AgentRecord>;
+  },
+) {
+  if (mention === "user") {
+    return input.profile.name || "你";
+  }
+
+  const agent = input.agentMap.get(mention);
+  if (agent) {
+    return agent.name;
+  }
+
+  return mention.replace(/^agent-/, "");
+}
+
 export function ChatMessageThread({
   conversationId,
   messages,
@@ -281,7 +300,7 @@ export function ChatMessageThread({
                           key={mention}
                           className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]"
                         >
-                          @{mention}
+                          @{resolveMentionLabel(mention, { profile, agentMap })}
                         </span>
                       ))}
                     </div>

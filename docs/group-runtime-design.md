@@ -60,7 +60,7 @@
 - 选择 3 到 5 个 Agent。
 - Agent 可以互相 `@`。
 - 最多 2 个小轮。
-- 每个用户消息最多 8 条 Agent 消息。
+- 每个用户消息最多 15 条 Agent 消息。
 - 到达上限后必须停止。
 
 ## @ 优先规则
@@ -86,9 +86,9 @@
 - 每个用户消息开启一个 `team turn`。
 - 每个 `team turn` 最多 2 个小轮。
 - 每个小轮最多 5 个 Agent 发言。
-- 每个 `team turn` 最多 8 条 Agent 消息。
+- 每个 `team turn` 最多 15 条 Agent 消息。
 - Agent 互相 `@` 只能触发下一小轮。
-- 同一个 Agent 在同一个 `team turn` 中最多发言一次。
+- 同一个 Agent 在同一个 `team turn` 中最多发言 3 次。
 
 这些规则保证群聊可以展示协作过程，但不会变成无限 Agent 对话。
 
@@ -149,7 +149,7 @@ Agent 依次生成自然群聊消息
 - 无 `@` 时按语义选择 1 到 5 个 Agent。
 - `focused / multi_voice / collaboration` 三种模式。
 - 群组最多 5 个 Agent。
-- 每个 team turn 最多 2 小轮、最多 8 条 Agent 消息。
+- 每个 team turn 最多 2 小轮、最多 15 条 Agent 消息。
 - Agent 可在复杂协作中互相 `@`，触发下一小轮。
 - 群组 shared-memory 会记录本轮话题、发言成员和阶段性结论。
 

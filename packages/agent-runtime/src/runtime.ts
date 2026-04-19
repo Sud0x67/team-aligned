@@ -54,11 +54,17 @@ import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
 import {
+  buildExecutionBatches,
+  executeNaturalTeamWorkItem,
+  MAX_AGENT_MESSAGES_PER_TURN,
   generateNaturalTeamAgentMessage,
   MAX_TEAM_SUBROUNDS,
   MAX_TEAM_TURN_MESSAGES,
+  planTeamExecution,
   selectNaturalTeamSpeakers,
   TEAM_MEMBER_LIMIT,
+  type TeamExecutionPlan,
+  type TeamExecutionWorkItem,
   type NaturalTeamAgentMessage,
 } from "./team-runtime.ts";
 
@@ -1289,6 +1295,7 @@ export class TeamalignedRuntime extends EventEmitter {
       onInvocation: this.createToolInvocationObserver(conversation.id, runId),
     });
     let selection: Awaited<ReturnType<typeof selectNaturalTeamSpeakers>> | null = null;
+    let executionPlan: TeamExecutionPlan | null = null;
     const turnMessages: NaturalTeamAgentMessage[] = [];
 
     const steps: RunStep[] = [
@@ -1307,6 +1314,46 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: "选择发言成员",
         execute: async () => {
+          executionPlan = await planTeamExecution({
+            provider: provider!,
+            profile: snapshot.profile,
+            team: {
+              ...team,
+              context: updatedContext,
+            },
+            members,
+            context: updatedContext,
+            history: this.storage.listMessages(conversation.id).map((message) => ({
+              senderName: message.senderName,
+              visibility: message.visibility,
+              content: message.content,
+            })),
+            userInput: input,
+            explicitMentionIds: explicitMentions,
+            mcpServers: availableMcpServers,
+          });
+
+          if (executionPlan) {
+            updatedContext = {
+              ...updatedContext,
+              phase: executionPlan.nextPhase || "执行中",
+              activeTasks: executionPlan.activeTask
+                ? Array.from(new Set([executionPlan.activeTask, ...updatedContext.activeTasks])).slice(0, 5)
+                : updatedContext.activeTasks,
+              recentDecisions: executionPlan.decision
+                ? Array.from(new Set([executionPlan.decision, ...updatedContext.recentDecisions])).slice(0, 5)
+                : updatedContext.recentDecisions,
+            };
+            this.storage.updateTeamContext(team.id, updatedContext);
+            this.addRunMessage(
+              conversation.id,
+              runId,
+              `这轮请求会进入执行模式，我会安排合适的成员直接开始处理。`,
+              "system",
+            );
+            return;
+          }
+
           selection = await selectNaturalTeamSpeakers({
             provider: provider!,
             profile: snapshot.profile,
@@ -1343,11 +1390,116 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: "Agent 自然发言",
         execute: async () => {
+          if (executionPlan && executionPlan.workItems.length > 0) {
+            const batches = buildExecutionBatches(executionPlan.workItems);
+            const completedOutputs: string[] = [];
+
+            for (const batch of batches) {
+              const kickoffMessages = batch.map((item) =>
+                this.storage.addMessage({
+                  conversationId: conversation.id,
+                  senderId: item.owner.id,
+                  senderName: item.owner.name,
+                  senderKind: "agent",
+                  messageType: "agent",
+                  visibility: "public",
+                  content: item.kickoffMessage || `我来处理：${item.summary}`,
+                  mentions: [],
+                  runId,
+                  metadata: {
+                    teamId: team.id,
+                    execution: true,
+                    workItemId: item.id,
+                    writeTargets: item.writeTargets,
+                    readTargets: item.readTargets,
+                  },
+                  createdAt: Date.now(),
+                }),
+              );
+
+              void kickoffMessages;
+
+              const results = await Promise.all(
+                batch.map(async (item) => {
+                  try {
+                    const content = await executeNaturalTeamWorkItem({
+                      provider: provider!,
+                      profile: snapshot.profile,
+                      team: {
+                        ...team,
+                        context: updatedContext,
+                      },
+                      workItem: item,
+                      members,
+                      context: updatedContext,
+                      userInput: input,
+                      workspacePath,
+                      conversationId: conversation.id,
+                      runId,
+                      previousOutputs: completedOutputs,
+                      mcpServers: availableMcpServers,
+                      mcpConnections: availableMcpConnections,
+                      onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+                      additionalTools: runtimeTools.tools,
+                    });
+                    return { item, ok: true as const, content };
+                  } catch (error) {
+                    return {
+                      item,
+                      ok: false as const,
+                      content:
+                        error instanceof Error
+                          ? `${item.owner.name}：我执行这个任务时遇到了问题：${error.message}`
+                          : `${item.owner.name}：我执行这个任务时遇到了未知问题。`,
+                    };
+                  }
+                }),
+              );
+
+              for (const result of results) {
+                completedOutputs.push(result.content);
+                this.storage.addMessage({
+                  conversationId: conversation.id,
+                  senderId: result.item.owner.id,
+                  senderName: result.item.owner.name,
+                  senderKind: "agent",
+                  messageType: result.ok ? "agent" : "notification",
+                  visibility: "public",
+                  content: result.content,
+                  mentions: result.ok ? [] : ["user"],
+                  runId,
+                  metadata: {
+                    teamId: team.id,
+                    execution: true,
+                    workItemId: result.item.id,
+                    status: result.ok ? "completed" : "failed",
+                    writeTargets: result.item.writeTargets,
+                    readTargets: result.item.readTargets,
+                  },
+                  createdAt: Date.now(),
+                });
+              }
+            }
+
+            const lastContent = completedOutputs.at(-1) ?? `${team.name} 已完成本轮执行。`;
+            this.createAppNotification(
+              {
+                type: "group_message",
+                title: `${team.name} 有新消息`,
+                body: trimHeadline(lastContent),
+                relatedConversationId: conversation.id,
+                relatedRunId: runId,
+              },
+              "group_message",
+            );
+            return;
+          }
+
           if (!selection || selection.speakers.length === 0) {
             return;
           }
 
-          const spokenIds = new Set<string>();
+          const speakerMessageCounts = new Map<string, number>();
           let speakers = selection.speakers;
           for (let roundIndex = 0; roundIndex < MAX_TEAM_SUBROUNDS; roundIndex += 1) {
             if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES || speakers.length === 0) {
@@ -1359,7 +1511,7 @@ export class TeamalignedRuntime extends EventEmitter {
               if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES) {
                 break;
               }
-              if (spokenIds.has(speaker.id)) {
+              if ((speakerMessageCounts.get(speaker.id) ?? 0) >= MAX_AGENT_MESSAGES_PER_TURN) {
                 continue;
               }
               const message = await generateNaturalTeamAgentMessage({
@@ -1390,7 +1542,7 @@ export class TeamalignedRuntime extends EventEmitter {
               if (!message) {
                 continue;
               }
-              spokenIds.add(speaker.id);
+              speakerMessageCounts.set(speaker.id, (speakerMessageCounts.get(speaker.id) ?? 0) + 1);
               turnMessages.push(message);
               roundMessages.push(message);
             this.storage.addMessage({
@@ -1413,12 +1565,15 @@ export class TeamalignedRuntime extends EventEmitter {
             });
           }
 
-            if (selection.mode !== "collaboration" || roundIndex >= MAX_TEAM_SUBROUNDS - 1) {
+            if (roundIndex >= MAX_TEAM_SUBROUNDS - 1) {
               break;
             }
             const nextIds = Array.from(new Set(roundMessages.flatMap((message) => message.mentions)))
-              .filter((id) => memberIds.has(id) && !spokenIds.has(id))
+              .filter((id) => memberIds.has(id) && (speakerMessageCounts.get(id) ?? 0) < MAX_AGENT_MESSAGES_PER_TURN)
               .slice(0, TEAM_MEMBER_LIMIT);
+            if (nextIds.length === 0) {
+              break;
+            }
             speakers = nextIds
               .map((id) => members.find((agent) => agent.id === id))
               .filter((agent): agent is AgentRecord => agent !== undefined);
@@ -1476,12 +1631,17 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: "更新群组记忆",
         execute: () => {
+          const activeSpeakers =
+            executionPlan?.workItems.map((item) => item.owner.name) ??
+            turnMessages.map((message) => message.speaker.name);
+          const finalLine =
+            executionPlan && turnMessages.length === 0
+              ? executionPlan.workItems.map((item) => item.summary).join("；")
+              : turnMessages.at(-1)?.content ?? "";
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
             "shared-memory.md",
-            `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${turnMessages
-              .map((message) => message.speaker.name)
-              .join("、") || "无"} | 结论：${trimHeadline(turnMessages.at(-1)?.content ?? "")}`,
+            `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${activeSpeakers.join("、") || "无"} | 结论：${trimHeadline(finalLine)}`,
           );
           this.addRunMessage(
             conversation.id,
@@ -1494,8 +1654,10 @@ export class TeamalignedRuntime extends EventEmitter {
             metadata: {
               ...(currentRun?.metadata ?? {}),
               memoryPath: sharedMemoryPath,
-              mode: selection?.mode,
-              speakerIds: turnMessages.map((message) => message.speaker.id),
+              mode: executionPlan ? "execution" : selection?.mode,
+              speakerIds:
+                executionPlan?.workItems.map((item) => item.owner.id) ??
+                turnMessages.map((message) => message.speaker.id),
             },
           });
         },

@@ -135,8 +135,8 @@
 - 每个群组最多 5 个 Agent
 - 每个用户消息开启一个 `team turn`
 - 每个 `team turn` 最多 2 个小轮
-- 每个 `team turn` 最多 8 条 Agent 消息
-- 同一个 Agent 在同一个 `team turn` 中最多发言一次
+- 每个 `team turn` 最多 15 条 Agent 消息
+- 同一个 Agent 在同一个 `team turn` 中最多发言 3 次
 
 ### Agent 之间通信
 
@@ -320,7 +320,7 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 - 群聊支持 Agent 公开互相 `@`
 - 群聊支持共享上下文摘要
 - 群聊默认由不可见 orchestrator 选择 1 到 5 个 Agent 自然发言
-- 群聊限制最多 5 个成员、2 个小轮、8 条 Agent 消息
+- 群聊限制最多 5 个成员、2 个小轮、15 条 Agent 消息
 
 ### 后续版本再做
 

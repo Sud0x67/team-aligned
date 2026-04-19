@@ -44,6 +44,7 @@
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)
 - [群组运行时设计](./docs/group-runtime-design.md)
+- [群聊执行模式](./docs/group-execution-mode.md)
 - [MCP Registry 设计](./docs/mcp-registry-design.md)
 - [原型对齐说明](./docs/prototype-spec.md)
 - [MVP 计划](./docs/mvp-plan.md)

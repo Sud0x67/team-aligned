@@ -19,8 +19,11 @@ import {
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
 export const TEAM_MEMBER_LIMIT = 5;
-export const MAX_TEAM_TURN_MESSAGES = 8;
+export const MAX_AGENT_MESSAGES_PER_TURN = 3;
+export const MAX_AGENT_WORK_ITEMS = 5;
+export const MAX_TEAM_TURN_MESSAGES = 15;
 export const MAX_TEAM_SUBROUNDS = 2;
+export const MAX_PARALLEL_TEAM_EXECUTIONS = 2;
 
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
 
@@ -40,6 +43,47 @@ export type NaturalTeamAgentMessage = {
   mentions: string[];
   roundIndex: number;
 };
+
+export type TeamExecutionWorkItem = {
+  id: string;
+  owner: AgentRecord;
+  summary: string;
+  kickoffMessage: string;
+  readTargets: string[];
+  writeTargets: string[];
+  dependsOnAgentIds: string[];
+  canRunInParallel: boolean;
+};
+
+export type TeamExecutionPlan = {
+  reason: string;
+  activeTask: string;
+  nextPhase: string;
+  decision: string;
+  workItems: TeamExecutionWorkItem[];
+};
+
+const executionPlanSchema = z.object({
+  shouldExecute: z.boolean().default(false),
+  reason: z.string().default(""),
+  activeTask: z.string().default(""),
+  nextPhase: z.string().default(""),
+  decision: z.string().default(""),
+  workItems: z
+    .array(
+      z.object({
+        ownerAgentId: z.string(),
+        summary: z.string().default(""),
+        kickoffMessage: z.string().default(""),
+        readTargets: z.array(z.string()).max(8).default([]),
+        writeTargets: z.array(z.string()).max(8).default([]),
+        dependsOnAgentIds: z.array(z.string()).max(5).default([]),
+        canRunInParallel: z.boolean().default(true),
+      }),
+    )
+    .max(TEAM_MEMBER_LIMIT * MAX_AGENT_WORK_ITEMS)
+    .default([]),
+});
 
 const naturalSelectionSchema = z.object({
   mode: z.enum(["focused", "multi_voice", "collaboration"]).default("focused"),
@@ -176,6 +220,23 @@ function extractMentionedAgentIds(content: string, members: AgentRecord[]) {
   return members
     .filter((agent) => names.includes(agent.name.toLowerCase()))
     .map((agent) => agent.id);
+}
+
+function normalizeTargetPath(value: string) {
+  return value.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
+}
+
+function pathOverlaps(left: string, right: string) {
+  const a = normalizeTargetPath(left);
+  const b = normalizeTargetPath(right);
+  if (!a || !b) return false;
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+function isExecutionIntent(userInput: string) {
+  return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建文件|新建文件|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update/.test(
+    userInput.toLowerCase(),
+  );
 }
 
 function createEphemeralWorker(input: {
@@ -348,6 +409,247 @@ export async function selectNaturalTeamSpeakers(input: {
       decision: "",
     } satisfies NaturalTeamSpeakerSelection;
   }
+}
+
+function buildFallbackExecutionPlan(input: {
+  members: AgentRecord[];
+  explicitMentionIds: string[];
+  userInput: string;
+}) {
+  const fallback = selectFallbackSpeakers(input);
+  const owners = fallback.speakers.slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
+  const workItems = owners.map((owner, index) => ({
+    id: `work-${index + 1}`,
+    owner,
+    summary: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分`,
+    kickoffMessage: index === 0 ? "我先开始处理这个部分。" : "我这边也同步处理一部分。",
+    readTargets: [],
+    writeTargets: [],
+    dependsOnAgentIds: [],
+    canRunInParallel: true,
+  }));
+
+  return {
+    reason: input.explicitMentionIds.length > 0 ? "用户明确要求相关 Agent 直接开始执行。" : "用户表达了明确的执行意图。",
+    activeTask: compact(input.userInput),
+    nextPhase: "执行中",
+    decision: "启动第一版群聊执行模式。",
+    workItems,
+  } satisfies TeamExecutionPlan;
+}
+
+export async function planTeamExecution(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  members: AgentRecord[];
+  profile: UserProfile;
+  context: TeamContext;
+  history: { senderName: string; visibility: string; content: string }[];
+  userInput: string;
+  explicitMentionIds: string[];
+  mcpServers: McpCatalogRecord[];
+}) {
+  const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
+  if (!isExecutionIntent(input.userInput)) {
+    return null;
+  }
+
+  const fallback = buildFallbackExecutionPlan({
+    members: cappedMembers,
+    explicitMentionIds: input.explicitMentionIds,
+    userInput: input.userInput,
+  });
+
+  try {
+    const model = createProviderModel(input.provider).withStructuredOutput(executionPlanSchema);
+    const result = executionPlanSchema.parse(
+      await model.invoke([
+        "你是 teamaligned 群聊中的不可见 system orchestrator。",
+        "你的任务是判断这条用户消息是否应该进入执行模式，并把任务拆成可执行 work items。",
+        "系统支持并行和串行执行，但必须避免文件冲突和无意义并行。",
+        `群组最多 ${TEAM_MEMBER_LIMIT} 个成员，同时最多 ${MAX_PARALLEL_TEAM_EXECUTIONS} 个 work item 并行执行。`,
+        "",
+        "执行模式规则：",
+        "- 只有明确要实现、修改、创建、修复、落地、写代码时才 shouldExecute=true",
+        "- work item 应尽量让不同角色处理不同文件或不同分工",
+        "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
+        "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
+        "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
+        `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
+        "",
+        "当前用户资料：",
+        `- 姓名：${input.profile.name}`,
+        `- 角色：${input.profile.role || "未设置"}`,
+        "",
+        "群组上下文：",
+        buildContextText(input.team, input.context),
+        "",
+        "Agent roster：",
+        buildNaturalRoster(cappedMembers),
+        "",
+        `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+        "",
+        "最近公开对话：",
+        buildRecentHistory(selectPublicHistory(input.history)),
+        "",
+        "用户最新输入：",
+        input.userInput,
+        "",
+        `用户显式提及的成员 id：${input.explicitMentionIds.join("、") || "无"}`,
+        "",
+        "输出要求：",
+        "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
+        "- ownerAgentId 必须来自 roster id",
+      ].join("\n")),
+    );
+
+    if (!result.shouldExecute || result.workItems.length === 0) {
+      return null;
+    }
+
+    const memberMap = new Map(cappedMembers.map((agent) => [agent.id, agent]));
+    const ownerCounts = new Map<string, number>();
+    const workItems: TeamExecutionWorkItem[] = [];
+    for (const [index, item] of result.workItems.entries()) {
+      const owner = memberMap.get(item.ownerAgentId);
+      if (!owner) continue;
+      const currentCount = ownerCounts.get(owner.id) ?? 0;
+      if (currentCount >= MAX_AGENT_WORK_ITEMS) continue;
+      ownerCounts.set(owner.id, currentCount + 1);
+      workItems.push({
+        id: `work-${index + 1}`,
+        owner,
+        summary: compact(item.summary) || `处理与 ${owner.role} 相关的部分`,
+        kickoffMessage: compact(item.kickoffMessage) || `我来处理和 ${owner.role} 相关的部分。`,
+        readTargets: item.readTargets.map(normalizeTargetPath).filter(Boolean),
+        writeTargets: item.writeTargets.map(normalizeTargetPath).filter(Boolean),
+        dependsOnAgentIds: item.dependsOnAgentIds.filter((id) => memberMap.has(id)),
+        canRunInParallel: item.canRunInParallel,
+      });
+    }
+
+    if (workItems.length === 0) {
+      return fallback;
+    }
+
+    return {
+      reason: compact(result.reason) || fallback.reason,
+      activeTask: compact(result.activeTask) || fallback.activeTask,
+      nextPhase: compact(result.nextPhase) || "执行中",
+      decision: compact(result.decision) || fallback.decision,
+      workItems,
+    } satisfies TeamExecutionPlan;
+  } catch {
+    return fallback;
+  }
+}
+
+function workItemsConflict(left: TeamExecutionWorkItem, right: TeamExecutionWorkItem) {
+  if (!left.canRunInParallel || !right.canRunInParallel) {
+    return true;
+  }
+  if (left.dependsOnAgentIds.includes(right.owner.id) || right.dependsOnAgentIds.includes(left.owner.id)) {
+    return true;
+  }
+  const leftWrites = left.writeTargets;
+  const rightWrites = right.writeTargets;
+  const leftReads = left.readTargets;
+  const rightReads = right.readTargets;
+
+  return (
+    leftWrites.some((target) => rightWrites.some((other) => pathOverlaps(target, other))) ||
+    leftWrites.some((target) => rightReads.some((other) => pathOverlaps(target, other))) ||
+    rightWrites.some((target) => leftReads.some((other) => pathOverlaps(target, other)))
+  );
+}
+
+export function buildExecutionBatches(workItems: TeamExecutionWorkItem[]) {
+  const pending = [...workItems];
+  const batches: TeamExecutionWorkItem[][] = [];
+
+  while (pending.length > 0) {
+    const batch: TeamExecutionWorkItem[] = [];
+    const nextPending: TeamExecutionWorkItem[] = [];
+
+    for (const item of pending) {
+      const completedOwners = new Set(batches.flatMap((batch) => batch.map((workItem) => workItem.owner.id)));
+      const depsSatisfied = item.dependsOnAgentIds.every((id) => completedOwners.has(id));
+      const conflicts = batch.some((existing) => workItemsConflict(existing, item));
+      if (depsSatisfied && !conflicts && batch.length < MAX_PARALLEL_TEAM_EXECUTIONS) {
+        batch.push(item);
+      } else {
+        nextPending.push(item);
+      }
+    }
+
+    if (batch.length === 0) {
+      batch.push(nextPending.shift()!);
+    }
+    batches.push(batch);
+    pending.splice(0, pending.length, ...nextPending);
+  }
+
+  return batches;
+}
+
+export async function executeNaturalTeamWorkItem(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  workItem: TeamExecutionWorkItem;
+  members: AgentRecord[];
+  profile: UserProfile;
+  context: TeamContext;
+  userInput: string;
+  workspacePath: string;
+  conversationId: string;
+  runId: string;
+  previousOutputs: string[];
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  additionalTools?: StructuredToolInterface[];
+}) {
+  const systemPrompt = [
+    `你是 ${input.team.name} 群聊中的成员 ${input.workItem.owner.name}。`,
+    `你的角色：${input.workItem.owner.role}。`,
+    `你的能力：${input.workItem.owner.capabilities.join("、") || "未设置"}。`,
+    "当前已经进入执行模式，请真正完成分配给你的工作，而不是只讨论。",
+    "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
+    "请只在当前 workspace 内工作。",
+    "如果任务无法执行，请明确说明阻塞原因。",
+    "",
+    "本次 work item：",
+    `- 摘要：${input.workItem.summary}`,
+    `- 读取范围：${input.workItem.readTargets.join("、") || "未指定"}`,
+    `- 写入范围：${input.workItem.writeTargets.join("、") || "未指定"}`,
+    `- 并行：${input.workItem.canRunInParallel ? "可并行" : "需要串行"}`,
+    "",
+    "群组上下文：",
+    buildContextText(input.team, input.context),
+    "",
+    "本轮其他执行结果：",
+    input.previousOutputs.length > 0 ? input.previousOutputs.join("\n\n") : "暂无",
+  ].join("\n");
+
+  const message = [
+    `用户原始请求：${input.userInput}`,
+    `你需要执行的任务：${input.workItem.summary}`,
+    "请直接执行，并在完成后用自然群聊口吻汇报：做了什么、结果是什么、如果改了文件请简要提及。",
+  ].join("\n");
+
+  return invokeWorkerText({
+    name: input.workItem.owner.name,
+    provider: input.provider,
+    workspacePath: input.workspacePath,
+    systemPrompt,
+    message,
+    threadId: `${input.conversationId}:${input.runId}:${input.workItem.owner.id}:execution`,
+    memoryPaths: ["/memory/MEMORY.md"],
+    mcpServers: input.mcpServers,
+    mcpConnections: input.mcpConnections,
+    onMcpInvocation: input.onMcpInvocation,
+    additionalTools: input.additionalTools,
+  });
 }
 
 export async function generateNaturalTeamAgentMessage(input: {

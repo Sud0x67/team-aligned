@@ -254,7 +254,7 @@ TeamalignedRuntime
 4. 如果用户 `@Agent`，被点名 Agent 优先发言
 5. 如果没有 `@`，系统根据语义选择 1 到 5 个相关 Agent
 6. 被选中的 Agent 像真实群成员一样在主线程自然发言
-7. collaboration 模式下，Agent 可以互相 `@`，但最多 2 个小轮、最多 8 条 Agent 消息
+7. collaboration 模式下，Agent 可以互相 `@`，但最多 2 个小轮、最多 15 条 Agent 消息
 
 ### 群聊发言控制
 
