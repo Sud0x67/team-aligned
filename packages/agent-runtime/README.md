@@ -5,12 +5,13 @@
 当前已实现：
 
 - 会话 snapshot 组装
-- `/skills`、`/command`、`/mcp`
+- `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - run 启动、取消与状态同步
 - 单 Agent run 与 Team 群组 run 编排
 - 群聊上下文同步与内部消息
 - DeepAgents / LangChain / LangGraph 单聊调用链
 - Skills registry、安装、激活与脚本执行
+- 自定义 Prompt Alias 的保存、展开与本轮注入
 - MCP registry、配置、健康检查与 tool discovery
 - 本地文件、搜索、命令工具层
 - 本地文件持久化与 SQLite / Drizzle

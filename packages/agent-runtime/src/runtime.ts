@@ -14,13 +14,16 @@ import type {
   McpCatalogRecord,
   MessageVisibility,
   NotificationRecord,
+  PromptAliasRecord,
   ProviderConnectionTestInput,
   ProviderConfig,
   RunControlPayload,
+  SavePromptAliasInput,
   SaveAttachmentAssetInput,
   RunRecord,
   RunStatus,
   SendInputPayload,
+  SkillCatalogRecord,
   TeamContext,
   TeamRecord,
   UpdateAgentInput,
@@ -76,6 +79,12 @@ type ActiveRunController = {
 
 type SystemNotificationChannel = "agent_message" | "mention" | "group_message" | null;
 
+type SlashDirectiveContext = {
+  cleanedInput: string;
+  skill: SkillCatalogRecord | null;
+  promptAlias: PromptAliasRecord | null;
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -123,6 +132,21 @@ function buildRuntimePrompt(input: string, attachments: AttachmentAssetRecord[])
 
   const body = trimmed || "我上传了一些附件，请结合附件内容帮助我。";
   return `${body}\n\n附件列表：\n${attachmentLines}`;
+}
+
+function extractSlashAliases(input: string) {
+  const aliases = new Set<string>();
+  for (const match of input.matchAll(/(?:^|\s)\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,47})(?=\s|$|[，。,.!?;；:：])/g)) {
+    aliases.add(match[1].toLowerCase());
+  }
+  return Array.from(aliases).slice(0, 3);
+}
+
+function stripSlashAlias(input: string, alias: string) {
+  return input
+    .replace(new RegExp(`(^|\\s)\\/${alias}(?=\\s|$|[，。,.!?;；:：])`, "i"), "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getMcpConfiguredHint(server: McpCatalogRecord) {
@@ -258,6 +282,8 @@ export class TeamalignedRuntime extends EventEmitter {
       return this.getSnapshot();
     }
 
+    const slashDirectives = this.resolveSlashDirectives(conversation, payload.input);
+
     this.storage.addMessage({
       conversationId: payload.conversationId,
       senderId: "user",
@@ -268,16 +294,28 @@ export class TeamalignedRuntime extends EventEmitter {
       content: buildUserMessageContent(payload.input, attachments),
       mentions: extractAgentMentions(payload.input, snapshot.agents).map((agent) => agent.id),
       runId: null,
-      metadata: attachments.length > 0 ? { attachments } : null,
+      metadata: {
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(slashDirectives.skill
+          ? { temporarySkill: slashDirectives.skill.id, temporarySkillSlug: slashDirectives.skill.slug }
+          : {}),
+        ...(slashDirectives.promptAlias
+          ? { promptAlias: slashDirectives.promptAlias.id, promptAliasName: slashDirectives.promptAlias.alias }
+          : {}),
+      },
       createdAt: Date.now(),
     });
 
-    const runtimeInput = buildRuntimePrompt(payload.input, attachments);
+    const runtimeInput = this.buildSlashEnhancedRuntimeInput(
+      conversation,
+      buildRuntimePrompt(slashDirectives.cleanedInput, attachments),
+      slashDirectives,
+    );
 
     if (conversation.kind === "agent") {
-      await this.startAgentRun(conversation, runtimeInput);
+      await this.startAgentRun(conversation, runtimeInput, slashDirectives);
     } else {
-      await this.startTeamRun(conversation, runtimeInput);
+      await this.startTeamRun(conversation, runtimeInput, slashDirectives);
     }
 
     this.emitSnapshot();
@@ -442,6 +480,33 @@ export class TeamalignedRuntime extends EventEmitter {
       type: "extension",
       title: "Skill 已移除",
       body: `${skill.displayName || skill.name} 已从全局目录移除。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async savePromptAlias(payload: SavePromptAliasInput) {
+    const promptAlias = this.storage.savePromptAlias(payload);
+    this.createAppNotification({
+      type: "extension",
+      title: "Prompt 已保存",
+      body: `/${promptAlias.alias} 已可在聊天中使用。`,
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async removePromptAlias(promptAliasId: string) {
+    const existing = this.storage.listPromptAliases().find((item) => item.id === promptAliasId);
+    this.storage.removePromptAlias(promptAliasId);
+    this.createAppNotification({
+      type: "extension",
+      title: "Prompt 已移除",
+      body: existing ? `/${existing.alias} 已从自定义命令中移除。` : "自定义 Prompt 已移除。",
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -716,22 +781,108 @@ export class TeamalignedRuntime extends EventEmitter {
       .filter((connection) => serverIds.has(connection.serverId) && connection.enabled && connection.status === "connected");
   }
 
+  private getAvailableSkillsForConversation(conversation: ConversationRecord) {
+    const installedSkills = this.storage.listSkillCatalog().filter((skill) => skill.installed);
+    if (conversation.kind === "team") {
+      return installedSkills;
+    }
+
+    const agent = this.storage.getAgent(conversation.targetId);
+    if (!agent) {
+      return installedSkills;
+    }
+
+    return installedSkills.filter((skill) => agent.skillWhitelist.includes(skill.id));
+  }
+
+  private resolveSlashDirectives(conversation: ConversationRecord, input: string): SlashDirectiveContext {
+    const aliases = extractSlashAliases(input).filter((alias) => !["skills", "mcp"].includes(alias));
+    const availableSkills = this.getAvailableSkillsForConversation(conversation);
+    const promptAliases = this.storage.listPromptAliases().filter((item) => item.enabled);
+    let cleanedInput = input.trim();
+    let skill: SkillCatalogRecord | null = null;
+    let promptAlias: PromptAliasRecord | null = null;
+
+    for (const alias of aliases) {
+      if (!skill) {
+        const match = availableSkills.find(
+          (item) =>
+            item.id.toLowerCase() === alias ||
+            item.slug.toLowerCase() === alias ||
+            item.name.toLowerCase() === alias ||
+            item.displayName.toLowerCase() === alias,
+        );
+        if (match) {
+          skill = match;
+          cleanedInput = stripSlashAlias(cleanedInput, alias);
+          continue;
+        }
+      }
+
+      if (!promptAlias) {
+        const match = promptAliases.find((item) => item.alias === alias);
+        if (match) {
+          promptAlias = match;
+          cleanedInput = stripSlashAlias(cleanedInput, alias);
+        }
+      }
+    }
+
+    return {
+      cleanedInput: cleanedInput.trim() || (skill || promptAlias ? "" : input.trim()),
+      skill,
+      promptAlias,
+    };
+  }
+
+  private buildSlashEnhancedRuntimeInput(
+    conversation: ConversationRecord,
+    baseInput: string,
+    context: SlashDirectiveContext,
+  ) {
+    const snapshot = this.storage.getSnapshot();
+    const workspacePath = this.getWorkspaceForConversation(conversation, snapshot.agents, snapshot.teams);
+    const target =
+      conversation.kind === "agent"
+        ? snapshot.agents.find((agent) => agent.id === conversation.targetId)
+        : snapshot.teams.find((team) => team.id === conversation.targetId);
+    const inputForTemplate = baseInput.trim() || "用户没有补充额外内容，请主动询问需要处理的内容。";
+    let resolved = inputForTemplate;
+
+    if (context.promptAlias) {
+      const replacements: Record<string, string> = {
+        "{{input}}": inputForTemplate,
+        "{{conversationTitle}}": conversation.title,
+        "{{agentName}}": target?.name ?? conversation.title,
+        "{{workspacePath}}": workspacePath,
+        "$ARGUMENTS": inputForTemplate,
+      };
+      const template = context.promptAlias.prompt;
+      const hasPlaceholder = Object.keys(replacements).some((key) => template.includes(key));
+      resolved = Object.entries(replacements).reduce(
+        (current, [key, value]) => current.split(key).join(value),
+        template,
+      );
+      if (!hasPlaceholder) {
+        resolved = `${resolved.trim()}\n\n用户输入：\n${inputForTemplate}`;
+      }
+    }
+
+    if (context.skill) {
+      const skillLabel = context.skill.displayName || context.skill.name;
+      resolved = `本轮消息临时使用 Skill：${skillLabel}（/${context.skill.slug}）。\n\n${resolved}`;
+    }
+
+    return resolved;
+  }
+
   private async handleSlashCommand(
     conversation: ConversationRecord,
     commandName: string,
     args: string[],
   ) {
     if (commandName === "skills") {
-      const agents = this.storage.listAgents();
-      const availableSkills =
-        conversation.kind === "agent"
-          ? (() => {
-              const agent = agents.find((item) => item.id === conversation.targetId);
-              return this.storage
-                .listSkillCatalog()
-                .filter((skill) => skill.installed && (!!agent ? agent.skillWhitelist.includes(skill.id) : true));
-            })()
-          : this.storage.listSkillCatalog().filter((skill) => skill.installed);
+      const availableSkills = this.getAvailableSkillsForConversation(conversation);
       const currentMeta = conversation.meta;
       const currentSkillLabel =
         (currentMeta.activeSkill
@@ -881,23 +1032,13 @@ export class TeamalignedRuntime extends EventEmitter {
       });
       return;
     }
-
-    if (commandName === "command") {
-      const shellCommand = args.join(" ").trim();
-      if (!shellCommand) {
-        this.addSlashFeedbackMessage(conversation, {
-          title: "命令用法",
-          body: "用法：/command <你要执行的命令>",
-          tone: "warning",
-        });
-        return;
-      }
-      await this.startShellCommandRun(conversation, shellCommand);
-      return;
-    }
   }
 
-  private async startAgentRun(conversation: ConversationRecord, input: string) {
+  private async startAgentRun(
+    conversation: ConversationRecord,
+    input: string,
+    slashContext: SlashDirectiveContext,
+  ) {
     const snapshot = this.storage.getSnapshot();
     const agent = snapshot.agents.find((item) => item.id === conversation.targetId);
     if (!agent) return;
@@ -910,10 +1051,10 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const workspacePath = agent.workspacePath;
     const runId = `run-${nanoid(8)}`;
-    const activeSkill = conversation.meta.activeSkill;
+    const activeSkill = slashContext.skill?.id ?? conversation.meta.activeSkill;
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
-    const activeSkillRecord = activeSkill ? this.storage.findSkillCatalogEntryByNameOrId(activeSkill) : null;
+    const activeSkillRecord = slashContext.skill ?? (activeSkill ? this.storage.findSkillCatalogEntryByNameOrId(activeSkill) : null);
     const activeSkillLabel = activeSkillRecord?.displayName || activeSkillRecord?.name || activeSkill;
     const activeSkillDefinition =
       activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id)
@@ -1113,7 +1254,11 @@ export class TeamalignedRuntime extends EventEmitter {
     });
   }
 
-  private async startTeamRun(conversation: ConversationRecord, input: string) {
+  private async startTeamRun(
+    conversation: ConversationRecord,
+    input: string,
+    _slashContext: SlashDirectiveContext,
+  ) {
     const snapshot = this.storage.getSnapshot();
     const team = snapshot.teams.find((item) => item.id === conversation.targetId);
     if (!team) return;

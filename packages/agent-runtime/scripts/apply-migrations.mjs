@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 const packageRoot = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const migrationsDir = join(packageRoot, "drizzle");
-const dbPath = process.env.TEAMALIGNED_DB_PATH ?? join(homedir(), "teamaligned", "app.db");
+const dbPath = process.env.TEAMALIGNED_DB_PATH ?? join(homedir(), ".teamaligned", "app.db");
 
 mkdirSync(dirname(dbPath), { recursive: true });
 const db = new DatabaseSync(dbPath);

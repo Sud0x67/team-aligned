@@ -23,7 +23,7 @@
 - 主页面路由骨架
 - 左侧导航、顶部栏、通知入口、头像入口
 - 单聊与群聊聊天页
-- `/skills`、`/command`、`/mcp`
+- `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 管理页、扩展页、设置页、仪表盘首版
 - 头像上传、主题切换、语言切换
 - 本地 SQLite、JSONL transcript、workspace 目录落盘
@@ -38,7 +38,7 @@
 
 - 接入真实 OpenAI / Qwen 请求链路
 - 建立正式 Provider Registry
-- 把 `/skills`、`/command`、`/mcp` 接到真实执行链
+- 把 slash 命令接到真实执行链
 - 用 DeepAgents / LangGraph 替换当前 mock runtime
 - 让群组中的 manager / specialist 协作进入真实调度
 

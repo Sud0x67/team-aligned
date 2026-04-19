@@ -69,7 +69,7 @@
 - 单 Agent 私聊与 Team 群聊
 - 单 Agent 私聊已接入真实 Qwen / OpenAI 模型调用
 - Team 群聊已接入真实 manager / specialist 模型协作链路
-- `/skills`、`/command`、`/mcp`
+- `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 群聊中的共享上下文、内部消息与 Agent `@` 协作
 - 本地 run 状态机与取消控制
 - 本地 SQLite 持久化、JSONL transcript 与 workspace 产物落盘
@@ -80,6 +80,7 @@
 - Agent、群组、个人资料头像上传与本地保存
 - 扩展中心、管理页、设置页的 Figma 对齐首版
 - Skills registry 同步、全局安装与 Agent Skill 白名单
+- 自定义 Prompt Alias，可在扩展页创建并通过 `/别名` 调用
 - MCP registry 同步、本地连接配置、健康检查、Agent/Team 白名单和 `/mcp use/tools`
 - MCP tool calls 已接入 runtime 审计落盘
 
@@ -98,7 +99,7 @@
 - 数据层已经有正式的 `attachments / artifacts / tool_invocations / run_steps` 表、`messages / conversations / runs / agents / teams / providers / notifications` 的结构化列与索引，并补上了 Drizzle migration。
 - 设置页现在支持 provider 参数校验、连通性测试和错误提示。
 - 单聊回复已经优先按流式方式更新到消息线程；聊天输入支持 `/` 自动补全、`@` 成员选择、命令结果卡片和图片附件预览。
-- slash 命令结果现在会直接以聊天消息形式展示，任务取消通过输入区与运行详情按钮完成。
+- slash 命令现在聚焦上下文快捷调用：内置 `/skills`、`/mcp`，以及一次性 Skill / Prompt Alias 调用。
 - 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 

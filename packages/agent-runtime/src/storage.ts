@@ -37,8 +37,10 @@ import type {
   McpConnectionRecord,
   MessageRecord,
   NotificationRecord,
+  PromptAliasRecord,
   ProviderConfig,
   RunRecord,
+  SavePromptAliasInput,
   RunStepRecord,
   SkillCatalogRecord,
   TeamContext,
@@ -66,6 +68,7 @@ type PersistedState = {
   runSteps: StoredRunStepRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
+  promptAliases: PromptAliasRecord[];
   skillCatalog: SkillCatalogRecord[];
   mcpCatalog: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
@@ -114,6 +117,11 @@ function now() {
 
 function sqliteNullable<T>(value: T | null | undefined) {
   return value ?? null;
+}
+
+function normalizePromptAlias(value: string) {
+  const normalized = value.trim().replace(/^\/+/, "").toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,47}$/.test(normalized) ? normalized : "";
 }
 
 const agentPalette = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#3b82f6"];
@@ -215,6 +223,7 @@ export class AppStorage {
       ),
       notifications: this.listNotifications(),
       extensions: this.listExtensions(),
+      promptAliases: this.listPromptAliases(),
       skillCatalog: this.listSkillCatalog(),
       mcpCatalog: this.listMcpCatalog(),
       mcpConnections: this.listMcpConnections(),
@@ -695,6 +704,64 @@ export class AppStorage {
     return [...this.state.extensions].sort((a, b) => a.name.localeCompare(b.name, "en"));
   }
 
+  listPromptAliases(): PromptAliasRecord[] {
+    return [...this.state.promptAliases].sort((a, b) => a.alias.localeCompare(b.alias, "en"));
+  }
+
+  savePromptAlias(input: SavePromptAliasInput) {
+    const alias = normalizePromptAlias(input.alias);
+    if (!alias) {
+      throw new Error("Prompt 别名不能为空，只能包含字母、数字、中划线和下划线。");
+    }
+    if (["skills", "mcp"].includes(alias)) {
+      throw new Error(`/${alias} 是内置命令，不能作为自定义 Prompt 别名。`);
+    }
+    const existingSkill = this.findSkillCatalogEntryByNameOrId(alias);
+    if (existingSkill) {
+      throw new Error(`/${alias} 已经被 Skill 使用，请换一个别名。`);
+    }
+    const duplicated = this.state.promptAliases.find(
+      (item) => item.alias === alias && item.id !== input.id,
+    );
+    if (duplicated) {
+      throw new Error(`/${alias} 已经存在，请换一个别名。`);
+    }
+
+    const timestamp = now();
+    const existing = input.id
+      ? this.state.promptAliases.find((item) => item.id === input.id)
+      : null;
+    const record: PromptAliasRecord = {
+      id: existing?.id ?? `prompt-${nanoid(8)}`,
+      name: input.name.trim() || alias,
+      alias,
+      description: input.description.trim(),
+      prompt: input.prompt.trim(),
+      enabled: input.enabled,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+
+    if (!record.prompt) {
+      throw new Error("Prompt 内容不能为空。");
+    }
+
+    if (existing) {
+      this.state.promptAliases = this.state.promptAliases.map((item) =>
+        item.id === existing.id ? record : item,
+      );
+    } else {
+      this.state.promptAliases.push(record);
+    }
+    this.persist();
+    return record;
+  }
+
+  removePromptAlias(promptAliasId: string) {
+    this.state.promptAliases = this.state.promptAliases.filter((item) => item.id !== promptAliasId);
+    this.persist();
+  }
+
   listSkillCatalog(): SkillCatalogRecord[] {
     return [...this.state.skillCatalog].sort((a, b) =>
       (a.displayName || a.name).localeCompare(b.displayName || b.name, "zh-Hans-CN"),
@@ -959,6 +1026,13 @@ export class AppStorage {
         id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS prompt_aliases (
+        id TEXT PRIMARY KEY,
+        alias TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1 NOT NULL,
+        updated_at INTEGER NOT NULL,
+        payload TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS skill_catalog (
         id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
@@ -1090,6 +1164,8 @@ export class AppStorage {
       CREATE INDEX IF NOT EXISTS idx_notifications_read_created_at ON notifications(read, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_notifications_related_run ON notifications(related_run_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_notifications_related_conversation ON notifications(related_conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_prompt_aliases_alias ON prompt_aliases(alias);
+      CREATE INDEX IF NOT EXISTS idx_prompt_aliases_enabled ON prompt_aliases(enabled, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conversations_last_activity_at ON conversations(last_activity_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conversations_target ON conversations(kind, target_id);
       CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at ASC);
@@ -1119,6 +1195,7 @@ export class AppStorage {
       "runs",
       "notifications",
       "extensions",
+      "prompt_aliases",
       "skill_catalog",
       "mcp_catalog",
       "mcp_connections",
@@ -1161,6 +1238,9 @@ export class AppStorage {
       "INSERT INTO notifications (id, type, title, body, read, created_at, related_conversation_id, related_run_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertExtension = this.db.prepare("INSERT INTO extensions (id, payload) VALUES (?, ?)");
+    const insertPromptAlias = this.db.prepare(
+      "INSERT INTO prompt_aliases (id, alias, enabled, updated_at, payload) VALUES (?, ?, ?, ?, ?)",
+    );
     const insertSkillCatalog = this.db.prepare("INSERT INTO skill_catalog (id, payload) VALUES (?, ?)");
     const insertMcpCatalog = this.db.prepare("INSERT INTO mcp_catalog (id, payload) VALUES (?, ?)");
     const insertMcpConnection = this.db.prepare(
@@ -1191,6 +1271,7 @@ export class AppStorage {
         DELETE FROM runs;
         DELETE FROM notifications;
         DELETE FROM extensions;
+        DELETE FROM prompt_aliases;
         DELETE FROM skill_catalog;
         DELETE FROM mcp_catalog;
         DELETE FROM mcp_connections;
@@ -1307,6 +1388,15 @@ export class AppStorage {
       }
       for (const extension of this.state.extensions) {
         insertExtension.run(extension.id, JSON.stringify(extension));
+      }
+      for (const promptAlias of this.state.promptAliases) {
+        insertPromptAlias.run(
+          promptAlias.id,
+          promptAlias.alias,
+          promptAlias.enabled ? 1 : 0,
+          promptAlias.updatedAt,
+          JSON.stringify(promptAlias),
+        );
       }
       for (const skill of this.state.skillCatalog) {
         insertSkillCatalog.run(skill.id, JSON.stringify(skill));
@@ -1436,6 +1526,10 @@ export class AppStorage {
       ),
       notifications: this.readNotifications(),
       extensions: this.readCollection<ExtensionRecord>("extensions"),
+      promptAliases: this.readCollection<PromptAliasRecord>(
+        "prompt_aliases",
+        "ORDER BY alias ASC",
+      ),
       skillCatalog: skillCatalog.length > 0 ? skillCatalog : defaultSkillCatalog,
       mcpCatalog: mcpCatalog.length > 0 ? mcpCatalog : defaultMcpCatalog,
       mcpConnections: this.readCollection<McpConnectionRecord>("mcp_connections"),
@@ -1476,6 +1570,7 @@ export class AppStorage {
       artifacts: [],
       toolInvocations: [],
       runSteps: [],
+      promptAliases: legacy.promptAliases ?? [],
       skillCatalog: legacy.skillCatalog ?? defaultSkillCatalog,
       mcpCatalog: (legacy as Partial<PersistedState>).mcpCatalog ?? defaultMcpCatalog,
       mcpConnections: (legacy as Partial<PersistedState>).mcpConnections ?? [],
@@ -1951,6 +2046,7 @@ export class AppStorage {
       runSteps: [],
       notifications: [],
       extensions: [],
+      promptAliases: [],
       skillCatalog: [],
       mcpCatalog: [],
       mcpConnections: [],

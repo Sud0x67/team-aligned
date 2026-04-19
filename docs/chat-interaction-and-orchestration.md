@@ -29,14 +29,22 @@
 第一版正式支持以下命令：
 
 - `/skills`
-- `/command`
 - `/mcp`
+- `/<skill-id>`
+- `/<prompt-alias>`
+
+其中：
+
+- `/skills` 和 `/mcp` 是内置管理命令，只在消息开头生效。
+- `/<skill-id>` 是一次性 Skill 调用，不会永久切换会话 Skill。
+- `/<prompt-alias>` 是用户在扩展页创建的自定义 Prompt 快捷方式。
+- Skill 和 Prompt Alias 支持在文中使用，例如“帮我用 /prd 整理一下”。
 
 ### 当前输入框策略
 
 当前 UI 已确定采用“极简输入区”：
 
-- 不在输入框上方常驻展示 `/skills /command /mcp` 快捷 chips
+- 不在输入框上方常驻展示 `/skills /mcp` 快捷 chips
 - 用户通过直接输入 slash command 触发命令
 - 单聊输入区保留表情、附件和发送 / 取消按钮
 - 群聊输入区保留 `@`、表情、附件和发送 / 取消按钮
@@ -48,6 +56,7 @@
 - 用户输入 `/` 时会弹出命令建议
 - 输入框支持 `@` 成员选择
 - `/skills` 与 `/mcp` 已接入真实本地状态
+- `/<skill-id>` 与 `/<prompt-alias>` 已接入本轮运行时上下文
 - 附件已支持上传与图片预览
 - slash 结果会直接以聊天消息形式展示
 
@@ -332,7 +341,7 @@ Agent 间通信分为两种：
 
 ### MVP 必做
 
-- 单聊支持 `/skills`、`/command`、`/mcp`
+- 单聊支持 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 单聊支持 run 暂停 / 恢复 / 取消
 - 群聊支持用户 `@agent`
 - 群聊支持 Agent 公开互相 `@`

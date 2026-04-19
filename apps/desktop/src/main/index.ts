@@ -12,6 +12,7 @@ import type {
   NotificationRecord,
   RunControlPayload,
   SaveAttachmentAssetInput,
+  SavePromptAliasInput,
   SendInputPayload,
   ProviderConnectionTestInput,
   UpdateAgentInput,
@@ -288,6 +289,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:remove-skill", async (_event, skillId: string) =>
     runtime?.removeSkill(skillId),
+  );
+  ipcMain.handle("teamaligned:save-prompt-alias", async (_event, payload: SavePromptAliasInput) =>
+    runtime?.savePromptAlias(payload),
+  );
+  ipcMain.handle("teamaligned:remove-prompt-alias", async (_event, promptAliasId: string) =>
+    runtime?.removePromptAlias(promptAliasId),
   );
   ipcMain.handle("teamaligned:refresh-mcp-catalog", async () => runtime?.refreshMcpCatalog());
   ipcMain.handle("teamaligned:connect-mcp", async (_event, payload: ConnectMcpInput) =>

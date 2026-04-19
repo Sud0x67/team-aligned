@@ -8,6 +8,7 @@ import type {
   ProviderConnectionTestInput,
   ProviderConnectionTestResult,
   RunControlPayload,
+  SavePromptAliasInput,
   SendInputPayload,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
@@ -31,6 +32,8 @@ type AppStore = AppSnapshot & {
   refreshSkillCatalog: () => Promise<void>;
   installSkill: (skillId: string) => Promise<void>;
   removeSkill: (skillId: string) => Promise<void>;
+  savePromptAlias: (payload: SavePromptAliasInput) => Promise<void>;
+  removePromptAlias: (promptAliasId: string) => Promise<void>;
   refreshMcpCatalog: () => Promise<void>;
   connectMcp: (payload: ConnectMcpInput) => Promise<void>;
   checkMcpHealth: (serverId: string) => Promise<void>;
@@ -78,6 +81,7 @@ const emptySnapshot: AppSnapshot = {
   runSteps: [],
   notifications: [],
   extensions: [],
+  promptAliases: [],
   skillCatalog: [],
   mcpCatalog: [],
   mcpConnections: [],
@@ -137,6 +141,10 @@ export const useAppStore = create<AppStore>((set) => {
       }
       await runLoadingSnapshotAction(() => window.teamaligned.removeSkill(skillId));
     },
+    savePromptAlias: async (payload) =>
+      runLoadingSnapshotAction(() => window.teamaligned.savePromptAlias(payload)),
+    removePromptAlias: async (promptAliasId) =>
+      runLoadingSnapshotAction(() => window.teamaligned.removePromptAlias(promptAliasId)),
     refreshMcpCatalog: async () =>
       runLoadingSnapshotAction(() => window.teamaligned.refreshMcpCatalog()),
     connectMcp: async (payload) =>

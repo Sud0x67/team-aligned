@@ -249,6 +249,17 @@ export interface ExtensionRecord {
   metadata: Record<string, unknown> | null;
 }
 
+export interface PromptAliasRecord {
+  id: string;
+  name: string;
+  alias: string;
+  description: string;
+  prompt: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface SkillCatalogRecord {
   id: string;
   slug: string;
@@ -351,6 +362,7 @@ export interface AppSnapshot {
   runSteps: RunStepRecord[];
   notifications: NotificationRecord[];
   extensions: ExtensionRecord[];
+  promptAliases: PromptAliasRecord[];
   skillCatalog: SkillCatalogRecord[];
   mcpCatalog: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
@@ -359,7 +371,7 @@ export interface AppSnapshot {
 
 export interface SlashCommand {
   raw: string;
-  name: "skills" | "command" | "mcp";
+  name: "skills" | "mcp";
   args: string[];
 }
 
@@ -425,6 +437,15 @@ export interface UpdateTeamMcpsInput {
   serverIds: string[];
 }
 
+export interface SavePromptAliasInput {
+  id?: string;
+  name: string;
+  alias: string;
+  description: string;
+  prompt: string;
+  enabled: boolean;
+}
+
 export interface ConnectMcpInput {
   serverId: string;
   command?: string | null;
@@ -458,6 +479,8 @@ export interface TeamalignedApi {
   refreshSkillCatalog: () => Promise<AppSnapshot>;
   installSkill: (skillId: string) => Promise<AppSnapshot>;
   removeSkill: (skillId: string) => Promise<AppSnapshot>;
+  savePromptAlias: (payload: SavePromptAliasInput) => Promise<AppSnapshot>;
+  removePromptAlias: (promptAliasId: string) => Promise<AppSnapshot>;
   refreshMcpCatalog: () => Promise<AppSnapshot>;
   connectMcp: (payload: ConnectMcpInput) => Promise<AppSnapshot>;
   checkMcpHealth: (serverId: string) => Promise<AppSnapshot>;

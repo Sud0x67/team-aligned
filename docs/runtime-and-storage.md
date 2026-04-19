@@ -191,6 +191,7 @@ SQLite 用于承担结构化实体、索引与统计能力。
 - `tool_invocations`
 - `run_steps`
 - `notifications`
+- `prompt_aliases`
 - `skill_catalog`
 - `mcp_catalog`
 - `mcp_connections`
@@ -214,6 +215,8 @@ SQLite 用于承担结构化实体、索引与统计能力。
   也已经具备首版结构化字段列和索引，方便管理页、设置页和通知中心做稳定查询
 - `attachments / artifacts / tool_invocations / run_steps`
   已经进入正式结构化表，后续可直接支撑 run 详情、审计和导出
+- `prompt_aliases`
+  保存用户在扩展页创建的自定义 Prompt 快捷方式，可通过 `/别名` 在聊天中调用
 
 目前 `runs` 的结构化 metadata 已经会补充这些关联信息：
 

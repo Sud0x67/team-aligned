@@ -24,8 +24,10 @@ export function ChatPage() {
     runSteps,
     agents,
     teams,
+    promptAliases,
     skillCatalog,
     mcpCatalog,
+    commandSuggestions,
     sendInput,
     controlRun,
     markConversationRead,
@@ -199,6 +201,38 @@ export function ChatPage() {
     if (!skill) return activeSkillId;
     return settings.language === "zh" ? skill.displayName || skill.name : skill.name;
   }, [activeConversation?.meta.activeSkill, settings.language, skillCatalog]);
+
+  const availableSlashSuggestions = useMemo(() => {
+    if (!activeConversation) return commandSuggestions;
+    const installedSkills = skillCatalog.filter((skill) => skill.installed);
+    const availableSkills =
+      activeConversation.kind === "agent"
+        ? (() => {
+            const agent = agents.find((item) => item.id === activeConversation.targetId);
+            return agent
+              ? installedSkills.filter((skill) => agent.skillWhitelist.includes(skill.id))
+              : installedSkills;
+          })()
+        : installedSkills;
+
+    const skillSuggestions = availableSkills.map((skill) => ({
+      name: `/${skill.slug}`,
+      description:
+        settings.language === "zh"
+          ? `临时使用 Skill：${skill.displayName || skill.name}`
+          : `Use skill once: ${skill.name}`,
+      kind: "skill" as const,
+    }));
+    const promptSuggestions = promptAliases
+      .filter((prompt) => prompt.enabled)
+      .map((prompt) => ({
+        name: `/${prompt.alias}`,
+        description: prompt.description || prompt.name,
+        kind: "prompt" as const,
+      }));
+
+    return [...commandSuggestions, ...skillSuggestions, ...promptSuggestions];
+  }, [activeConversation, agents, commandSuggestions, promptAliases, settings.language, skillCatalog]);
 
   const pinnedMcpLabel = useMemo(() => {
     const pinnedMcpId = activeConversation?.meta.pinnedMcp;
@@ -389,6 +423,7 @@ export function ChatPage() {
                 conversationId={activeConversation.id}
                 onSend={handleSend}
                 mentionCandidates={mentionCandidates}
+                slashSuggestions={availableSlashSuggestions}
                 busy={isConversationBusy}
                 onCancel={handleCancel}
               />

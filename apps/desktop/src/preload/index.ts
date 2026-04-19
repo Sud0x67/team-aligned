@@ -9,6 +9,7 @@ import type {
   RunControlPayload,
   SaveAttachmentAssetInput,
   SaveAvatarAssetInput,
+  SavePromptAliasInput,
   SendInputPayload,
   TeamalignedApi,
   ProviderConnectionTestInput,
@@ -32,6 +33,10 @@ const api: TeamalignedApi = {
   refreshSkillCatalog: () => ipcRenderer.invoke("teamaligned:refresh-skill-catalog"),
   installSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:install-skill", skillId),
   removeSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:remove-skill", skillId),
+  savePromptAlias: (payload: SavePromptAliasInput) =>
+    ipcRenderer.invoke("teamaligned:save-prompt-alias", payload),
+  removePromptAlias: (promptAliasId: string) =>
+    ipcRenderer.invoke("teamaligned:remove-prompt-alias", promptAliasId),
   refreshMcpCatalog: () => ipcRenderer.invoke("teamaligned:refresh-mcp-catalog"),
   connectMcp: (payload: ConnectMcpInput) => ipcRenderer.invoke("teamaligned:connect-mcp", payload),
   checkMcpHealth: (serverId: string) => ipcRenderer.invoke("teamaligned:check-mcp-health", serverId),

@@ -17,7 +17,7 @@ MVP 要证明三件事：
 - Electron 桌面应用壳可运行
 - 对话、管理、扩展、设置页面已落地
 - 单聊与群聊可以切换并交互
-- `/skills`、`/command`、`/mcp` 已接入消息流
+- `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>` 已接入消息流
 - 单聊已接入真实 Qwen / OpenAI 模型调用
 - 群聊已接入真实 manager / specialist 协作链路
 - Skills 已支持 registry、安装、白名单和 prompt 注入
@@ -44,7 +44,7 @@ MVP 要证明三件事：
 - 浏览 Agent 会话与群组会话
 - 与单个 Agent 私聊
 - 在群组里和多个 Agent 协作
-- 使用 `/skills`、`/command`、`/mcp` 这类命令式交互
+- 使用 `/skills`、`/mcp`、Skill 快捷命令和 Prompt Alias
 - 在运行中取消当前任务
 - 管理 Agent 与群组
 - 配置 OpenAI / Qwen
@@ -67,9 +67,10 @@ MVP 要证明三件事：
 单 Agent 私聊需要支持：
 
 - 自然语言输入
-- `/skills` 查看、启用、禁用当前 Agent 可用技能
-- `/command` 发起本地命令或任务执行
+- `/skills` 查看当前 Agent 可用技能
 - `/mcp` 查看和调用当前可用的 MCP 能力
+- `/<skill-id>` 临时使用某个 Skill
+- `/<prompt-alias>` 使用用户自定义 Prompt 模板
 - 复杂任务的暂停、继续、取消
 - 流式输出与执行状态展示
 
@@ -125,7 +126,7 @@ MVP 不做：
 
 - 默认进入对话页
 - 可切换 Agent 会话与群组会话
-- 单聊可执行 `/skills`、`/command`、`/mcp`
+- 单聊可执行 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 单聊复杂任务支持暂停、继续、取消
 - 群聊可以看到 Agent 间的协作与 `@` 行为
 - 群组上下文会影响 Agent 回答
@@ -140,7 +141,7 @@ MVP 不做：
 
 - 默认进入对话页
 - 可切换 Agent 会话与群组会话
-- 单聊可执行 `/skills`、`/command`、`/mcp`
+- 单聊可执行 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 单聊复杂任务支持暂停、继续、取消
 - 群聊可以看到 Agent 间的协作与 `@` 行为
 - 可创建 Agent 与群组

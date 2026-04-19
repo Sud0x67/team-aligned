@@ -102,7 +102,7 @@
 
 - 单聊真实模型链路已可用
 - 已支持流式输出
-- 已支持 `/skills`、`/command`、`/mcp`
+- 已支持 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 已支持附件上传和图片预览
 - 已支持 run 详情可视化
 

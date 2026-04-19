@@ -159,6 +159,17 @@ export const extensions = sqliteTable("extensions", {
   payload: text("payload").notNull(),
 });
 
+export const promptAliases = sqliteTable("prompt_aliases", {
+  id: text("id").primaryKey().notNull(),
+  alias: text("alias").notNull(),
+  enabled: integer("enabled").default(1).notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  payload: text("payload").notNull(),
+}, (table) => ({
+  aliasIdx: index("idx_prompt_aliases_alias").on(table.alias),
+  enabledIdx: index("idx_prompt_aliases_enabled").on(table.enabled, table.updatedAt),
+}));
+
 export const skillCatalog = sqliteTable("skill_catalog", {
   id: text("id").primaryKey().notNull(),
   payload: text("payload").notNull(),

@@ -5,6 +5,12 @@ import { resolveAssetSrc } from "../../lib/asset-src";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
 
+type SlashSuggestion = {
+  name: string;
+  description: string;
+  kind?: "command" | "skill" | "prompt";
+};
+
 const emojiChoices = [
   "😀",
   "😄",
@@ -51,17 +57,18 @@ export function ChatComposer({
   conversationId,
   onSend,
   mentionCandidates,
+  slashSuggestions,
   busy,
   onCancel,
 }: {
   conversationId: string;
   onSend: (payload: { input: string; attachments: AttachmentAssetRecord[] }) => Promise<void>;
   mentionCandidates: Array<{ id: string; name: string; role: string }>;
+  slashSuggestions: SlashSuggestion[];
   busy: boolean;
   onCancel: () => Promise<void>;
 }) {
   const language = useAppStore((state) => state.settings.language);
-  const commandSuggestions = useAppStore((state) => state.commandSuggestions);
   const t = createTranslator(language);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<AttachmentAssetRecord[]>([]);
@@ -86,7 +93,7 @@ export function ChatComposer({
 
     if (activeToken.startsWith("/")) {
       const query = activeToken.slice(1).toLowerCase();
-      const items = commandSuggestions.filter((item) =>
+      const items = slashSuggestions.filter((item) =>
         item.name.slice(1).toLowerCase().includes(query),
       );
       return {
@@ -96,6 +103,7 @@ export function ChatComposer({
           title: item.name,
           subtitle: item.description,
           value: `${item.name} `,
+          kind: item.kind ?? "command",
         })),
       };
     }
@@ -112,12 +120,13 @@ export function ChatComposer({
           title: `@${item.name}`,
           subtitle: item.role,
           value: `@${item.name} `,
+          kind: "mention" as const,
         })),
       };
     }
 
     return null;
-  }, [activeToken, commandSuggestions, mentionCandidates]);
+  }, [activeToken, slashSuggestions, mentionCandidates]);
 
   useEffect(() => {
     setActiveSuggestionIndex(0);
@@ -138,6 +147,13 @@ export function ChatComposer({
     if (!activeToken) return;
     setFeedback(null);
     setInput((current) => current.replace(/(?:^|\s)([@/][^\s]*)$/, (match, token: string) => match.replace(token, value)));
+  };
+
+  const getSuggestionKindLabel = (kind: "command" | "skill" | "prompt" | "mention") => {
+    if (kind === "skill") return "Skill";
+    if (kind === "prompt") return "Prompt";
+    if (kind === "mention") return "@";
+    return language === "zh" ? "内置" : "Built-in";
   };
 
   const submit = async () => {
@@ -227,7 +243,36 @@ export function ChatComposer({
   };
 
   return (
-    <div className="rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
+    <div className="relative rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
+        {!busy && suggestionState && suggestionState.items.length > 0 ? (
+          <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
+            <div className="max-h-72 overflow-y-auto overscroll-contain pr-1">
+              <div className="space-y-1">
+                {suggestionState.items.map((item, index) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => applySuggestion(item.value)}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition ${
+                      index === activeSuggestionIndex
+                        ? "bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+                        : "hover:bg-[var(--muted)]"
+                    }`}
+                  >
+                    <span className="shrink-0 rounded-full bg-[var(--muted)] px-2 py-0.5 text-[10px] font-medium text-[var(--muted-foreground)]">
+                      {getSuggestionKindLabel(item.kind)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[var(--foreground)]">{item.title}</p>
+                      <p className="truncate text-xs text-[var(--muted-foreground)]">{item.subtitle}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <textarea
           value={input}
           onChange={(event) => {
@@ -312,30 +357,6 @@ export function ChatComposer({
           placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
           className="min-h-[104px] w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
         />
-
-        {!busy && suggestionState && suggestionState.items.length > 0 ? (
-          <div className="mt-3 rounded-[18px] border border-[var(--border)] bg-[var(--background)] p-2">
-            <div className="space-y-1">
-              {suggestionState.items.map((item, index) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => applySuggestion(item.value)}
-                  className={`flex w-full items-start justify-between gap-3 rounded-2xl px-3 py-2 text-left transition ${
-                    index === activeSuggestionIndex
-                      ? "bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
-                      : "hover:bg-[var(--muted)]"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[var(--foreground)]">{item.title}</p>
-                    <p className="mt-0.5 text-xs leading-6 text-[var(--muted-foreground)]">{item.subtitle}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         <div className="mt-3 flex items-end justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">

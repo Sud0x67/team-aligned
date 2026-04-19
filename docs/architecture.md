@@ -450,7 +450,7 @@ MCP 当前尚未完成：
 - Figma 对齐后的核心 UI 已落成
 - 单聊真实模型调用
 - 群聊真实 manager / specialist 编排
-- slash command：`/skills`、`/command`、`/mcp`
+- slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - Skills registry / 安装 / 激活 / 脚本执行
 - MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入
 - workspace 文件 / 搜索 / 命令工具层

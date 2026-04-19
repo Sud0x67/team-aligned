@@ -32,7 +32,7 @@
 - [x] Team 群聊
 - [x] 单聊接入真实 Qwen / OpenAI
 - [x] 群聊接入真实 manager / specialist 协作链路
-- [x] slash command：`/skills`、`/command`、`/mcp`
+- [x] slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - [x] slash 结果直接以聊天消息形式展示
 - [x] 单聊 / 群聊输入区支持附件上传
 - [x] 图片附件预览
@@ -48,6 +48,7 @@
 - [x] Agent Skill 白名单
 - [x] Skill prompt 注入
 - [x] Skill 脚本与附属文件接入 runtime
+- [x] 自定义 Prompt Alias 创建、编辑、删除、启用与运行时展开
 - [x] MCP registry 同步
 - [x] `stdio npx` MCP
 - [x] `HTTP + headers` MCP
@@ -82,7 +83,7 @@
 
 - [ ] 继续打磨单聊消息流体验
   - 思考中、流式输出、结果落点更自然
-  - slash、附件、命令反馈更像聊天，而不是控制台
+  - slash、附件、Prompt Alias 反馈更像聊天，而不是控制台
 - [ ] 继续打磨群聊体验
   - manager / specialist 发言层次更清晰
   - 内部协作展开 / 折叠更易懂
