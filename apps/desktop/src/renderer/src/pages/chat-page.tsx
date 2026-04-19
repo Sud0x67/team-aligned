@@ -7,8 +7,8 @@ import { createTranslator } from "../i18n";
 import { AvatarBadge } from "../components/avatar-badge";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
 import { ChatComposer } from "../components/chat/chat-composer";
+import { ChatConversationSidebar } from "../components/chat/chat-conversation-sidebar";
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
-import { ChatRunDetails } from "../components/chat/chat-run-details";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 
 export function ChatPage() {
@@ -18,10 +18,7 @@ export function ChatPage() {
     conversations,
     messages,
     runs,
-    attachments,
-    artifacts,
     toolInvocations,
-    runSteps,
     agents,
     teams,
     promptAliases,
@@ -31,6 +28,7 @@ export function ChatPage() {
     sendInput,
     controlRun,
     markConversationRead,
+    openWorkspace,
     settings,
   } = useAppStore();
   const t = createTranslator(settings.language);
@@ -40,6 +38,7 @@ export function ChatPage() {
   const [activeConversationId, setActiveConversationId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [internalVisible, setInternalVisible] = useState<Record<string, boolean>>({});
+  const [conversationInfoExpanded, setConversationInfoExpanded] = useState(false);
 
   useEffect(() => {
     if (!requestedConversationId) return;
@@ -93,46 +92,13 @@ export function ChatPage() {
   const isTeamConversation = activeConversation?.kind === "team";
   const showInternal = activeConversation ? internalVisible[activeConversation.id] ?? false : false;
   const detailRun = activeRun ?? latestConversationRun;
-  const detailRunId = detailRun?.id ?? null;
-
-  const conversationRunSteps = useMemo(() => {
-    if (!activeConversation || !detailRunId) return [];
-    return runSteps.filter((step) => step.conversationId === activeConversation.id && step.runId === detailRunId);
-  }, [activeConversation, detailRunId, runSteps]);
-
-  const conversationArtifacts = useMemo(() => {
-    if (!activeConversation) return [];
-    return artifacts.filter(
-      (artifact) =>
-        artifact.conversationId === activeConversation.id &&
-        (!detailRunId || artifact.runId === detailRunId),
-    );
-  }, [activeConversation, artifacts, detailRunId]);
-
-  const conversationAttachments = useMemo(() => {
-    if (!activeConversation) return [];
-    return attachments.filter((attachment) => attachment.conversationId === activeConversation.id);
-  }, [activeConversation, attachments]);
 
   const conversationToolInvocations = useMemo(() => {
     if (!activeConversation) return [];
     return toolInvocations.filter(
-      (invocation) =>
-        invocation.conversationId === activeConversation.id &&
-        (!detailRunId || invocation.runId === detailRunId),
+      (invocation) => invocation.conversationId === activeConversation.id,
     );
-  }, [activeConversation, detailRunId, toolInvocations]);
-
-  const latestSystemMessage = useMemo(() => {
-    if (!activeConversation) return null;
-    const scopedMessages = detailRunId
-      ? activeMessages.filter((message) => message.runId === detailRunId)
-      : activeMessages;
-    const latest = [...scopedMessages]
-      .filter((message) => message.visibility === "system")
-      .sort((left, right) => right.createdAt - left.createdAt)[0];
-    return latest?.content ?? null;
-  }, [activeConversation, activeMessages, detailRunId]);
+  }, [activeConversation, toolInvocations]);
 
   const pendingSystemMessage = useMemo(() => {
     if (!activeRun) return null;
@@ -246,6 +212,8 @@ export function ChatPage() {
       ? agents.find((agent) => agent.id === activeConversation.targetId) ?? null
       : teams.find((team) => team.id === activeConversation.targetId) ?? null;
   }, [activeConversation, agents, teams]);
+
+  const activeWorkspacePath = activeTarget?.workspacePath ?? null;
 
   const pendingActor = useMemo(() => {
     if (!activeConversation) return null;
@@ -408,17 +376,6 @@ export function ChatPage() {
             </div>
 
             <div className="border-t border-[var(--border)] bg-[var(--card)] px-5 pb-4 pt-3">
-              <ChatRunDetails
-                run={detailRun}
-                runSteps={conversationRunSteps}
-                artifacts={conversationArtifacts}
-                attachments={conversationAttachments}
-                toolInvocations={conversationToolInvocations}
-                tokenUsage={conversationTokenUsage}
-                latestSystemMessage={latestSystemMessage}
-                onCancel={handleCancel}
-              />
-
               <ChatComposer
                 conversationId={activeConversation.id}
                 onSend={handleSend}
@@ -443,6 +400,21 @@ export function ChatPage() {
           </div>
         )}
       </section>
+
+      {activeConversation ? (
+        <ChatConversationSidebar
+          expanded={conversationInfoExpanded}
+          onExpandedChange={setConversationInfoExpanded}
+          conversationKind={activeConversation.kind}
+          tokenUsage={conversationTokenUsage}
+          workspacePath={activeWorkspacePath}
+          activeSkillLabel={activeSkillLabel}
+          pinnedMcpLabel={pinnedMcpLabel}
+          run={detailRun}
+          toolInvocations={conversationToolInvocations}
+          onOpenWorkspace={(workspacePath) => void openWorkspace(workspacePath)}
+        />
+      ) : null}
     </div>
   );
 }
