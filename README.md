@@ -68,7 +68,7 @@
 - 聊天主界面、管理、扩展、设置页面
 - 单 Agent 私聊与 Team 群聊
 - 单 Agent 私聊已接入真实 Qwen / OpenAI 模型调用
-- Team 群聊已接入真实 manager / specialist 模型协作链路
+- Team 群聊已接入自然群聊编排链路
 - `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - 群聊中的共享上下文、内部消息与 Agent `@` 协作
 - 本地 run 状态机与取消控制
@@ -101,7 +101,7 @@
 - 设置页现在支持 provider 参数校验、连通性测试和错误提示。
 - 单聊回复已经优先按流式方式更新到消息线程；聊天输入支持 `/` 自动补全、`@` 成员选择、命令结果卡片、图片附件预览和图片理解。
 - slash 命令现在聚焦上下文快捷调用：内置 `/skills`、`/mcp`，以及一次性 Skill / Prompt Alias 调用。
-- 群聊产品方向已经明确为 local-first 的“manager 主沟通 + specialist 受控协作”模式。
+- 群聊产品方向已经明确为 local-first 的“@ 优先 + 语义选人 + 受控多轮自然发言”模式。
 - 文档中的目标架构仍然有效，但实现状态请以当前代码和本 README 为准。
 
 ## 运行方式

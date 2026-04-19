@@ -31,7 +31,7 @@
 - [x] 单 Agent 私聊
 - [x] Team 群聊
 - [x] 单聊接入真实 Qwen / OpenAI
-- [x] 群聊接入真实 manager / specialist 协作链路
+- [x] 群聊接入真实自然发言编排链路
 - [x] slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - [x] slash 结果直接以聊天消息形式展示
 - [x] 单聊 / 群聊输入区支持附件上传
@@ -86,7 +86,7 @@
   - 思考中、流式输出、结果落点更自然
   - slash、附件、Prompt Alias 反馈更像聊天，而不是控制台
 - [ ] 继续打磨群聊体验
-  - manager / specialist 发言层次更清晰
+  - @ 优先、语义选人和多 Agent 发言更自然
   - 内部协作展开 / 折叠更易懂
   - 多轮群聊时未读、通知、最近消息摘要保持稳定
 - [ ] 统一 run 与消息之间的关系

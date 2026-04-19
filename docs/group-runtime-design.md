@@ -1,268 +1,162 @@
 # 群组运行时设计
 
-## 文档目标
+## 当前方向
 
-这份文档专门定义 `teamaligned` 中 Team 群聊的真正后端方案。
+`teamaligned` 的群聊不再采用默认的 `manager -> specialist` 强编排模式。
 
-目标不是做一个传统聊天室后端，而是做一个：
-
-- local-first
-- 可审计
-- 可暂停 / 恢复 / 取消
-- 贴近真实团队聊天体验
-
-的本地多 Agent 编排后端。
-
-## 一句话方案
-
-群组运行时应采用：
-
-`本地 Team Orchestrator + manager 中心化调度 + specialist 协作执行 + SQLite 事件存储`
-
-## 设计原则
-
-### 1. local-first
-
-群组协调、上下文维护、事件记录、artifact 落盘都应优先在本地完成。
-
-网络只用于：
-
-- 模型调用
-- 外部 MCP
-- 外部搜索
-
-不用于群组协作本身。
-
-### 2. 聊天优先
-
-用户看到的永远先是一个聊天线程，而不是一个工作流编辑器。
-
-### 3. manager 主沟通
-
-默认由 manager 面向用户发言。
-
-### 4. specialist 受控升级
-
-specialist 默认不直接打断用户，只有在必要时才直接 `@用户`。
-
-### 5. 主线程与内部线程分离
-
-公开消息和内部协作必须分开建模，否则后续 run 详情、审计、恢复都会很乱。
-
-### 6. 所有关键事件可持久化
-
-消息、步骤、分派、工具调用、artifact、上下文快照都应可恢复。
-
-## 运行时模块
+当前方案改为：
 
 ```text
-Team Ingress
-├─ 接收用户消息
-├─ 识别 @ 与命令
-└─ 创建 team run
-
-Team Orchestrator
-├─ 构建上下文
-├─ 运行 manager 规划
-├─ 分派 specialist
-├─ 调用 tool / MCP
-└─ 汇总最终回复
-
-Agent Workers
-├─ manager worker
-├─ specialist worker
-└─ shared tool access
-
-Context Services
-├─ shared context
-├─ conversation summary
-└─ agent private memory
-
-Persistence Services
-├─ public messages
-├─ internal messages
-├─ team_runs
-├─ run_steps
-├─ assignments
-├─ artifacts
-└─ context snapshots
+自然群聊 = @ 优先 + 语义选人 + 受控多轮发言 + 不可见 orchestrator
 ```
 
-## 交互协议
+用户看到的是多个 Agent 像真实群成员一样自然发言；系统内部仍然有不可见的 orchestrator 负责选择谁说话、控制轮数、限制 token 成本和避免循环。
 
-### 用户消息入口
+## 设计目标
 
-所有群组消息先进入 manager，而不是广播给所有 specialist。
+- 群聊像人类群聊一样自然。
+- 默认不出现 manager 或主持人。
+- 用户 `@Agent` 时，被点名 Agent 优先回应。
+- 没有 `@` 时，系统按语义选择相关 Agent。
+- 复杂问题可以展示多个 Agent 的交流过程。
+- Agent 可以互相 `@`，但不能无限循环聊天。
+- 群聊规模和每轮消息数必须有硬上限。
 
-manager 决定：
+## 群组规模
 
-- 自己直接回答
-- 调用 specialist
-- 调用工具
-- 调用 MCP
-- 向用户提问
+第一版群组规则：
 
-### 面向用户的默认发言规则
+- 每个群组最多 `5` 个 Agent。
+- 创建群组时 UI 限制最多选择 5 个成员。
+- 存储层也会兜底裁剪到 5 个成员。
+- 运行时只在最多 5 个有效成员中选择发言者。
 
-- manager 是默认主发言人
-- specialist 默认先回给 manager
-- manager 汇总后再回复用户
+这个限制是产品规则，不只是性能优化。它可以降低 token 成本，也能让用户更容易理解谁可能参与发言。
 
-### specialist 直接 `@用户`
+## 发言模式
 
-允许，但不应默认开启。
+运行时定义三种模式：
 
-推荐触发条件：
+### 1. `focused`
 
-- specialist 需要非常具体的专业输入
-- manager 转述会损失精度
-- 用户已经明确在和该 specialist 深入协作
-- manager 已授权 specialist 直接提问
+用于普通问题。
 
-运行时上建议建模为：
+- 选择 1 到 2 个 Agent。
+- 不默认拉全员。
+- 不默认互相 `@`。
 
-- `needs_user_input`
-- `manager_review`
-- `user_visible_question`
+### 2. `multi_voice`
 
-也就是 specialist 先提出“需要用户确认”，再由 manager 决定是否直接升级到主线程。
+用于多视角讨论。
 
-## 消息模型
+- 选择 2 到 4 个 Agent。
+- 每个 Agent 直接在群里给出自己的视角。
+- 不强制汇总。
 
-群组至少需要三类消息：
+### 3. `collaboration`
 
-### 1. Public Message
+用于脑暴、分工、复杂协作或跨多个能力域的问题。
 
-主线程消息，对用户可见。
+- 选择 3 到 5 个 Agent。
+- Agent 可以互相 `@`。
+- 最多 2 个小轮。
+- 每个用户消息最多 8 条 Agent 消息。
+- 到达上限后必须停止。
 
-适合：
+## @ 优先规则
 
-- 用户输入
-- manager 回复
-- specialist 经授权后直接 `@用户`
-- 公开协作消息
+如果用户显式 `@Agent`：
 
-### 2. Internal Message
+- 被 `@` 的 Agent 优先发言。
+- 如果只 `@` 一个 Agent，默认只让它回应。
+- 如果 `@` 多个 Agent，让这些 Agent 依次回应。
+- 未被 `@` 的 Agent 默认不抢话，除非后续版本明确引入补充机制。
 
-默认折叠，只在内部协作视图或 run 详情中查看。
+如果没有 `@`：
 
-适合：
+- system orchestrator 根据用户语义、Agent role、capabilities、最近上下文选择 1 到 5 个 Agent。
+- 普通问题通常只选 1 到 2 个。
+- 只有复杂问题才选 3 到 5 个。
 
-- manager 分派 specialist
-- specialist 之间对齐方案
-- tool / MCP 结果同步
-- specialist 提交 `needs_user_input`
+## 防止无限循环
 
-### 3. System Message
+第一版硬边界：
 
-系统状态消息。
+- 每个群组最多 5 个 Agent。
+- 每个用户消息开启一个 `team turn`。
+- 每个 `team turn` 最多 2 个小轮。
+- 每个小轮最多 5 个 Agent 发言。
+- 每个 `team turn` 最多 8 条 Agent 消息。
+- Agent 互相 `@` 只能触发下一小轮。
+- 同一个 Agent 在同一个 `team turn` 中最多发言一次。
 
-适合：
+这些规则保证群聊可以展示协作过程，但不会变成无限 Agent 对话。
 
-- run 开始 / 暂停 / 恢复 / 取消
-- provider 错误
-- tool 失败
-- artifact 已生成
+## 静默规则
 
-## 上下文模型
+每个 Agent 的 prompt 都要求：
 
-### Shared Context
+- 如果你的观点和前面 Agent 重复，请保持沉默。
+- 如果你没有明显贡献，不要为了发言而发言。
+- 回复要像群聊消息，不要写成长篇报告。
+- 除非用户要求详细分析，否则保持简短、具体、可执行。
 
-所有群组成员共享：
-
-- 群组目标
-- 当前阶段
-- 活跃任务
-- 关键约束
-- 已确认决策
-- 共享 artifact
-
-### Conversation Summary
-
-当前线程的滚动摘要，用来控制上下文长度。
-
-### Agent Private Memory
-
-每个 agent 私有：
-
-- 自己的偏好
-- 自己擅长的执行模式
-- 自己的历史经验
-
-不建议把所有记忆直接混成一份共享记忆。
-
-## 执行流程
+## 运行流程
 
 ```text
 用户消息
-→ Team Ingress
-→ Context Builder
-→ Manager 规划
-→ Specialist / Tool / MCP
-→ Manager 汇总
-→ 主线程回复用户
-→ 写入 message / run / step / artifact / summary
+  ↓
+读取群组成员，最多 5 个
+  ↓
+解析用户 @
+  ↓
+system orchestrator 选择模式 focused / multi_voice / collaboration
+  ↓
+选择本轮发言 Agent
+  ↓
+Agent 依次生成自然群聊消息
+  ↓
+如果 collaboration 中出现互相 @，最多进入下一小轮
+  ↓
+达到终止条件
+  ↓
+更新 shared-memory 与 run 状态
 ```
 
-## 数据持久化建议
+## 用户可见消息
 
-正式数据层至少应支持以下实体：
+群聊主线程可见：
 
-- `teams`
-- `team_members`
-- `conversations`
-- `messages`
-- `team_runs`
-- `run_steps`
-- `assignments`
-- `artifacts`
-- `context_snapshots`
-- `tool_invocations`
+- 用户消息
+- Agent 自然回复
+- Agent 之间公开 `@`
+- Agent 向用户的明确问题
 
-其中 `messages` 建议至少具备：
+默认不再显示：
 
-- `visibility`
-- `sender_kind`
-- `sender_id`
-- `mentions`
-- `run_id`
-- `parent_message_id`
-- `created_at`
+- manager 分派消息
+- specialist 内部报告
+- 强制汇总消息
 
-## 面向用户的状态表达
+内部 run 状态仍然会落盘，但不应该抢占主线程体验。
 
-用户在主线程中应该看到的是轻量、接近真人团队协作的状态，而不是完整图执行细节：
+## 当前实现状态
 
-- 正在讨论中
-- 某成员处理中
-- 等待你的确认
-- 已汇总结论
+当前代码已经实现：
 
-更细的执行内容，例如：
+- 不可见 system orchestrator 选择发言 Agent。
+- `@` 优先。
+- 无 `@` 时按语义选择 1 到 5 个 Agent。
+- `focused / multi_voice / collaboration` 三种模式。
+- 群组最多 5 个 Agent。
+- 每个 team turn 最多 2 小轮、最多 8 条 Agent 消息。
+- Agent 可在复杂协作中互相 `@`，触发下一小轮。
+- 群组 shared-memory 会记录本轮话题、发言成员和阶段性结论。
 
-- specialist 分派
-- tool call
-- MCP call
-- 内部协作消息
+## 后续可优化
 
-应放在可展开的 run 详情里。
-
-## 当前推荐的开发顺序
-
-1. 用 LangGraph 重写群聊 `team run`
-2. 建立 manager / specialist 的真实 worker 协议
-3. 把 shared context 接入 manager prompt
-4. 把 internal / public / system 三类消息彻底分开
-5. 接入真实 Skills / MCP / tool layer
-6. 再补 run 详情与恢复机制
-
-## 验收标准
-
-当下面这些条件达成时，可以认为群组后端进入 Alpha 可用：
-
-- 群聊回复不再依赖脚本化模板
-- manager 会真实调度 specialist
-- specialist 默认不直接打断用户
-- specialist 可以在必要时受控 `@用户`
-- 群组上下文会真实影响输出
-- run / step / artifact / context 可以稳定恢复
+- 更好的 speaker selection 可解释性。
+- UI 展示“本轮参与 Agent”。
+- 群聊消息的轻量类型标识，例如 suggestion / question / result。
+- 更强的多轮上下文压缩。
+- 群聊失败恢复和 checkpoint。

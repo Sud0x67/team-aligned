@@ -80,7 +80,7 @@
 
 ## 2. 群聊交互模型
 
-群聊是用户、manager agent 和多个 specialist agent 的统一协作线程。
+群聊是用户和多个 Agent 的自然协作线程。
 
 ### 群聊的体验目标
 
@@ -89,9 +89,10 @@
 因此第一原则是：
 
 - 用户只面对一个主线程
-- manager 默认承担主沟通责任
-- specialist 只在必要时打断主线程
-- 内部协作默认折叠，不主动刷屏
+- 默认不出现 manager 或主持人
+- Agent 像真实群成员一样自然发言
+- `@` 优先，未被点名时由系统按语义选择相关 Agent
+- 复杂协作可以展示 Agent 之间公开 `@`
 - 工具、MCP、命令执行结果优先整理成自然语言结论
 
 ### 群聊中的发言主体
@@ -99,51 +100,21 @@
 群聊主线程可出现：
 
 - 用户消息
-- manager agent 消息
-- specialist agent 消息
+- Agent 消息
 - 系统消息
 - 提及消息
 
 ### 面向用户的发言协议
 
-群聊中的发言要区分“谁能直接对用户说话”。
-
 默认规则：
 
 - 用户消息直接进入群组线程
-- manager 是默认的主发言人
-- specialist 默认先把结果回给 manager
-- manager 负责汇总后再回复用户
-
-这条规则的目的，是避免多个 specialist 同时向用户提问，造成群聊失控。
-
-### specialist 直接 `@用户` 的例外规则
-
-specialist 可以直接 `@用户`，但不应是默认行为。
-
-建议仅在以下场景允许：
-
-- specialist 需要非常具体的专业输入
-- manager 转述会明显损失精度
-- 用户已经明确在和某个 specialist 深入协作
-- manager 已显式授权该 specialist 直接向用户确认
-
-不建议直接 `@用户` 的场景：
-
-- 普通澄清问题
-- 多个 specialist 同时都需要补充信息
-- 任务还处于初步规划阶段
-- manager 完全可以统一整理后一次性提问
-
-建议运行时协议：
-
-- specialist 先提交 `needs_user_input`
-- manager 决定：
-  - 自己统一提问
-  - 授权 specialist 直接 `@用户`
-  - 合并多个问题后再问
-
-这意味着“specialist 直接问用户”应是一种受控升级机制，而不是默认发言方式。
+- 如果用户 `@Agent`，被点名 Agent 优先回应
+- 如果用户没有 `@`，system orchestrator 根据语义选择 1 到 5 个 Agent
+- 普通问题通常只选 1 到 2 个 Agent
+- 多视角问题选择 2 到 4 个 Agent
+- 复杂协作选择 3 到 5 个 Agent
+- 没有新增观点的 Agent 应保持沉默
 
 ### 群聊中的 `@`
 
@@ -157,7 +128,15 @@ specialist 可以直接 `@用户`，但不应是默认行为。
 
 - `@` 输入时弹出群组成员选择面板
 - 被提及时生成消息内高亮与通知
-- manager 可以通过 `@frontend` 这类形式显式调度 specialist
+- Agent 互相 `@` 只能触发下一小轮，不能无限循环
+
+### 群聊硬边界
+
+- 每个群组最多 5 个 Agent
+- 每个用户消息开启一个 `team turn`
+- 每个 `team turn` 最多 2 个小轮
+- 每个 `team turn` 最多 8 条 Agent 消息
+- 同一个 Agent 在同一个 `team turn` 中最多发言一次
 
 ### Agent 之间通信
 
@@ -172,16 +151,9 @@ Agent 间通信分为两种：
 - `Designer @Frontend：新版原型已上传，请开始还原`
 - `Backend @QA：接口联调已准备好，请开始验证`
 
-#### 内部协作
+#### 内部编排
 
-默认不完整展示给用户，只在 run 详情展开。
-
-当前实现中，内部协作消息默认隐藏，通过会话头部的“显示内部协作”开关控制显隐。
-
-示例：
-
-- manager 给 specialist 分配子任务
-- 一个 specialist 将工具结果发给另一个 specialist
+system orchestrator 的发言选择、轮数控制和停止判断不作为群成员展示。
 
 ## 3. 群组上下文模型
 
@@ -267,9 +239,9 @@ Agent 间通信分为两种：
 
 1. 用户消息进入 team ingress
 2. 系统构建群组共享上下文
-3. manager 读取上下文并决定是否需要 specialist 或工具
-4. specialist 在内部线程中协作
-5. manager 汇总结果后回到主线程回复用户
+3. 不可见 system orchestrator 选择发言模式和 Agent
+4. 被选中的 Agent 依次在主线程自然发言
+5. collaboration 模式下，Agent 互相 `@` 可触发下一小轮
 6. 事件、产物、状态、共享记忆统一落盘
 
 ### 主线程与内部线程
@@ -277,9 +249,9 @@ Agent 间通信分为两种：
 建议在产品和存储层都明确区分两套流：
 
 - 主线程：用户可见的对话
-- 内部线程：manager / specialist / tool / MCP 的协作过程
+- 内部运行状态：system orchestrator、tool / MCP 的运行过程
 
-内部线程的存在是为了：
+内部运行状态的存在是为了：
 
 - 保留真实协作能力
 - 不破坏聊天感
@@ -329,8 +301,8 @@ Agent 间通信分为两种：
 
 后续建议补充：
 
-- manager / specialist 面向用户发言的角色样式区分
-- specialist `@你` 的特殊提示样式
+- 当前参与 Agent 的轻量展示
+- Agent `@你` 的特殊提示样式
 - 群组目标摘要
 - 当前活跃成员
 - 群组上下文抽屉
@@ -343,12 +315,12 @@ Agent 间通信分为两种：
 ### MVP 必做
 
 - 单聊支持 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
-- 单聊支持 run 暂停 / 恢复 / 取消
+- 单聊支持取消当前 run
 - 群聊支持用户 `@agent`
 - 群聊支持 Agent 公开互相 `@`
 - 群聊支持共享上下文摘要
-- 群聊默认由 manager 对用户发言
-- specialist 允许在受控条件下直接 `@用户`
+- 群聊默认由不可见 orchestrator 选择 1 到 5 个 Agent 自然发言
+- 群聊限制最多 5 个成员、2 个小轮、8 条 Agent 消息
 
 ### 后续版本再做
 

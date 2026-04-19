@@ -217,7 +217,7 @@ export function ChatPage() {
   const pendingActor = useMemo(() => {
     if (!activeConversation) return null;
 
-    if (activeConversation.kind === "agent" && activeTarget) {
+    if (activeTarget) {
       return {
         name: activeTarget.name,
         avatarPath: activeTarget.avatarPath,
@@ -225,36 +225,8 @@ export function ChatPage() {
         avatarColor: activeTarget.avatarColor,
       };
     }
-
-    const latestAgentMessage = [...activeMessages]
-      .reverse()
-      .find((message) => message.senderKind === "agent");
-    if (!latestAgentMessage) {
-      return activeTarget
-        ? {
-            name: activeTarget.name,
-            avatarPath: activeTarget.avatarPath,
-            avatar: activeTarget.avatar,
-            avatarColor: activeTarget.avatarColor,
-          }
-        : null;
-    }
-
-    const matchedAgent = agents.find((agent) => agent.id === latestAgentMessage.senderId);
-    return matchedAgent
-      ? {
-          name: matchedAgent.name,
-          avatarPath: matchedAgent.avatarPath,
-          avatar: matchedAgent.avatar,
-          avatarColor: matchedAgent.avatarColor,
-        }
-      : {
-          name: latestAgentMessage.senderName,
-          avatarPath: null,
-          avatar: latestAgentMessage.senderName.slice(0, 1) || "A",
-          avatarColor: "var(--primary)",
-        };
-  }, [activeConversation, activeMessages, activeTarget, agents]);
+    return null;
+  }, [activeConversation, activeTarget]);
 
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;

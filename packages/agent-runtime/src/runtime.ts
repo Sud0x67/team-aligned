@@ -54,12 +54,12 @@ import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
 import {
-  generateManagerDirectReply,
-  type TeamSpecialistOutput,
-  type TeamFinalResponse,
-  planTeamConversation,
-  runSpecialistAssignment,
-  summarizeTeamConversation,
+  generateNaturalTeamAgentMessage,
+  MAX_TEAM_SUBROUNDS,
+  MAX_TEAM_TURN_MESSAGES,
+  selectNaturalTeamSpeakers,
+  TEAM_MEMBER_LIMIT,
+  type NaturalTeamAgentMessage,
 } from "./team-runtime.ts";
 
 type RunStep = {
@@ -173,24 +173,12 @@ function extractAgentMentions(input: string, agents: AgentRecord[]) {
   return mentioned;
 }
 
-function chooseManager(team: TeamRecord, agents: AgentRecord[]) {
+function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
   const members = agents.filter((agent) => team.memberIds.includes(agent.id));
   return (
     members.find((agent) => agent.role.includes("经理") || agent.name === "Planner") ??
     members[0]
   );
-}
-
-function chooseSpecialists(team: TeamRecord, agents: AgentRecord[], input: string) {
-  const members = agents.filter((agent) => team.memberIds.includes(agent.id));
-  const manager = chooseManager(team, agents);
-  const explicit = extractAgentMentions(input, members).filter((agent) => agent.id !== manager?.id);
-
-  if (explicit.length > 0) {
-    return explicit;
-  }
-
-  return members.filter((agent) => agent.id !== manager?.id).slice(0, 2);
 }
 
 export class TeamalignedRuntime extends EventEmitter {
@@ -1264,11 +1252,18 @@ export class TeamalignedRuntime extends EventEmitter {
     const snapshot = this.storage.getSnapshot();
     const team = snapshot.teams.find((item) => item.id === conversation.targetId);
     if (!team) return;
+    const members = snapshot.agents
+      .filter((agent) => team.memberIds.includes(agent.id))
+      .slice(0, TEAM_MEMBER_LIMIT);
+    if (members.length === 0) {
+      this.addSystemMessage(conversation.id, "当前群组还没有可参与的 Agent，请先在管理页添加成员。");
+      return;
+    }
 
-    const manager = chooseManager(team, snapshot.agents);
-    const availableSpecialists = chooseSpecialists(team, snapshot.agents, input);
-    const explicitMentions = extractAgentMentions(input, snapshot.agents).map((agent) => agent.id);
-    if (!manager) return;
+    const memberIds = new Set(members.map((agent) => agent.id));
+    const explicitMentions = extractAgentMentions(input, members)
+      .map((agent) => agent.id)
+      .filter((id) => memberIds.has(id));
     const provider = this.resolveActiveProvider(snapshot);
     const providerIssue = validateProviderForSingleChat(provider);
     if (providerIssue) {
@@ -1293,9 +1288,8 @@ export class TeamalignedRuntime extends EventEmitter {
       activeSkill: null,
       onInvocation: this.createToolInvocationObserver(conversation.id, runId),
     });
-    const specialistOutputs: TeamSpecialistOutput[] = [];
-    let plan: Awaited<ReturnType<typeof planTeamConversation>> | null = null;
-    let finalResponse: TeamFinalResponse | null = null;
+    let selection: Awaited<ReturnType<typeof selectNaturalTeamSpeakers>> | null = null;
+    const turnMessages: NaturalTeamAgentMessage[] = [];
 
     const steps: RunStep[] = [
       {
@@ -1305,23 +1299,22 @@ export class TeamalignedRuntime extends EventEmitter {
           this.addRunMessage(
             conversation.id,
             runId,
-            `${manager.name} 正在读取群组上下文，并检查是否需要协调 specialist。`,
+            `我先看一下这个问题，并叫上合适的成员来回复你。`,
             "system",
           );
         },
       },
       {
-        label: "manager 规划",
+        label: "选择发言成员",
         execute: async () => {
-          plan = await planTeamConversation({
+          selection = await selectNaturalTeamSpeakers({
             provider: provider!,
             profile: snapshot.profile,
             team: {
               ...team,
               context: updatedContext,
             },
-            manager,
-            specialists: availableSpecialists,
+            members,
             context: updatedContext,
             history: this.storage.listMessages(conversation.id).map((message) => ({
               senderName: message.senderName,
@@ -1331,325 +1324,178 @@ export class TeamalignedRuntime extends EventEmitter {
             userInput: input,
             explicitMentionIds: explicitMentions,
             mcpServers: availableMcpServers,
-            mcpConnections: availableMcpConnections,
           });
 
           updatedContext = {
             ...updatedContext,
-            phase: plan.nextPhase || updatedContext.phase,
-            activeTasks: plan.activeTask
-              ? Array.from(new Set([plan.activeTask, ...updatedContext.activeTasks])).slice(0, 5)
+            phase: selection.nextPhase || updatedContext.phase,
+            activeTasks: selection.activeTask
+              ? Array.from(new Set([selection.activeTask, ...updatedContext.activeTasks])).slice(0, 5)
               : updatedContext.activeTasks,
-            recentDecisions: plan.decision
-              ? Array.from(new Set([plan.decision, ...updatedContext.recentDecisions])).slice(0, 5)
+            recentDecisions: selection.decision
+              ? Array.from(new Set([selection.decision, ...updatedContext.recentDecisions])).slice(0, 5)
               : updatedContext.recentDecisions,
           };
           this.storage.updateTeamContext(team.id, updatedContext);
 
-          if (plan.strategy === "manager_direct") {
-            this.addRunMessage(
-              conversation.id,
-              runId,
-              `${manager.name} 将直接处理本轮请求，不调度 specialist。`,
-              "system",
-            );
-            return;
-          }
-
-          if (plan.kickoffReply) {
-            this.storage.addMessage({
-              conversationId: conversation.id,
-              senderId: manager.id,
-              senderName: manager.name,
-              senderKind: "agent",
-              messageType: "agent",
-              visibility: "public",
-              content: plan.kickoffReply,
-              mentions: ["user"],
-              runId,
-              metadata: {
-                phase: updatedContext.phase,
-                strategy: plan.strategy,
-              },
-              createdAt: Date.now(),
-            });
-          }
-
-          if (plan.strategy === "specialist_question") {
-            this.addRunMessage(
-              conversation.id,
-              runId,
-              `${plan.speaker.name} 需要先向用户确认一项关键信息。`,
-              "system",
-            );
-            return;
-          }
-
-          this.addRunMessage(
-            conversation.id,
-            runId,
-            `${manager.name} 已分派 ${plan.assignments
-              .map((assignment) => assignment.specialist.name)
-              .join("、")} 参与协作。`,
-            "system",
-          );
         },
       },
       {
-        label: "specialist 协作",
+        label: "Agent 自然发言",
         execute: async () => {
-          if (!plan || plan.strategy === "manager_direct" || plan.assignments.length === 0) {
+          if (!selection || selection.speakers.length === 0) {
             return;
           }
 
-          for (const assignment of plan.assignments) {
-            const specialist = assignment.specialist;
+          const spokenIds = new Set<string>();
+          let speakers = selection.speakers;
+          for (let roundIndex = 0; roundIndex < MAX_TEAM_SUBROUNDS; roundIndex += 1) {
+            if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES || speakers.length === 0) {
+              break;
+            }
 
-            this.storage.addMessage({
-              conversationId: conversation.id,
-              senderId: manager.id,
-              senderName: manager.name,
-              senderKind: "agent",
-              messageType: "agent",
-              visibility: "internal",
-              content: `@${specialist.name} 我把这个子任务交给你：${assignment.task}`,
-              mentions: [specialist.id],
-              runId,
-              metadata: {
-                internal: true,
-                fromManager: true,
-                task: assignment.task,
-              },
-              createdAt: Date.now(),
-            });
-
-            const output = await runSpecialistAssignment({
+            const roundMessages: NaturalTeamAgentMessage[] = [];
+            for (const speaker of speakers) {
+              if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES) {
+                break;
+              }
+              if (spokenIds.has(speaker.id)) {
+                continue;
+              }
+              const message = await generateNaturalTeamAgentMessage({
               provider: provider!,
               profile: snapshot.profile,
               team: {
                 ...team,
                 context: updatedContext,
               },
-              manager,
-              assignment,
+                speaker,
+                members,
+                mode: selection.mode,
               context: updatedContext,
               userInput: input,
+                roundIndex,
+                previousTurnMessages: turnMessages,
               workspacePath,
               conversationId: conversation.id,
               runId,
+                isFinalSpeaker:
+                  turnMessages.length >= MAX_TEAM_TURN_MESSAGES - 1 ||
+                  speaker.id === speakers.at(-1)?.id,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
               onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
               additionalTools: runtimeTools.tools,
             });
-            specialistOutputs.push(output);
-
+              if (!message) {
+                continue;
+              }
+              spokenIds.add(speaker.id);
+              turnMessages.push(message);
+              roundMessages.push(message);
             this.storage.addMessage({
               conversationId: conversation.id,
-              senderId: output.specialist.id,
-              senderName: output.specialist.name,
+                senderId: message.speaker.id,
+                senderName: message.speaker.name,
               senderKind: "agent",
-              messageType: output.userContactMode === "specialist_direct" ? "notification" : "agent",
-              visibility: output.userContactMode === "specialist_direct" ? "public" : output.visibility,
-              content:
-                output.userContactMode === "specialist_direct"
-                  ? `@你 ${output.userQuestionDraft || output.content}`
-                  : output.content,
-              mentions:
-                output.userContactMode === "specialist_direct" || output.visibility === "public"
-                  ? ["user"]
-                  : [],
+                messageType: message.kind === "question" ? "notification" : "agent",
+                visibility: "public",
+                content: message.content,
+                mentions: message.mentions,
               runId,
               metadata: {
                 teamId: team.id,
-                task: output.task,
-                reason: output.reason,
-                visibility: output.userContactMode === "specialist_direct" ? "public" : output.visibility,
-                userContactMode: output.userContactMode,
-                directFromSpecialist: output.userContactMode === "specialist_direct",
-                managerRelayCandidate: output.userContactMode === "manager_relay",
+                  mode: selection.mode,
+                  roundIndex: message.roundIndex,
+                  kind: message.kind,
               },
               createdAt: Date.now(),
             });
           }
-        },
-      },
-      {
-        label: "经理汇总",
-        execute: async () => {
-          if (!plan) {
-            return;
+
+            if (selection.mode !== "collaboration" || roundIndex >= MAX_TEAM_SUBROUNDS - 1) {
+              break;
+            }
+            const nextIds = Array.from(new Set(roundMessages.flatMap((message) => message.mentions)))
+              .filter((id) => memberIds.has(id) && !spokenIds.has(id))
+              .slice(0, TEAM_MEMBER_LIMIT);
+            speakers = nextIds
+              .map((id) => members.find((agent) => agent.id === id))
+              .filter((agent): agent is AgentRecord => agent !== undefined);
           }
 
-          if (plan.strategy === "manager_direct") {
-            finalResponse = await generateManagerDirectReply({
-              provider: provider!,
-              profile: snapshot.profile,
-              team: {
-                ...team,
-                context: updatedContext,
-              },
-              manager,
-              context: updatedContext,
-              userInput: input,
-              workspacePath,
-              conversationId: conversation.id,
-              runId,
-              mcpServers: availableMcpServers,
-              mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
-              additionalTools: runtimeTools.tools,
+          if (turnMessages.length === 0) {
+            const fallbackSpeaker = selection.speakers[0] ?? members[0];
+            const fallbackContent = `${fallbackSpeaker.name}：我已经收到这条消息，但还需要更多信息才能给出有价值的判断。你可以补充目标、约束或期望输出。`;
+            turnMessages.push({
+              speaker: fallbackSpeaker,
+              kind: "question",
+              content: fallbackContent,
+              mentions: ["user"],
+              roundIndex: 0,
             });
-          } else if (plan.strategy === "specialist_question") {
-            const directQuestion =
-              specialistOutputs.find((output) => output.userContactMode === "specialist_direct")
-                ?.userQuestionDraft ||
-              specialistOutputs.find((output) => output.userContactMode === "manager_relay")
-                ?.userQuestionDraft ||
-              plan.userQuestion ||
-              "为了继续推进，我还需要你补充一项关键信息。";
-            finalResponse = {
-              speaker: plan.questionMode === "specialist_direct" ? plan.speaker : manager,
-              content:
-                plan.questionMode === "specialist_direct"
-                  ? `@你 ${directQuestion}`
-                  : `${manager.name}：我先替 ${plan.speaker.name} 确认一个关键信息：${directQuestion}`,
-              summary: trimHeadline(directQuestion || input),
-            };
-            updatedContext = {
-              ...updatedContext,
-              phase: plan.nextPhase || "等待用户确认",
-              recentDecisions: Array.from(
-                new Set([
-                  trimHeadline(`${plan.speaker.name} 需要用户确认关键输入`),
-                  ...updatedContext.recentDecisions,
-                ]),
-              ).slice(0, 5),
-            };
-            this.storage.updateTeamContext(team.id, updatedContext);
-          } else {
-            finalResponse = await summarizeTeamConversation({
-              provider: provider!,
-              profile: snapshot.profile,
-              team: {
-                ...team,
-                context: updatedContext,
-              },
-              manager,
-              context: updatedContext,
-              userInput: input,
-              intentSummary: plan.intentSummary,
-              specialistOutputs,
-              workspacePath,
-              conversationId: conversation.id,
-              runId,
-              mcpServers: availableMcpServers,
-              mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
-              additionalTools: runtimeTools.tools,
-            });
-          }
-
-          const specialistAlreadySpoke =
-            plan.strategy === "specialist_question" &&
-            specialistOutputs.some((output) => output.userContactMode === "specialist_direct");
-
-          if (!specialistAlreadySpoke) {
             this.storage.addMessage({
               conversationId: conversation.id,
-              senderId: finalResponse.speaker.id,
-              senderName: finalResponse.speaker.name,
+              senderId: fallbackSpeaker.id,
+              senderName: fallbackSpeaker.name,
               senderKind: "agent",
-              messageType:
-                plan.strategy === "specialist_question" && finalResponse.speaker.id !== manager.id
-                  ? "notification"
-                  : "agent",
+              messageType: "notification",
               visibility: "public",
-              content: finalResponse.content,
+              content: fallbackContent,
               mentions: ["user"],
               runId,
               metadata: {
-                summary: plan.strategy === "collaborate",
-                strategy: plan.strategy,
-                specialistCount: specialistOutputs.length,
-                userContactMode: plan.questionMode,
-                relayedByManager:
-                  plan.strategy === "specialist_question" && plan.questionMode === "manager_relay",
-                directFromSpecialist:
-                  plan.strategy === "specialist_question" &&
-                  plan.questionMode === "specialist_direct" &&
-                  finalResponse.speaker.id !== manager.id,
+                teamId: team.id,
+                mode: selection.mode,
+                fallback: true,
               },
               createdAt: Date.now(),
             });
           }
 
-          const isMention = plan.strategy === "specialist_question";
+          const lastMessage = turnMessages.at(-1);
+          const hasMention = turnMessages.some((message) => message.mentions.includes("user"));
           const notificationBody = trimHeadline(
-            finalResponse.content.replace(/^@你\s*/, "") || `${team.name} 中有新的回复。`,
+            lastMessage?.content.replace(/^@你\s*/, "") || `${team.name} 中有新的回复。`,
           );
 
           this.createAppNotification(
             {
-              type: isMention ? "mention" : "group_message",
-              title: isMention
-                ? `${finalResponse.speaker.name} 在 ${team.name} 中 @ 了你`
+              type: hasMention ? "mention" : "group_message",
+              title: hasMention
+                ? `${lastMessage?.speaker.name ?? team.name} 在 ${team.name} 中 @ 了你`
                 : `${team.name} 有新消息`,
               body: notificationBody,
               relatedConversationId: conversation.id,
               relatedRunId: runId,
             },
-            isMention ? "mention" : "group_message",
+            hasMention ? "mention" : "group_message",
           );
         },
       },
       {
-        label: "落盘产物",
+        label: "更新群组记忆",
         execute: () => {
-          const effectiveFinalResponse =
-            finalResponse ??
-            ({
-              speaker: manager,
-              content: plan?.directReply ?? `${manager.name} 已完成当前群组处理。`,
-              summary: trimHeadline(plan?.intentSummary || input),
-            } satisfies TeamFinalResponse);
-          const effectiveSpecialists =
-            specialistOutputs.length > 0
-              ? specialistOutputs.map((item) => item.specialist)
-              : plan?.assignments.map((assignment) => assignment.specialist) ?? [];
-          const specialistSummary =
-            effectiveSpecialists.map((agent) => agent.name).join("、") || "无";
-          const artifactPath = this.writeTeamArtifact(
-            conversation.id,
-            workspacePath,
-            runId,
-            team,
-            manager,
-            effectiveSpecialists,
-            input,
-            updatedContext,
-            specialistOutputs,
-            effectiveFinalResponse,
-          );
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
             "shared-memory.md",
-            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 协作：${specialistSummary} | 输出：${trimHeadline(
-              effectiveFinalResponse.content,
-            )}`,
+            `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${turnMessages
+              .map((message) => message.speaker.name)
+              .join("、") || "无"} | 结论：${trimHeadline(turnMessages.at(-1)?.content ?? "")}`,
           );
           this.addRunMessage(
             conversation.id,
             runId,
-            `群组协作产物已写入：${artifactPath}\n共享记忆已更新：${sharedMemoryPath}`,
+            `共享记忆已更新：${sharedMemoryPath}`,
             "system",
           );
           const currentRun = this.storage.getRun(runId);
           this.storage.updateRun(runId, {
             metadata: {
               ...(currentRun?.metadata ?? {}),
-              artifactPath,
               memoryPath: sharedMemoryPath,
+              mode: selection?.mode,
+              speakerIds: turnMessages.map((message) => message.speaker.id),
             },
           });
         },
@@ -1659,9 +1505,9 @@ export class TeamalignedRuntime extends EventEmitter {
     this.beginRun({
       runId,
       conversationId: conversation.id,
-      title: `${team.name} 群组协作`,
+      title: `${team.name} 群聊发言`,
       kind: "team_task",
-      actorId: manager.id,
+      actorId: members[0]?.id ?? "system",
       steps,
     });
   }
@@ -1672,7 +1518,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const actorId =
       conversation.kind === "agent"
         ? conversation.targetId
-        : chooseManager(snapshot.teams.find((item) => item.id === conversation.targetId)!, snapshot.agents)?.id ??
+        : chooseTeamRepresentative(snapshot.teams.find((item) => item.id === conversation.targetId)!, snapshot.agents)?.id ??
           "system";
 
     const runId = `run-${nanoid(8)}`;
@@ -2016,18 +1862,18 @@ export class TeamalignedRuntime extends EventEmitter {
   ) {
     const agents = this.storage.listAgents();
     const teams = this.storage.listTeams();
-    const manager =
+    const representative =
       conversation.kind === "team"
         ? (() => {
             const team = teams.find((item) => item.id === conversation.targetId);
-            return team ? chooseManager(team, agents) : null;
+            return team ? chooseTeamRepresentative(team, agents) : null;
           })()
         : null;
     const directAgent =
       conversation.kind === "agent"
         ? agents.find((item) => item.id === conversation.targetId) ?? null
         : null;
-    const sender = directAgent ?? manager;
+    const sender = directAgent ?? representative;
     const items = input.items?.filter((item) => item.trim().length > 0) ?? [];
     const contentLines = [
       input.title,
@@ -2140,73 +1986,6 @@ export class TeamalignedRuntime extends EventEmitter {
       metadata: {
         agentId: agent.id,
         skill: activeSkill,
-      },
-    });
-    return artifactPath;
-  }
-
-  private writeTeamArtifact(
-    conversationId: string,
-    workspacePath: string,
-    runId: string,
-    team: TeamRecord,
-    manager: AgentRecord,
-    specialists: AgentRecord[],
-    input: string,
-    context: TeamContext,
-    specialistOutputs: TeamSpecialistOutput[],
-    finalResponse: TeamFinalResponse,
-  ) {
-    this.ensureWorkspaceFolders(workspacePath);
-    const artifactPath = this.getArtifactPath(workspacePath, `team-${runId}.md`);
-    this.writeTextFile(
-      artifactPath,
-      [
-        "# Team 协作产物",
-        "",
-        `- 群组：${team.name}`,
-        `- 经理：${manager.name}`,
-        `- 协作者：${specialists.map((agent) => agent.name).join("、") || "无"}`,
-        `- 输入：${input}`,
-        `- 阶段：${context.phase}`,
-        "",
-        "## 群组上下文",
-        "",
-        `- 目标：${team.objective}`,
-        `- 当前任务：${context.activeTasks.join("、") || "暂无"}`,
-        "",
-        "## Specialist 协作",
-        "",
-        specialistOutputs.length > 0
-          ? specialistOutputs
-              .map(
-                (item) =>
-                  `### ${item.specialist.name}\n\n- 任务：${item.task}\n- 可见性：${item.userContactMode === "specialist_direct" ? "public" : item.visibility}\n- 用户交互方式：${item.userContactMode}\n${
-                    item.userQuestionDraft ? `- 问题草案：${item.userQuestionDraft}\n` : ""
-                  }- 输出：${item.content}\n`,
-              )
-              .join("\n")
-          : "本轮没有 specialist 协作。",
-        "",
-        "## 最终回复",
-        "",
-        `- 发言人：${finalResponse.speaker.name}`,
-        "",
-        finalResponse.content,
-        "",
-      ].join("\n"),
-    );
-    this.storage.recordArtifact({
-      conversationId,
-      runId,
-      artifactKind: "team_output",
-      title: `${team.name} 协作产物`,
-      path: artifactPath,
-      workspacePath,
-      metadata: {
-        teamId: team.id,
-        managerId: manager.id,
-        specialistIds: specialists.map((agent) => agent.id),
       },
     });
     return artifactPath;

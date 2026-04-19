@@ -57,7 +57,7 @@ teamaligned
 
 - `TeamalignedRuntime` 主编排器
 - 单聊 DeepAgents 调用链
-- 群聊 manager / specialist 编排
+- 群聊自然发言编排
 - Skills registry / 安装 / 激活 / 脚本执行
 - MCP registry / 连接 / 健康检查 / tool discovery
 - 本地工具层：文件、搜索、命令
@@ -185,10 +185,10 @@ TeamalignedRuntime
 │  ├─ Workspace Tools
 │  └─ MCP Tools
 ├─ Team Runtime
-│  ├─ Manager Planning
-│  ├─ Specialist Assignment
-│  ├─ User Contact Control
-│  └─ Final Summarization
+│  ├─ Speaker Selection
+│  ├─ Natural Multi-Agent Replies
+│  ├─ Controlled Multi-Round Collaboration
+│  └─ Team Memory Updates
 ├─ Slash Command Router
 ├─ Provider Validation / Connection Test
 ├─ Skill Registry
@@ -241,32 +241,32 @@ TeamalignedRuntime
 
 ### 当前真实链路
 
-群聊已经不是脚本化演示，而是基于真实模型做的本地编排。
+群聊已经不是脚本化演示，也不再默认采用 manager 主导模型。
 
 当前流程：
 
 1. 用户消息进入 `TeamalignedRuntime`
-2. `team-runtime.ts` 生成 manager 规划
-3. 规划决定：
-   - `manager_direct`
-   - `specialist_question`
-   - `collaborate`
-4. specialist 被真实分配任务
-5. manager 汇总 specialist 结果后再对外回复
+2. runtime 读取群组成员，最多激活 5 个 Agent
+3. `team-runtime.ts` 中不可见的 system orchestrator 判断模式
+   - `focused`
+   - `multi_voice`
+   - `collaboration`
+4. 如果用户 `@Agent`，被点名 Agent 优先发言
+5. 如果没有 `@`，系统根据语义选择 1 到 5 个相关 Agent
+6. 被选中的 Agent 像真实群成员一样在主线程自然发言
+7. collaboration 模式下，Agent 可以互相 `@`，但最多 2 个小轮、最多 8 条 Agent 消息
 
 ### 群聊发言控制
 
-当前群聊已实现三种用户接触模式：
+当前群聊的控制原则：
 
-- `none`
-- `manager_relay`
-- `specialist_direct`
-
-这意味着当前已经支持：
-
-- manager 默认对外发言
-- specialist 默认内部协作
-- manager 授权 specialist 直接 `@用户`
+- 默认没有用户可见的 manager
+- 群组最多 5 个 Agent
+- 普通问题通常 1 到 2 个 Agent 发言
+- 多视角问题 2 到 4 个 Agent 发言
+- 复杂协作 3 到 5 个 Agent 发言
+- Agent 没有新增观点时应保持沉默
+- Agent 互相 `@` 只能触发下一小轮，不能无限循环
 
 ### 群聊上下文
 
@@ -457,7 +457,7 @@ MCP 当前尚未完成：
 - Electron 桌面应用可运行
 - Figma 对齐后的核心 UI 已落成
 - 单聊真实模型调用
-- 群聊真实 manager / specialist 编排
+- 群聊真实自然发言编排
 - slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - Skills registry / 安装 / 激活 / 脚本执行
 - MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入

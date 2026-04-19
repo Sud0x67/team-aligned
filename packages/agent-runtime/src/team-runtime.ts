@@ -6,7 +6,6 @@ import type {
   AgentRecord,
   McpCatalogRecord,
   McpConnectionRecord,
-  MessageVisibility,
   ProviderConfig,
   TeamContext,
   TeamRecord,
@@ -19,90 +18,44 @@ import {
 } from "./deep-agent.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
-type UserContactMode = "none" | "manager_relay" | "specialist_direct";
+export const TEAM_MEMBER_LIMIT = 5;
+export const MAX_TEAM_TURN_MESSAGES = 8;
+export const MAX_TEAM_SUBROUNDS = 2;
 
-const teamPlanSchema = z.object({
-  strategy: z.enum(["manager_direct", "specialist_question", "collaborate"]),
-  intentSummary: z.string().default(""),
-  directReply: z.string().default(""),
-  kickoffReply: z.string().default(""),
-  speakerSpecialistId: z.string().default(""),
-  userQuestion: z.string().default(""),
-  questionMode: z.enum(["manager_relay", "specialist_direct"]).default("manager_relay"),
-  questionReason: z.string().default(""),
-  assignments: z
-    .array(
-      z.object({
-        specialistId: z.string(),
-        task: z.string(),
-        reason: z.string().default(""),
-      }),
-    )
-    .max(3)
-    .default([]),
-  nextPhase: z.string().default(""),
+export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
+
+export type NaturalTeamSpeakerSelection = {
+  mode: NaturalTeamMode;
+  speakers: AgentRecord[];
+  reason: string;
+  activeTask: string;
+  nextPhase: string;
+  decision: string;
+};
+
+export type NaturalTeamAgentMessage = {
+  speaker: AgentRecord;
+  kind: "reply" | "suggestion" | "question" | "handoff" | "result";
+  content: string;
+  mentions: string[];
+  roundIndex: number;
+};
+
+const naturalSelectionSchema = z.object({
+  mode: z.enum(["focused", "multi_voice", "collaboration"]).default("focused"),
+  speakerIds: z.array(z.string()).max(TEAM_MEMBER_LIMIT).default([]),
+  reason: z.string().default(""),
   activeTask: z.string().default(""),
+  nextPhase: z.string().default(""),
   decision: z.string().default(""),
 });
 
-type TeamPlan = {
-  strategy: "manager_direct" | "specialist_question" | "collaborate";
-  intentSummary: string;
-  directReply: string;
-  kickoffReply: string;
-  speakerSpecialistId: string;
-  userQuestion: string;
-  questionMode: UserContactMode;
-  questionReason: string;
-  assignments: Array<{
-    specialistId: string;
-    task: string;
-    reason: string;
-  }>;
-  nextPhase: string;
-  activeTask: string;
-  decision: string;
-};
-
-export type TeamAssignment = {
-  specialist: AgentRecord;
-  task: string;
-  reason: string;
-  visibility: MessageVisibility;
-  userContactMode: UserContactMode;
-  questionReason: string;
-};
-
-export type TeamExecutionPlan = {
-  strategy: "manager_direct" | "specialist_question" | "collaborate";
-  intentSummary: string;
-  directReply: string;
-  kickoffReply: string;
-  userQuestion: string;
-  questionMode: UserContactMode;
-  questionReason: string;
-  nextPhase: string;
-  activeTask: string;
-  decision: string;
-  assignments: TeamAssignment[];
-  speaker: AgentRecord;
-};
-
-export type TeamSpecialistOutput = {
-  specialist: AgentRecord;
-  task: string;
-  reason: string;
-  visibility: MessageVisibility;
-  content: string;
-  userQuestionDraft: string;
-  userContactMode: UserContactMode;
-};
-
-export type TeamFinalResponse = {
-  speaker: AgentRecord;
-  content: string;
-  summary: string;
-};
+const naturalAgentReplySchema = z.object({
+  shouldSpeak: z.boolean().default(true),
+  kind: z.enum(["reply", "suggestion", "question", "handoff", "result"]).default("reply"),
+  content: z.string().default(""),
+  nextSpeakerIds: z.array(z.string()).max(TEAM_MEMBER_LIMIT).default([]),
+});
 
 function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
@@ -129,19 +82,6 @@ function buildContextText(team: TeamRecord, context: TeamContext) {
   ].join("\n");
 }
 
-function buildSpecialistRoster(specialists: AgentRecord[]) {
-  if (specialists.length === 0) {
-    return "当前没有可调度的 specialist。";
-  }
-
-  return specialists
-    .map(
-      (agent) =>
-        `- id=${agent.id} | name=${agent.name} | role=${agent.role} | capabilities=${agent.capabilities.join("、") || "未设置"}`,
-    )
-    .join("\n");
-}
-
 function selectPublicHistory(history: { senderName: string; visibility: string; content: string }[]) {
   return history
     .filter((message) => message.visibility === "public")
@@ -149,135 +89,93 @@ function selectPublicHistory(history: { senderName: string; visibility: string; 
     .map((message) => `${message.senderName}：${compact(message.content)}`);
 }
 
-function fallbackDirectReply(manager: AgentRecord, input: string) {
-  return `${manager.name}：我已经收到你的请求“${input}”。我会先给出可执行建议，并在需要时继续协调团队成员。`;
+function buildNaturalRoster(members: AgentRecord[]) {
+  if (members.length === 0) {
+    return "当前群组没有可发言的 Agent。";
+  }
+
+  return members
+    .map(
+      (agent) =>
+        `- id=${agent.id} | name=${agent.name} | role=${agent.role} | capabilities=${agent.capabilities.join("、") || "未设置"}`,
+    )
+    .join("\n");
 }
 
-function fallbackKickoffReply(manager: AgentRecord, assignments: TeamAssignment[]) {
-  const names = assignments.map((item) => item.specialist.name).join("、");
-  return `${manager.name}：我先拉上 ${names || "团队成员"} 一起看这个问题，稍后给你一个整合后的结论。`;
+function clampSpeakersForMode(input: {
+  mode: NaturalTeamMode;
+  speakers: AgentRecord[];
+  members: AgentRecord[];
+}) {
+  const max =
+    input.mode === "focused" ? 2 : input.mode === "multi_voice" ? 4 : TEAM_MEMBER_LIMIT;
+  let speakers = input.speakers.slice(0, max);
+
+  if (input.mode === "collaboration" && speakers.length < Math.min(3, input.members.length)) {
+    const existingIds = new Set(speakers.map((agent) => agent.id));
+    speakers = [
+      ...speakers,
+      ...input.members.filter((agent) => !existingIds.has(agent.id)),
+    ].slice(0, Math.min(TEAM_MEMBER_LIMIT, input.members.length));
+  }
+
+  return speakers;
 }
 
-function fallbackSpecialistKickoff(manager: AgentRecord, specialist: AgentRecord) {
-  return `${manager.name}：这个问题需要 ${specialist.name} 先和你确认一个关键信息，确认后我们再继续推进。`;
-}
-
-function fallbackManagerRelayKickoff(manager: AgentRecord, specialist: AgentRecord) {
-  return `${manager.name}：我先替 ${specialist.name} 确认一个关键信息，确认后我们再继续推进。`;
-}
-
-function sanitizePlan(input: {
-  plan: TeamPlan;
-  manager: AgentRecord;
-  specialists: AgentRecord[];
-  explicitMentions: Set<string>;
+function selectFallbackSpeakers(input: {
+  members: AgentRecord[];
+  explicitMentionIds: string[];
   userInput: string;
 }) {
-  const { plan, manager, specialists, explicitMentions, userInput } = input;
-  const specialistMap = new Map(specialists.map((agent) => [agent.id, agent]));
-  const assignments: TeamAssignment[] = [];
+  const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
+  const explicit = input.explicitMentionIds
+    .map((id) => memberMap.get(id))
+    .filter((item): item is AgentRecord => item !== undefined);
 
-  for (const item of plan.assignments) {
-    const specialist = specialistMap.get(item.specialistId);
-    if (!specialist) continue;
-    if (assignments.some((assignment) => assignment.specialist.id === specialist.id)) continue;
-
-    assignments.push({
-      specialist,
-      task: compact(item.task) || `请从 ${specialist.role} 的角度处理这条请求：${userInput}`,
-      reason: compact(item.reason),
-      visibility: (explicitMentions.has(specialist.id) ? "public" : "internal") as MessageVisibility,
-      userContactMode: "none" as UserContactMode,
-      questionReason: "",
-    });
+  if (explicit.length > 0) {
+    const mode: NaturalTeamMode =
+      explicit.length >= 3 ? "collaboration" : explicit.length === 2 ? "multi_voice" : "focused";
+    return {
+      mode,
+      speakers: explicit.slice(0, TEAM_MEMBER_LIMIT),
+      reason: "用户显式 @ 了这些 Agent。",
+    };
   }
 
-  if (plan.strategy === "collaborate" && assignments.length === 0) {
-    assignments.push(
-      ...specialists.slice(0, 2).map((specialist) => ({
-        specialist,
-        task: `请从 ${specialist.role} 的角度处理这条请求：${userInput}`,
-        reason: "未提供有效分派，使用默认协作策略。",
-        visibility: (explicitMentions.has(specialist.id) ? "public" : "internal") as MessageVisibility,
-        userContactMode: "none" as UserContactMode,
-        questionReason: "",
-      })),
-    );
-  }
-
-  const strategy =
-    (plan.strategy ?? "manager_direct") === "collaborate" && assignments.length === 0
-      ? "manager_direct"
-      : (plan.strategy ?? "manager_direct");
-  const requestedQuestionMode =
-    plan.questionMode === "specialist_direct" ? "specialist_direct" : "manager_relay";
-
-  const speaker =
-    strategy === "specialist_question"
-      ? specialistMap.get(plan.speakerSpecialistId) ?? assignments[0]?.specialist ?? specialists[0] ?? manager
-      : manager;
-
-  const canDirectSpecialistQuestion =
-    strategy === "specialist_question" &&
-    speaker.id !== manager.id &&
-    requestedQuestionMode === "specialist_direct" &&
-    (explicitMentions.has(speaker.id) || assignments.length <= 1);
-  const questionMode: UserContactMode =
-    strategy === "specialist_question"
-      ? canDirectSpecialistQuestion
-        ? "specialist_direct"
-        : "manager_relay"
-      : "none";
-  const questionReason =
-    compact(plan.questionReason ?? "") ||
-    (questionMode === "specialist_direct"
-      ? "manager 授权 specialist 直接向用户确认关键输入。"
-      : questionMode === "manager_relay"
-        ? "由 manager 统一向用户确认，避免主线程被多个 specialist 同时打断。"
-        : "");
-
-  if (strategy === "specialist_question" && speaker.id !== manager.id) {
-    const existing = assignments.find((assignment) => assignment.specialist.id === speaker.id);
-    if (existing) {
-      existing.userContactMode = questionMode;
-      existing.visibility = questionMode === "specialist_direct" ? "public" : "internal";
-      existing.questionReason = questionReason;
-    } else {
-      assignments.unshift({
-        specialist: speaker,
-        task:
-          compact(plan.userQuestion) ||
-          "请直接向用户确认继续推进所需的关键信息。",
-        reason: "manager 判断当前需要由 specialist 提供一条待确认问题。",
-        visibility: questionMode === "specialist_direct" ? "public" : "internal",
-        userContactMode: questionMode,
-        questionReason,
-      });
+  const normalized = input.userInput.toLowerCase();
+  const scored = input.members.map((agent) => {
+    const haystack = `${agent.name} ${agent.role} ${agent.capabilities.join(" ")}`.toLowerCase();
+    let score = 0;
+    for (const token of normalized.split(/\s+|，|。|,|\.|；|;|：|:/).filter(Boolean)) {
+      if (token.length >= 2 && haystack.includes(token)) score += 2;
     }
-  }
+    if (/ui|ux|设计|界面|视觉|交互|figma/.test(normalized) && /设计|ui|ux|designer/.test(haystack)) score += 5;
+    if (/代码|实现|开发|bug|报错|构建|electron|react|typescript|node/.test(normalized) && /开发|代码|coder|工程|前端|后端/.test(haystack)) score += 5;
+    if (/测试|质量|验证|回归|用例/.test(normalized) && /测试|质量|qa|tester/.test(haystack)) score += 5;
+    if (/计划|拆解|规划|优先级|路线|todo/.test(normalized) && /计划|项目|planner|经理|pm/.test(haystack)) score += 5;
+    if (/数据|分析|指标|统计|图表/.test(normalized) && /数据|分析|analyst|nova/.test(haystack)) score += 5;
+    if (/研究|调研|竞品|资料|搜索/.test(normalized) && /研究|调研|research/.test(haystack)) score += 5;
+    return { agent, score };
+  });
 
+  const complex = /大家|一起|讨论|脑暴|brainstorm|多角度|分工|协作|分别|评审|review/.test(normalized);
+  const mode: NaturalTeamMode = complex ? "collaboration" : "focused";
+  const take = complex ? Math.min(TEAM_MEMBER_LIMIT, input.members.length) : Math.min(2, input.members.length);
   return {
-    strategy,
-    intentSummary: compact(plan.intentSummary ?? ""),
-    directReply: compact(plan.directReply ?? ""),
-    kickoffReply:
-      compact(plan.kickoffReply ?? "") ||
-      (strategy === "specialist_question" && speaker.id !== manager.id
-        ? questionMode === "specialist_direct"
-          ? fallbackSpecialistKickoff(manager, speaker)
-          : fallbackManagerRelayKickoff(manager, speaker)
-        : strategy === "collaborate"
-          ? fallbackKickoffReply(manager, assignments)
-          : ""),
-    userQuestion: compact(plan.userQuestion ?? ""),
-    questionMode,
-    questionReason,
-    nextPhase: compact(plan.nextPhase ?? ""),
-    activeTask: compact(plan.activeTask ?? ""),
-    decision: compact(plan.decision ?? ""),
-    assignments,
-    speaker,
-  } satisfies TeamExecutionPlan;
+    mode,
+    speakers: scored
+      .sort((a, b) => b.score - a.score || a.agent.name.localeCompare(b.agent.name, "zh-Hans-CN"))
+      .map((item) => item.agent)
+      .slice(0, take),
+    reason: complex ? "用户表达了多 Agent 协作意图。" : "根据角色和能力选择最相关 Agent。",
+  };
+}
+
+function extractMentionedAgentIds(content: string, members: AgentRecord[]) {
+  const names = [...content.matchAll(/@([\w\u4e00-\u9fa5-]+)/g)].map((item) => item[1].toLowerCase());
+  return members
+    .filter((agent) => names.includes(agent.name.toLowerCase()))
+    .map((agent) => agent.id);
 }
 
 function createEphemeralWorker(input: {
@@ -339,305 +237,209 @@ async function invokeWorkerText(input: {
   );
 }
 
-export async function planTeamConversation(input: {
+export async function selectNaturalTeamSpeakers(input: {
   provider: ProviderConfig;
   team: TeamRecord;
-  manager: AgentRecord;
-  specialists: AgentRecord[];
+  members: AgentRecord[];
   profile: UserProfile;
   context: TeamContext;
   history: { senderName: string; visibility: string; content: string }[];
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
-  mcpConnections: McpConnectionRecord[];
 }) {
-  const model = createProviderModel(input.provider).withStructuredOutput(teamPlanSchema);
-  const prompt = [
-    `你是群组 ${input.team.name} 的 manager，名字是 ${input.manager.name}，角色是 ${input.manager.role}。`,
-    "你的工作是决定这条用户消息应该直接回复、交给 specialist 提问，还是进入多人协作。",
-    "请严格基于当前候选 specialist 做决策，不要编造不存在的成员。",
-    "如果信息不足且最好由某位专家直接向用户确认，请选择 specialist_question。",
-    "如果 manager 自己就能回答，请选择 manager_direct。",
-    "如果需要多人协作，请选择 collaborate。",
-    "",
-    "当前用户资料：",
-    `- 姓名：${input.profile.name}`,
-    `- 角色：${input.profile.role || "未设置"}`,
-    `- 团队：${input.profile.team || "未设置"}`,
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    "候选 specialist：",
-    buildSpecialistRoster(input.specialists),
-    "",
-    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-    "",
-    "最近公开对话：",
-    buildRecentHistory(selectPublicHistory(input.history)),
-    "",
-    "用户最新输入：",
-    input.userInput,
-    "",
-    `用户显式提及的成员 id：${input.explicitMentionIds.join("、") || "无"}`,
-    "",
-    "输出要求：",
-    "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-    "- strategy 只能是 manager_direct / specialist_question / collaborate",
-    "- 如果是 collaborate，请给出 assignments",
-    "- 如果是 specialist_question，请尽量给出 speakerSpecialistId、userQuestion 和 kickoffReply",
-    "- assignments.specialistId 必须来自候选 specialist 的 id",
-    "- directReply / kickoffReply / userQuestion 都应尽量简洁，贴近群聊口吻",
-    "- 决策应尽量使用与用户相同的语言",
-  ].join("\n");
-
-  const rawPlan = teamPlanSchema.parse(await model.invoke(prompt));
-  const plan: TeamPlan = {
-    strategy: rawPlan.strategy ?? "manager_direct",
-    intentSummary: rawPlan.intentSummary ?? "",
-    directReply: rawPlan.directReply ?? "",
-    kickoffReply: rawPlan.kickoffReply ?? "",
-    speakerSpecialistId: rawPlan.speakerSpecialistId ?? "",
-    userQuestion: rawPlan.userQuestion ?? "",
-    questionMode: rawPlan.questionMode ?? "manager_relay",
-    questionReason: rawPlan.questionReason ?? "",
-    assignments: rawPlan.assignments ?? [],
-    nextPhase: rawPlan.nextPhase ?? "",
-    activeTask: rawPlan.activeTask ?? "",
-    decision: rawPlan.decision ?? "",
-  };
-  return sanitizePlan({
-    plan,
-    manager: input.manager,
-    specialists: input.specialists,
-    explicitMentions: new Set(input.explicitMentionIds),
+  const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
+  const fallback = selectFallbackSpeakers({
+    members: cappedMembers,
+    explicitMentionIds: input.explicitMentionIds,
     userInput: input.userInput,
   });
-}
 
-export async function runSpecialistAssignment(input: {
-  provider: ProviderConfig;
-  team: TeamRecord;
-  manager: AgentRecord;
-  assignment: TeamAssignment;
-  profile: UserProfile;
-  context: TeamContext;
-  userInput: string;
-  workspacePath: string;
-  conversationId: string;
-  runId: string;
-  mcpServers: McpCatalogRecord[];
-  mcpConnections: McpConnectionRecord[];
-  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
-  additionalTools?: StructuredToolInterface[];
-}) {
-  const { assignment } = input;
-  if (assignment.userContactMode === "manager_relay" || assignment.userContactMode === "specialist_direct") {
-    const questionSchema = z.object({
-      internalNote: z.string().default(""),
-      userQuestionDraft: z.string().default(""),
-    });
-    const questionModel = createProviderModel(input.provider).withStructuredOutput(questionSchema);
-    const result = questionSchema.parse(
-      await questionModel.invoke([
-        `你是群组 ${input.team.name} 中的 specialist：${assignment.specialist.name}。`,
-        `你的角色：${assignment.specialist.role}。`,
-        `群组的 manager 是 ${input.manager.name}。`,
-        `当前用户：${input.profile.name} / ${input.profile.role || "未设置"}。`,
-        `当前任务：${assignment.task}`,
-        `用户原始请求：${input.userInput}`,
-        assignment.reason ? `分配原因：${assignment.reason}` : "",
-        `用户交互方式：${assignment.userContactMode}`,
-        `交互原因：${assignment.questionReason}`,
+  if (cappedMembers.length === 0) {
+    return {
+      mode: "focused",
+      speakers: [],
+      reason: "群组没有可用成员。",
+      activeTask: "",
+      nextPhase: "",
+      decision: "",
+    } satisfies NaturalTeamSpeakerSelection;
+  }
+
+  if (input.explicitMentionIds.length > 0) {
+    return {
+      mode: fallback.mode,
+      speakers: clampSpeakersForMode({
+        mode: fallback.mode,
+        speakers: fallback.speakers,
+        members: cappedMembers,
+      }),
+      reason: fallback.reason,
+      activeTask: compact(input.userInput),
+      nextPhase: "",
+      decision: "",
+    } satisfies NaturalTeamSpeakerSelection;
+  }
+
+  try {
+    const model = createProviderModel(input.provider).withStructuredOutput(naturalSelectionSchema);
+    const result = naturalSelectionSchema.parse(
+      await model.invoke([
+        "你是 teamaligned 群聊中的不可见 system orchestrator。",
+        "你的任务不是作为群成员发言，而是选择本轮应该发言的 Agent。",
+        "请让群聊像真实人类群聊一样自然：该谁说谁说，没必要全员发言。",
+        `群组最多激活 ${TEAM_MEMBER_LIMIT} 个 Agent。`,
+        "普通问题选择 1 到 2 个 Agent；多视角问题选择 2 到 4 个 Agent；明确脑暴、分工、复杂协作选择 3 到 5 个 Agent。",
+        "如果某个 Agent 没有明显贡献，不要选择它。",
         "",
-        "你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释。",
-        "请输出两部分：",
-        "- internalNote：给 manager 的内部说明，解释为什么需要确认",
-        "- userQuestionDraft：要确认的那一句问题",
+        "模式定义：focused / multi_voice / collaboration。",
         "",
-        assignment.userContactMode === "specialist_direct"
-          ? "因为本次已授权你直接向用户确认，所以 userQuestionDraft 必须是你会直接发给用户的单句问题。"
-          : "因为本次由 manager 代为确认，所以 userQuestionDraft 必须是可由 manager 转述的单句问题。",
-        "两段都应简洁、具体、使用与用户一致的语言，不要输出多余前后缀。",
+        "当前用户资料：",
+        `- 姓名：${input.profile.name}`,
+        `- 角色：${input.profile.role || "未设置"}`,
+        `- 团队：${input.profile.team || "未设置"}`,
+        "",
+        "群组上下文：",
+        buildContextText(input.team, input.context),
+        "",
+        "Agent roster：",
+        buildNaturalRoster(cappedMembers),
+        "",
+        `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+        "",
+        "最近公开对话：",
+        buildRecentHistory(selectPublicHistory(input.history)),
+        "",
+        "用户最新输入：",
+        input.userInput,
+        "",
+        "输出要求：",
+        "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
+        "- speakerIds 必须来自 roster id",
       ].join("\n")),
     );
 
+    const memberMap = new Map(cappedMembers.map((agent) => [agent.id, agent]));
+    const rawSpeakers = result.speakerIds
+      .map((id) => memberMap.get(id))
+      .filter((item): item is AgentRecord => item !== undefined);
+    const speakers = rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers;
+    const mode = result.mode ?? fallback.mode;
+
     return {
-      specialist: assignment.specialist,
-      task: assignment.task,
-      reason: assignment.reason,
-      visibility: assignment.visibility,
-      content:
-        compact(result.internalNote) ||
-        `建议向用户确认：${compact(result.userQuestionDraft) || assignment.task}`,
-      userQuestionDraft: compact(result.userQuestionDraft) || assignment.task,
-      userContactMode: assignment.userContactMode,
-    } satisfies TeamSpecialistOutput;
+      mode,
+      speakers: clampSpeakersForMode({ mode, speakers, members: cappedMembers }),
+      reason: compact(result.reason) || fallback.reason,
+      activeTask: compact(result.activeTask ?? ""),
+      nextPhase: compact(result.nextPhase ?? ""),
+      decision: compact(result.decision ?? ""),
+    } satisfies NaturalTeamSpeakerSelection;
+  } catch {
+    return {
+      mode: fallback.mode,
+      speakers: clampSpeakersForMode({
+        mode: fallback.mode,
+        speakers: fallback.speakers,
+        members: cappedMembers,
+      }),
+      reason: fallback.reason,
+      activeTask: compact(input.userInput),
+      nextPhase: "",
+      decision: "",
+    } satisfies NaturalTeamSpeakerSelection;
+  }
+}
+
+export async function generateNaturalTeamAgentMessage(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  speaker: AgentRecord;
+  members: AgentRecord[];
+  profile: UserProfile;
+  context: TeamContext;
+  mode: NaturalTeamMode;
+  userInput: string;
+  roundIndex: number;
+  previousTurnMessages: NaturalTeamAgentMessage[];
+  workspacePath: string;
+  conversationId: string;
+  runId: string;
+  isFinalSpeaker: boolean;
+  mcpServers: McpCatalogRecord[];
+  mcpConnections: McpConnectionRecord[];
+  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  additionalTools?: StructuredToolInterface[];
+}) {
+  const replyModel = createProviderModel(input.provider).withStructuredOutput(naturalAgentReplySchema);
+  const previousText =
+    input.previousTurnMessages.length > 0
+      ? input.previousTurnMessages
+          .map((message) => `${message.speaker.name}：${message.content}`)
+          .join("\n")
+      : "本轮还没有其他 Agent 发言。";
+
+  const result = naturalAgentReplySchema.parse(
+    await replyModel.invoke([
+      `你是 ${input.team.name} 群聊中的成员 ${input.speaker.name}。`,
+      `你的角色：${input.speaker.role}。`,
+      `你的能力：${input.speaker.capabilities.join("、") || "未设置"}。`,
+      "你正在真实群聊里发言，不是写报告，也不是 manager 汇总。",
+      "请像人类群成员一样自然、简洁、具体地说话。",
+      "",
+      "硬性规则：",
+      "- 如果你的观点和前面 Agent 重复，请返回 shouldSpeak=false",
+      "- 如果你没有明显贡献，请返回 shouldSpeak=false",
+      "- 不要为了发言而发言",
+      "- 除非用户要求详细分析，否则保持简短",
+      "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
+      input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
+      `- 当前模式：${input.mode}`,
+      `- 当前小轮：${input.roundIndex + 1} / ${MAX_TEAM_SUBROUNDS}`,
+      "",
+      "群组上下文：",
+      buildContextText(input.team, input.context),
+      "",
+      "当前群成员：",
+      buildNaturalRoster(input.members),
+      "",
+      `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+      "",
+      "用户资料：",
+      `- 姓名：${input.profile.name}`,
+      `- 角色：${input.profile.role || "未设置"}`,
+      "",
+      "用户消息：",
+      input.userInput,
+      "",
+      "本轮已有发言：",
+      previousText,
+      "",
+      "输出要求：",
+      "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
+      "- content 是你要发到群里的自然语言消息",
+      "- nextSpeakerIds 只能包含 roster 中的 id，只有当你明确 @ 对方时才填写",
+      "- 如果 shouldSpeak=false，content 可以为空",
+      "- kind 可用 reply / suggestion / question / handoff / result",
+    ].filter(Boolean).join("\n")),
+  );
+
+  if (!result.shouldSpeak || !compact(result.content)) {
+    return null;
   }
 
-  const specialistPrompt = [
-    `你是群组 ${input.team.name} 中的 specialist：${assignment.specialist.name}。`,
-    `你的角色：${assignment.specialist.role}。`,
-    `群组的 manager 是 ${input.manager.name}。`,
-    "你正在 teamaligned 的本地群组运行时中协作，请像一个资深专业成员一样给出可执行反馈。",
-    "默认你是在给 manager 回报，不要直接对用户下结论，也不要自称是 manager。",
-    "如果任务信息不足，可以明确指出缺口，但先给出你目前能判断的内容。",
-    "回复尽量简洁、具体、可执行，优先使用与用户相同的语言。",
-    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    `当前用户：${input.profile.name} / ${input.profile.role || "未设置"}`,
-    `当前任务：${assignment.task}`,
-  ].join("\n");
-
-  const workerMessage = [
-    `用户原始请求：${input.userInput}`,
-    `manager 分配给你的子任务：${assignment.task}`,
-    assignment.reason ? `分配原因：${assignment.reason}` : "",
-    "请从你的角色出发给出阶段性建议、风险和下一步动作。",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const content = await invokeWorkerText({
-    name: assignment.specialist.name,
-    provider: input.provider,
-    workspacePath: input.workspacePath,
-    systemPrompt: specialistPrompt,
-    message: workerMessage,
-    threadId: `${input.conversationId}:${input.runId}:${assignment.specialist.id}`,
-    memoryPaths: ["/memory/MEMORY.md"],
-    mcpServers: input.mcpServers,
-    mcpConnections: input.mcpConnections,
-    onMcpInvocation: input.onMcpInvocation,
-    additionalTools: input.additionalTools,
-  });
+  const memberIds = new Set(input.members.map((agent) => agent.id));
+  const mentionIds = Array.from(
+    new Set([
+      ...result.nextSpeakerIds.filter((id) => memberIds.has(id)),
+      ...extractMentionedAgentIds(result.content, input.members),
+    ]),
+  ).filter((id) => id !== input.speaker.id);
 
   return {
-    specialist: assignment.specialist,
-    task: assignment.task,
-    reason: assignment.reason,
-    visibility: assignment.visibility,
-    content,
-    userQuestionDraft: "",
-    userContactMode: "none",
-  } satisfies TeamSpecialistOutput;
-}
-
-export async function summarizeTeamConversation(input: {
-  provider: ProviderConfig;
-  team: TeamRecord;
-  manager: AgentRecord;
-  profile: UserProfile;
-  context: TeamContext;
-  userInput: string;
-  intentSummary: string;
-  specialistOutputs: TeamSpecialistOutput[];
-  workspacePath: string;
-  conversationId: string;
-  runId: string;
-  mcpServers: McpCatalogRecord[];
-  mcpConnections: McpConnectionRecord[];
-  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
-  additionalTools?: StructuredToolInterface[];
-}) {
-  const summaryPrompt = [
-    `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
-    "你要把多位 specialist 的内部反馈整理成一条面向用户的自然群聊回复。",
-    "保持像真实团队负责人一样沟通：简洁、清晰、可信、可执行。",
-    "不要原样转抄内部过程；可以适度总结不同 specialist 的观点。",
-    "如果存在明显风险或待确认项，请在回复里直接说清楚。",
-    "请优先使用与用户相同的语言。",
-    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    `当前用户：${input.profile.name} / ${input.profile.role || "未设置"}`,
-  ].join("\n");
-
-  const message = [
-    `用户原始请求：${input.userInput}`,
-    input.intentSummary ? `本轮意图摘要：${input.intentSummary}` : "",
-    "specialist 内部反馈：",
-    ...input.specialistOutputs.map(
-      (item, index) =>
-        `${index + 1}. ${item.specialist.name}（${item.specialist.role}）\n任务：${item.task}\n反馈：${item.content}`,
-    ),
-    "",
-    "请输出一条发给用户的最终回复，尽量包含：当前判断、建议动作、下一步。",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const content = await invokeWorkerText({
-    name: input.manager.name,
-    provider: input.provider,
-    workspacePath: input.workspacePath,
-    systemPrompt: summaryPrompt,
-    message,
-    threadId: `${input.conversationId}:${input.runId}:manager-summary`,
-    memoryPaths: ["/memory/MEMORY.md"],
-    mcpServers: input.mcpServers,
-    mcpConnections: input.mcpConnections,
-    onMcpInvocation: input.onMcpInvocation,
-    additionalTools: input.additionalTools,
-  });
-
-  return {
-    speaker: input.manager,
-    content,
-    summary: compact(content),
-  } satisfies TeamFinalResponse;
-}
-
-export async function generateManagerDirectReply(input: {
-  provider: ProviderConfig;
-  team: TeamRecord;
-  manager: AgentRecord;
-  profile: UserProfile;
-  context: TeamContext;
-  userInput: string;
-  workspacePath: string;
-  conversationId: string;
-  runId: string;
-  mcpServers: McpCatalogRecord[];
-  mcpConnections: McpConnectionRecord[];
-  onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
-  additionalTools?: StructuredToolInterface[];
-}) {
-  const systemPrompt = [
-    `你是群组 ${input.team.name} 的 manager：${input.manager.name}。`,
-    "这轮请求由你直接处理，不需要拉其他 specialist。",
-    "请像一个真实团队负责人一样直接回复用户，优先给出清晰、具体、可执行的答案。",
-    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    `当前用户：${input.profile.name} / ${input.profile.role || "未设置"}`,
-  ].join("\n");
-
-  const content = await invokeWorkerText({
-    name: input.manager.name,
-    provider: input.provider,
-    workspacePath: input.workspacePath,
-    systemPrompt,
-    message: `用户原始请求：${input.userInput}\n请直接完成本轮回复。`,
-    threadId: `${input.conversationId}:${input.runId}:manager-direct`,
-    memoryPaths: ["/memory/MEMORY.md"],
-    mcpServers: input.mcpServers,
-    mcpConnections: input.mcpConnections,
-    onMcpInvocation: input.onMcpInvocation,
-    additionalTools: input.additionalTools,
-  });
-
-  return {
-    speaker: input.manager,
-    content,
-    summary: compact(content),
-  } satisfies TeamFinalResponse;
+    speaker: input.speaker,
+    kind: result.kind ?? "reply",
+    content: result.content.trim(),
+    mentions: mentionIds,
+    roundIndex: input.roundIndex,
+  } satisfies NaturalTeamAgentMessage;
 }

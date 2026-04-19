@@ -3,6 +3,8 @@ import type { AgentRecord } from "@shared";
 import { AvatarBadge } from "../avatar-badge";
 import { AvatarPicker } from "../avatar-picker";
 
+const teamMemberLimit = 5;
+
 export type AgentFormState = {
   name: string;
   role: string;
@@ -229,13 +231,20 @@ export function TeamFormModal({
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-[13px] text-[var(--muted-foreground)]">{labels.chooseMembers}</label>
+          <div className="mb-1.5 flex items-center justify-between gap-3">
+            <label className="block text-[13px] text-[var(--muted-foreground)]">{labels.chooseMembers}</label>
+            <span className="text-[12px] text-[var(--muted-foreground)]">
+              {form.memberIds.length} / {teamMemberLimit}
+            </span>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             {agents.map((agent) => {
               const selected = form.memberIds.includes(agent.id);
+              const disabled = !selected && form.memberIds.length >= teamMemberLimit;
               return (
                 <button
                   key={agent.id}
+                  disabled={disabled}
                   onClick={() =>
                     onChange({
                       ...form,
@@ -247,7 +256,9 @@ export function TeamFormModal({
                   className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
                     selected
                       ? "border-[var(--primary)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] text-[var(--primary)]"
-                      : "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--muted)]"
+                      : disabled
+                        ? "cursor-not-allowed border-[var(--border)] text-[var(--muted-foreground)] opacity-45"
+                        : "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--muted)]"
                   }`}
                 >
                   <AvatarBadge

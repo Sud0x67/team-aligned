@@ -126,6 +126,7 @@ function normalizePromptAlias(value: string) {
 
 const agentPalette = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#3b82f6"];
 const teamPalette = ["#7c3aed", "#0ea5e9", "#14b8a6", "#8b5cf6"];
+const teamMemberLimit = 5;
 
 export class AppStorage {
   readonly rootDir: string;
@@ -383,6 +384,7 @@ export class AppStorage {
 
   createTeam(input: CreateTeamInput): TeamRecord {
     const id = `team-${nanoid(6)}`;
+    const memberIds = Array.from(new Set(input.memberIds)).slice(0, teamMemberLimit);
     const workspacePath = input.workspacePath || join(this.teamWorkspaceRoot, id);
     this.ensureWorkspaceLayout(workspacePath, {
       type: "team",
@@ -399,7 +401,7 @@ export class AppStorage {
       avatarColor: teamPalette[this.state.teams.length % teamPalette.length],
       objective: input.objective,
       workspacePath,
-      memberIds: input.memberIds,
+      memberIds,
       mcpWhitelist: this.listMcpConnections()
         .filter((connection) => connection.enabled && connection.status === "connected")
         .map((connection) => connection.serverId),
@@ -1810,6 +1812,7 @@ export class AppStorage {
         objective: this.preferStructuredValue(row.objective, payload.objective),
         workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
         avatarPath: row.avatar_path ?? payload.avatarPath ?? null,
+        memberIds: Array.from(new Set(payload.memberIds)).slice(0, teamMemberLimit),
       } satisfies TeamRecord;
     });
   }
