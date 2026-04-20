@@ -1,5 +1,5 @@
 import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -153,18 +153,47 @@ function resolveRuntimeRoot() {
 
 function copyMissingRuntimeEntries(sourceRoot: string, targetRoot: string) {
   if (!existsSync(sourceRoot)) return;
-  mkdirSync(targetRoot, { recursive: true });
+  try {
+    mkdirSync(targetRoot, { recursive: true });
+  } catch {
+    return;
+  }
 
   for (const entry of readdirSync(sourceRoot)) {
     const sourcePath = join(sourceRoot, entry);
     const targetPath = join(targetRoot, entry);
-
-    if (!existsSync(targetPath)) {
-      cpSync(sourcePath, targetPath, { recursive: true });
+    let sourceStat;
+    try {
+      sourceStat = lstatSync(sourcePath);
+    } catch {
       continue;
     }
 
-    if (statSync(sourcePath).isDirectory() && statSync(targetPath).isDirectory()) {
+    if (sourceStat.isSymbolicLink()) {
+      continue;
+    }
+
+    if (!existsSync(targetPath)) {
+      try {
+        cpSync(sourcePath, targetPath, { recursive: true });
+      } catch {
+        continue;
+      }
+      continue;
+    }
+
+    let targetStat;
+    try {
+      targetStat = lstatSync(targetPath);
+    } catch {
+      continue;
+    }
+
+    if (targetStat.isSymbolicLink()) {
+      continue;
+    }
+
+    if (sourceStat.isDirectory() && targetStat.isDirectory()) {
       copyMissingRuntimeEntries(sourcePath, targetPath);
     }
   }
