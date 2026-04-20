@@ -343,6 +343,7 @@ export function ChatPage() {
                 showMentions={activeConversation.kind === "team"}
                 profile={profile}
                 agents={agents}
+                teams={teams}
               />
             </div>
 

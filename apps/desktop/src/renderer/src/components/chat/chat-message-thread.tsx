@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Bot, Paperclip, ShieldAlert } from "lucide-react";
-import type { AgentRecord, AttachmentAssetRecord, MessageRecord, RunRecord, UserProfile } from "@shared";
+import type { AgentRecord, AttachmentAssetRecord, MessageRecord, RunRecord, TeamRecord, UserProfile } from "@shared";
 import { createTranslator } from "../../i18n";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { useAppStore } from "../../store/use-app-store";
@@ -36,6 +36,7 @@ function buildAvatarProps(
   input: {
     profile: UserProfile;
     agentMap: Map<string, AgentRecord>;
+    teamMap: Map<string, TeamRecord>;
   },
 ) {
   if (message.senderKind === "user") {
@@ -60,6 +61,17 @@ function buildAvatarProps(
       };
     }
 
+    const team = input.teamMap.get(message.senderId);
+    if (team) {
+      return {
+        src: team.avatarPath,
+        fallback: team.avatar,
+        alt: team.name,
+        style: { backgroundColor: `${team.avatarColor}20`, color: team.avatarColor },
+        textClassName: "text-xs font-semibold",
+      };
+    }
+
     return {
       src: null,
       fallback: message.senderName.slice(0, 1) || "A",
@@ -77,6 +89,7 @@ function resolveMentionLabel(
   input: {
     profile: UserProfile;
     agentMap: Map<string, AgentRecord>;
+    teamMap: Map<string, TeamRecord>;
   },
 ) {
   if (mention === "user") {
@@ -86,6 +99,11 @@ function resolveMentionLabel(
   const agent = input.agentMap.get(mention);
   if (agent) {
     return agent.name;
+  }
+
+  const team = input.teamMap.get(mention);
+  if (team) {
+    return team.name;
   }
 
   return mention.replace(/^agent-/, "");
@@ -101,6 +119,7 @@ export function ChatMessageThread({
   showMentions,
   profile,
   agents,
+  teams,
 }: {
   conversationId: string;
   messages: MessageRecord[];
@@ -116,6 +135,7 @@ export function ChatMessageThread({
   showMentions: boolean;
   profile: UserProfile;
   agents: AgentRecord[];
+  teams: TeamRecord[];
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -125,6 +145,7 @@ export function ChatMessageThread({
   const shouldStickToBottomRef = useRef(true);
   const lastRunIdRef = useRef<string | null>(null);
   const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+  const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
 
   const updateShouldStickToBottom = () => {
     const container = scrollContainerRef.current;
@@ -173,7 +194,7 @@ export function ChatMessageThread({
             const isCommandCard = message.metadata?.cardType === "command_result";
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
-            const avatar = buildAvatarProps(message, { profile, agentMap });
+            const avatar = buildAvatarProps(message, { profile, agentMap, teamMap });
 
             return (
               <div
@@ -300,7 +321,7 @@ export function ChatMessageThread({
                           key={mention}
                           className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]"
                         >
-                          @{resolveMentionLabel(mention, { profile, agentMap })}
+                          @{resolveMentionLabel(mention, { profile, agentMap, teamMap })}
                         </span>
                       ))}
                     </div>

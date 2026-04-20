@@ -1345,12 +1345,28 @@ export class TeamalignedRuntime extends EventEmitter {
                 : updatedContext.recentDecisions,
             };
             this.storage.updateTeamContext(team.id, updatedContext);
-            this.addRunMessage(
-              conversation.id,
-              runId,
-              `这轮请求会进入执行模式，我会安排合适的成员直接开始处理。`,
-              "system",
-            );
+            for (const item of executionPlan.workItems) {
+              this.storage.addMessage({
+                conversationId: conversation.id,
+                senderId: item.owner.id,
+                senderName: item.owner.name,
+                senderKind: "agent",
+                messageType: "agent",
+                visibility: "public",
+                content: item.kickoffMessage || `我先处理：${item.summary}`,
+                mentions: [],
+                runId,
+                metadata: {
+                  teamId: team.id,
+                  execution: true,
+                  workItemId: item.id,
+                  writeTargets: item.writeTargets,
+                  readTargets: item.readTargets,
+                  kickoff: true,
+                },
+                createdAt: Date.now(),
+              });
+            }
             return;
           }
 
@@ -1395,29 +1411,26 @@ export class TeamalignedRuntime extends EventEmitter {
             const completedOutputs: string[] = [];
 
             for (const batch of batches) {
-              const kickoffMessages = batch.map((item) =>
+              if (batch.length > 1) {
                 this.storage.addMessage({
                   conversationId: conversation.id,
-                  senderId: item.owner.id,
-                  senderName: item.owner.name,
+                  senderId: team.id,
+                  senderName: team.name,
                   senderKind: "agent",
                   messageType: "agent",
                   visibility: "public",
-                  content: item.kickoffMessage || `我来处理：${item.summary}`,
+                  content: `这一步先由 ${batch.map((item) => item.owner.name).join("、")} 并行处理，完成后我再继续推进。`,
                   mentions: [],
                   runId,
                   metadata: {
                     teamId: team.id,
                     execution: true,
-                    workItemId: item.id,
-                    writeTargets: item.writeTargets,
-                    readTargets: item.readTargets,
+                    batch: true,
+                    batchSize: batch.length,
                   },
                   createdAt: Date.now(),
-                }),
-              );
-
-              void kickoffMessages;
+                });
+              }
 
               const results = await Promise.all(
                 batch.map(async (item) => {
