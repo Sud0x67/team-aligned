@@ -32,6 +32,7 @@
 - [x] Team 群聊
 - [x] 单聊接入真实 Qwen / OpenAI
 - [x] 群聊接入真实自然发言编排链路
+- [x] 群聊第一版执行模式（work item + 并行/串行批次）
 - [x] slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
 - [x] slash 结果直接以聊天消息形式展示
 - [x] 单聊 / 群聊输入区支持附件上传
