@@ -281,21 +281,79 @@ async function invokeWorkerText(input: {
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
 }) {
   const worker = createEphemeralWorker(input);
-  const result = await worker.invoke(
-    {
-      messages: [{ role: "user" as const, content: input.message }],
-    },
-    { configurable: { thread_id: input.threadId } },
-  );
+  const messages = [{ role: "user" as const, content: input.message }];
 
-  return (
-    extractAgentText(result) ||
-    normalizeMessageContent(result) ||
-    "模型已完成调用，但没有返回可显示的文本内容。"
-  );
+  if (
+    input.provider.supportsStreaming &&
+    input.onTextStream &&
+    typeof (worker as { streamEvents?: unknown }).streamEvents === "function"
+  ) {
+    try {
+      let streamedText = "";
+      let finalOutput: unknown = null;
+      const stream = await (worker as {
+        streamEvents: (
+          input: unknown,
+          options?: Record<string, unknown>,
+        ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
+      }).streamEvents(
+        { messages },
+        { configurable: { thread_id: input.threadId }, version: "v2" },
+      );
+
+      for await (const event of stream) {
+        if (!event || typeof event !== "object") continue;
+        if (event.event === "on_chat_model_stream") {
+          const chunk =
+            "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
+              ? event.data.chunk
+              : null;
+          const delta = extractStreamText(chunk);
+          if (!delta) continue;
+          streamedText += delta;
+          await input.onTextStream(streamedText, delta);
+          continue;
+        }
+
+        if (event.event === "on_chain_end" || event.event === "on_graph_end") {
+          finalOutput =
+            "data" in event && event.data && typeof event.data === "object" && "output" in event.data
+              ? event.data.output
+              : finalOutput;
+        }
+      }
+
+      const finalText = extractAgentText(finalOutput) || streamedText.trim();
+      if (finalText) {
+        return finalText;
+      }
+    } catch {
+      // Fallback to non-streaming invoke below.
+    }
+  }
+
+  const result = await worker.invoke({ messages }, { configurable: { thread_id: input.threadId } });
+  return extractAgentText(result) || normalizeMessageContent(result) || "模型已完成调用，但没有返回可显示的文本内容。";
+}
+
+function extractStreamText(chunk: unknown) {
+  if (!chunk || typeof chunk !== "object") {
+    return "";
+  }
+
+  if ("content" in chunk) {
+    return normalizeMessageContent(chunk.content);
+  }
+
+  if ("text" in chunk && typeof chunk.text === "string") {
+    return chunk.text;
+  }
+
+  return "";
 }
 
 export async function selectNaturalTeamSpeakers(input: {
@@ -611,6 +669,7 @@ export async function executeNaturalTeamWorkItem(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
 }) {
   const systemPrompt = [
@@ -652,6 +711,7 @@ export async function executeNaturalTeamWorkItem(input: {
     mcpServers: input.mcpServers,
     mcpConnections: input.mcpConnections,
     onMcpInvocation: input.onMcpInvocation,
+    onTextStream: input.onTextStream,
     additionalTools: input.additionalTools,
   });
 }
@@ -674,77 +734,85 @@ export async function generateNaturalTeamAgentMessage(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
 }) {
-  const replyModel = createProviderModel(input.provider).withStructuredOutput(naturalAgentReplySchema);
   const previousText =
     input.previousTurnMessages.length > 0
       ? input.previousTurnMessages
           .map((message) => `${message.speaker.name}：${message.content}`)
           .join("\n")
       : "本轮还没有其他 Agent 发言。";
+  const systemPrompt = [
+    `你是 ${input.team.name} 群聊中的成员 ${input.speaker.name}。`,
+    `你的角色：${input.speaker.role}。`,
+    `你的能力：${input.speaker.capabilities.join("、") || "未设置"}。`,
+    "你正在真实群聊里发言，不是写报告，也不是 manager 汇总。",
+    "请像人类群成员一样自然、简洁、具体地说话。",
+    "",
+    "硬性规则：",
+    "- 如果你的观点和前面 Agent 重复，或者没有明显贡献，请只输出 [SKIP]",
+    "- 不要为了发言而发言",
+    "- 除非用户要求详细分析，否则保持简短",
+    "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
+    input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
+    `- 当前模式：${input.mode}`,
+    `- 当前小轮：${input.roundIndex + 1} / ${MAX_TEAM_SUBROUNDS}`,
+    "",
+    "群组上下文：",
+    buildContextText(input.team, input.context),
+    "",
+    "当前群成员：",
+    buildNaturalRoster(input.members),
+    "",
+    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
+    "",
+    "用户资料：",
+    `- 姓名：${input.profile.name}`,
+    `- 角色：${input.profile.role || "未设置"}`,
+  ].filter(Boolean).join("\n");
 
-  const result = naturalAgentReplySchema.parse(
-    await replyModel.invoke([
-      `你是 ${input.team.name} 群聊中的成员 ${input.speaker.name}。`,
-      `你的角色：${input.speaker.role}。`,
-      `你的能力：${input.speaker.capabilities.join("、") || "未设置"}。`,
-      "你正在真实群聊里发言，不是写报告，也不是 manager 汇总。",
-      "请像人类群成员一样自然、简洁、具体地说话。",
-      "",
-      "硬性规则：",
-      "- 如果你的观点和前面 Agent 重复，请返回 shouldSpeak=false",
-      "- 如果你没有明显贡献，请返回 shouldSpeak=false",
-      "- 不要为了发言而发言",
-      "- 除非用户要求详细分析，否则保持简短",
-      "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
-      input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
-      `- 当前模式：${input.mode}`,
-      `- 当前小轮：${input.roundIndex + 1} / ${MAX_TEAM_SUBROUNDS}`,
-      "",
-      "群组上下文：",
-      buildContextText(input.team, input.context),
-      "",
-      "当前群成员：",
-      buildNaturalRoster(input.members),
-      "",
-      `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-      "",
-      "用户资料：",
-      `- 姓名：${input.profile.name}`,
-      `- 角色：${input.profile.role || "未设置"}`,
-      "",
-      "用户消息：",
-      input.userInput,
-      "",
-      "本轮已有发言：",
-      previousText,
-      "",
-      "输出要求：",
-      "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-      "- content 是你要发到群里的自然语言消息",
-      "- nextSpeakerIds 只能包含 roster 中的 id，只有当你明确 @ 对方时才填写",
-      "- 如果 shouldSpeak=false，content 可以为空",
-      "- kind 可用 reply / suggestion / question / handoff / result",
-    ].filter(Boolean).join("\n")),
+  const message = [
+    `用户消息：${input.userInput}`,
+    "",
+    "本轮已有发言：",
+    previousText,
+    "",
+    "请直接输出你要发到群里的那条自然语言消息。",
+  ].join("\n");
+
+  const content = compact(
+    await invokeWorkerText({
+      name: input.speaker.name,
+      provider: input.provider,
+      workspacePath: input.workspacePath,
+      systemPrompt,
+      message,
+      threadId: `${input.conversationId}:${input.runId}:${input.speaker.id}:chat:${input.roundIndex}`,
+      memoryPaths: ["/memory/MEMORY.md"],
+      mcpServers: input.mcpServers,
+      mcpConnections: input.mcpConnections,
+      onMcpInvocation: input.onMcpInvocation,
+      onTextStream: input.onTextStream,
+      additionalTools: input.additionalTools,
+    }),
   );
 
-  if (!result.shouldSpeak || !compact(result.content)) {
+  if (!content || content === "[SKIP]") {
     return null;
   }
 
   const memberIds = new Set(input.members.map((agent) => agent.id));
   const mentionIds = Array.from(
     new Set([
-      ...result.nextSpeakerIds.filter((id) => memberIds.has(id)),
-      ...extractMentionedAgentIds(result.content, input.members),
+      ...extractMentionedAgentIds(content, input.members),
     ]),
   ).filter((id) => id !== input.speaker.id);
 
   return {
     speaker: input.speaker,
-    kind: result.kind ?? "reply",
-    content: result.content.trim(),
+    kind: mentionIds.length > 0 ? "handoff" : input.isFinalSpeaker ? "result" : "reply",
+    content,
     mentions: mentionIds,
     roundIndex: input.roundIndex,
   } satisfies NaturalTeamAgentMessage;

@@ -733,6 +733,58 @@ export class TeamalignedRuntime extends EventEmitter {
     };
   }
 
+  private createTeamToolInvocationObserver(input: {
+    conversationId: string;
+    runId: string;
+    speaker: AgentRecord;
+  }) {
+    const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
+    return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
+      await baseObserver(event);
+
+      const toolName = event.toolName.replace(/^workspace_/, "");
+      if (event.phase === "start") {
+        this.storage.addMessage({
+          conversationId: input.conversationId,
+          senderId: input.speaker.id,
+          senderName: input.speaker.name,
+          senderKind: "agent",
+          messageType: "agent",
+          visibility: "public",
+          content: `${input.speaker.name}：我先用 ${toolName} 看看。`,
+          mentions: [],
+          runId: input.runId,
+          metadata: {
+            toolProgress: true,
+            toolName,
+          },
+          createdAt: Date.now(),
+        });
+        return;
+      }
+
+      if (event.phase === "error") {
+        this.storage.addMessage({
+          conversationId: input.conversationId,
+          senderId: input.speaker.id,
+          senderName: input.speaker.name,
+          senderKind: "agent",
+          messageType: "notification",
+          visibility: "public",
+          content: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`,
+          mentions: ["user"],
+          runId: input.runId,
+          metadata: {
+            toolProgress: true,
+            toolName,
+            failed: true,
+          },
+          createdAt: Date.now(),
+        });
+      }
+    };
+  }
+
   async markNotificationsRead() {
     this.storage.markNotificationsRead();
     this.emitSnapshot();
@@ -1454,6 +1506,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
               const results = await Promise.all(
                 batch.map(async (item) => {
+                  let streamMessageId: string | null = null;
                   try {
                     const content = await executeNaturalTeamWorkItem({
                       provider: provider!,
@@ -1472,14 +1525,54 @@ export class TeamalignedRuntime extends EventEmitter {
                       previousOutputs: completedOutputs,
                       mcpServers: availableMcpServers,
                       mcpConnections: availableMcpConnections,
-                      onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+                      onMcpInvocation: this.createTeamToolInvocationObserver({
+                        conversationId: conversation.id,
+                        runId,
+                        speaker: item.owner,
+                      }),
+                      onTextStream: async (aggregatedText) => {
+                        if (streamMessageId) {
+                          this.storage.updateMessage(streamMessageId, {
+                            content: aggregatedText,
+                            metadata: {
+                              execution: true,
+                              workItemId: item.id,
+                              streaming: true,
+                            },
+                          });
+                        } else {
+                          const message = this.storage.addMessage(
+                            {
+                              conversationId: conversation.id,
+                              senderId: item.owner.id,
+                              senderName: item.owner.name,
+                              senderKind: "agent",
+                              messageType: "agent",
+                              visibility: "public",
+                              content: aggregatedText,
+                              mentions: [],
+                              runId,
+                              metadata: {
+                                execution: true,
+                                workItemId: item.id,
+                                streaming: true,
+                              },
+                              createdAt: Date.now(),
+                            },
+                            { skipTranscript: true },
+                          );
+                          streamMessageId = message.id;
+                        }
+                        this.emitSnapshot();
+                      },
                       additionalTools: runtimeTools.tools,
                     });
-                    return { item, ok: true as const, content };
+                    return { item, ok: true as const, content, streamMessageId };
                   } catch (error) {
                     return {
                       item,
                       ok: false as const,
+                      streamMessageId,
                       content:
                         error instanceof Error
                           ? `${item.owner.name}：我执行这个任务时遇到了问题：${error.message}`
@@ -1491,26 +1584,45 @@ export class TeamalignedRuntime extends EventEmitter {
 
               for (const result of results) {
                 completedOutputs.push(result.content);
-                this.storage.addMessage({
-                  conversationId: conversation.id,
-                  senderId: result.item.owner.id,
-                  senderName: result.item.owner.name,
-                  senderKind: "agent",
-                  messageType: result.ok ? "agent" : "notification",
-                  visibility: "public",
-                  content: result.content,
-                  mentions: result.ok ? [] : ["user"],
-                  runId,
-                  metadata: {
-                    teamId: team.id,
-                    execution: true,
-                    workItemId: result.item.id,
-                    status: result.ok ? "completed" : "failed",
-                    writeTargets: result.item.writeTargets,
-                    readTargets: result.item.readTargets,
-                  },
-                  createdAt: Date.now(),
-                });
+                if (result.streamMessageId) {
+                  this.storage.updateMessage(
+                    result.streamMessageId,
+                    {
+                      content: result.content,
+                      metadata: {
+                        teamId: team.id,
+                        execution: true,
+                        workItemId: result.item.id,
+                        status: result.ok ? "completed" : "failed",
+                        writeTargets: result.item.writeTargets,
+                        readTargets: result.item.readTargets,
+                        streaming: false,
+                      },
+                    },
+                    { appendTranscript: true },
+                  );
+                } else {
+                  this.storage.addMessage({
+                    conversationId: conversation.id,
+                    senderId: result.item.owner.id,
+                    senderName: result.item.owner.name,
+                    senderKind: "agent",
+                    messageType: result.ok ? "agent" : "notification",
+                    visibility: "public",
+                    content: result.content,
+                    mentions: result.ok ? [] : ["user"],
+                    runId,
+                    metadata: {
+                      teamId: team.id,
+                      execution: true,
+                      workItemId: result.item.id,
+                      status: result.ok ? "completed" : "failed",
+                      writeTargets: result.item.writeTargets,
+                      readTargets: result.item.readTargets,
+                    },
+                    createdAt: Date.now(),
+                  });
+                }
               }
             }
 
@@ -1532,6 +1644,7 @@ export class TeamalignedRuntime extends EventEmitter {
             return;
           }
 
+          const selectedMode = selection.mode;
           const speakerMessageCounts = new Map<string, number>();
           let speakers = selection.speakers;
           for (let roundIndex = 0; roundIndex < MAX_TEAM_SUBROUNDS; roundIndex += 1) {
@@ -1566,6 +1679,7 @@ export class TeamalignedRuntime extends EventEmitter {
               if ((speakerMessageCounts.get(speaker.id) ?? 0) >= MAX_AGENT_MESSAGES_PER_TURN) {
                 continue;
               }
+              let streamMessageId: string | null = null;
               const message = await generateNaturalTeamAgentMessage({
               provider: provider!,
               profile: snapshot.profile,
@@ -1588,33 +1702,96 @@ export class TeamalignedRuntime extends EventEmitter {
                   speaker.id === speakers.at(-1)?.id,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              onMcpInvocation: this.createTeamToolInvocationObserver({
+                conversationId: conversation.id,
+                runId,
+                speaker,
+              }),
+              onTextStream: async (aggregatedText) => {
+                if (streamMessageId) {
+                  this.storage.updateMessage(streamMessageId, {
+                    content: aggregatedText,
+                    metadata: {
+                      teamId: team.id,
+                      mode: selectedMode,
+                      roundIndex,
+                      streaming: true,
+                    },
+                  });
+                } else {
+                  const streamMessage = this.storage.addMessage(
+                    {
+                      conversationId: conversation.id,
+                      senderId: speaker.id,
+                      senderName: speaker.name,
+                      senderKind: "agent",
+                      messageType: "agent",
+                      visibility: "public",
+                      content: aggregatedText,
+                      mentions: [],
+                      runId,
+                      metadata: {
+                        teamId: team.id,
+                        mode: selectedMode,
+                        roundIndex,
+                        streaming: true,
+                      },
+                      createdAt: Date.now(),
+                    },
+                    { skipTranscript: true },
+                  );
+                  streamMessageId = streamMessage.id;
+                }
+                this.emitSnapshot();
+              },
               additionalTools: runtimeTools.tools,
             });
               if (!message) {
+                if (streamMessageId) {
+                  this.storage.removeMessage(streamMessageId);
+                }
                 continue;
               }
               speakerMessageCounts.set(speaker.id, (speakerMessageCounts.get(speaker.id) ?? 0) + 1);
               turnMessages.push(message);
               roundMessages.push(message);
-            this.storage.addMessage({
-              conversationId: conversation.id,
-                senderId: message.speaker.id,
-                senderName: message.speaker.name,
-              senderKind: "agent",
-                messageType: message.kind === "question" ? "notification" : "agent",
-                visibility: "public",
-                content: message.content,
-                mentions: message.mentions,
-              runId,
-              metadata: {
-                teamId: team.id,
-                  mode: selection.mode,
-                  roundIndex: message.roundIndex,
-                  kind: message.kind,
-              },
-              createdAt: Date.now(),
-            });
+            if (streamMessageId) {
+              this.storage.updateMessage(
+                streamMessageId,
+                {
+                  content: message.content,
+                  mentions: message.mentions,
+                  messageType: "agent",
+                  metadata: {
+                    teamId: team.id,
+                    mode: selectedMode,
+                    roundIndex: message.roundIndex,
+                    kind: message.kind,
+                    streaming: false,
+                  },
+                },
+                { appendTranscript: true },
+              );
+            } else {
+              this.storage.addMessage({
+                conversationId: conversation.id,
+                  senderId: message.speaker.id,
+                  senderName: message.speaker.name,
+                senderKind: "agent",
+                  messageType: "agent",
+                  visibility: "public",
+                  content: message.content,
+                  mentions: message.mentions,
+                runId,
+                metadata: {
+                  teamId: team.id,
+                    mode: selectedMode,
+                    roundIndex: message.roundIndex,
+                    kind: message.kind,
+                },
+                createdAt: Date.now(),
+              });
+            }
           }
 
             if (roundIndex >= MAX_TEAM_SUBROUNDS - 1) {

@@ -567,6 +567,21 @@ export class AppStorage {
     return message;
   }
 
+  removeMessage(messageId: string) {
+    const index = this.state.messages.findIndex((item) => item.id === messageId);
+    if (index === -1) return;
+    const [message] = this.state.messages.splice(index, 1);
+    const conversation = this.getConversation(message.conversationId);
+    if (conversation) {
+      const latestPreview = [...this.listMessages(message.conversationId)]
+        .reverse()
+        .find((item) => this.shouldUseMessageAsConversationPreview(item));
+      conversation.lastMessage = latestPreview ? this.summarizeConversationMessage(latestPreview) : "";
+      conversation.lastActivityAt = latestPreview?.createdAt ?? conversation.lastActivityAt;
+    }
+    this.persist();
+  }
+
   listRuns(): RunRecord[] {
     return [...this.state.runs].sort((a, b) => b.updatedAt - a.updatedAt);
   }
