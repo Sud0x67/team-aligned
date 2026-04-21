@@ -234,7 +234,7 @@ function pathOverlaps(left: string, right: string) {
 }
 
 function isExecutionIntent(userInput: string) {
-  return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建文件|新建文件|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update/.test(
+  return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建文件|新建文件|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update|设计页面|设计一个|做个页面|做一个页面|做静态网页|静态网页|原型|线框图|设计稿|页面结构|页面布局/.test(
     userInput.toLowerCase(),
   );
 }
@@ -459,6 +459,10 @@ export async function planTeamExecution(input: {
     explicitMentionIds: input.explicitMentionIds,
     userInput: input.userInput,
   });
+
+  if (input.explicitMentionIds.length > 0) {
+    return fallback;
+  }
 
   try {
     const model = createProviderModel(input.provider).withStructuredOutput(executionPlanSchema);

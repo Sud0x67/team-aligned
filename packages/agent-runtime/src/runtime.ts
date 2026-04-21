@@ -1430,6 +1430,26 @@ export class TeamalignedRuntime extends EventEmitter {
                   },
                   createdAt: Date.now(),
                 });
+              } else if (batch.length === 1) {
+                const item = batch[0];
+                this.storage.addMessage({
+                  conversationId: conversation.id,
+                  senderId: team.id,
+                  senderName: team.name,
+                  senderKind: "agent",
+                  messageType: "agent",
+                  visibility: "public",
+                  content: `${item.owner.name} 正在处理：${item.summary}`,
+                  mentions: [],
+                  runId,
+                  metadata: {
+                    teamId: team.id,
+                    execution: true,
+                    batch: true,
+                    batchSize: 1,
+                  },
+                  createdAt: Date.now(),
+                });
               }
 
               const results = await Promise.all(
@@ -1520,6 +1540,25 @@ export class TeamalignedRuntime extends EventEmitter {
             }
 
             const roundMessages: NaturalTeamAgentMessage[] = [];
+            if (roundIndex > 0 && speakers.length > 0) {
+              this.storage.addMessage({
+                conversationId: conversation.id,
+                senderId: team.id,
+                senderName: team.name,
+                senderKind: "agent",
+                messageType: "agent",
+                visibility: "public",
+                content: `我继续叫上 ${speakers.map((agent) => agent.name).join("、")} 补充这一轮。`,
+                mentions: [],
+                runId,
+                metadata: {
+                  teamId: team.id,
+                  roundIndex,
+                  orchestration: true,
+                },
+                createdAt: Date.now(),
+              });
+            }
             for (const speaker of speakers) {
               if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES) {
                 break;
