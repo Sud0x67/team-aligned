@@ -19,11 +19,11 @@ import {
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 
 export const TEAM_MEMBER_LIMIT = 5;
-export const MAX_AGENT_MESSAGES_PER_TURN = 3;
+export const MAX_AGENT_MESSAGES_PER_TURN = 10;
 export const MAX_AGENT_WORK_ITEMS = 5;
-export const MAX_TEAM_TURN_MESSAGES = 15;
-export const MAX_TEAM_SUBROUNDS = 2;
-export const MAX_PARALLEL_TEAM_EXECUTIONS = 2;
+export const MAX_TEAM_TURN_MESSAGES = 50;
+export const MAX_TEAM_SUBROUNDS = 5;
+export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
 
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
 
