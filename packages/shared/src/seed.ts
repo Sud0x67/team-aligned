@@ -400,4 +400,12 @@ export const defaultTeamContext = (objective: string): TeamContext => ({
   ],
   pinnedArtifacts: ["docs/mvp-plan.md", "docs/roadmap.md"],
   workspaceSummary: "当前工作目录为 team-aligned，聚焦 Electron 桌面原型。",
+  handoff: {
+    activeAgentId: null,
+    lastSpeakerId: null,
+    nextAgentIds: [],
+    reason: "初始状态",
+    revision: 0,
+    updatedAt: Date.now(),
+  },
 });

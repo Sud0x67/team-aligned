@@ -27,6 +27,15 @@ export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
 
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
 
+export type TeamHandoffState = {
+  activeAgentId: string | null;
+  lastSpeakerId: string | null;
+  nextAgentIds: string[];
+  reason: string;
+  revision: number;
+  updatedAt: number;
+};
+
 export type NaturalTeamSpeakerSelection = {
   mode: NaturalTeamMode;
   speakers: AgentRecord[];
@@ -169,6 +178,7 @@ function clampSpeakersForMode(input: {
 function selectFallbackSpeakers(input: {
   members: AgentRecord[];
   explicitMentionIds: string[];
+  activeAgentId?: string | null;
   userInput: string;
 }) {
   const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
@@ -199,6 +209,7 @@ function selectFallbackSpeakers(input: {
     if (/计划|拆解|规划|优先级|路线|todo/.test(normalized) && /计划|项目|planner|经理|pm/.test(haystack)) score += 5;
     if (/数据|分析|指标|统计|图表/.test(normalized) && /数据|分析|analyst|nova/.test(haystack)) score += 5;
     if (/研究|调研|竞品|资料|搜索/.test(normalized) && /研究|调研|research/.test(haystack)) score += 5;
+    if (input.activeAgentId && input.activeAgentId === agent.id) score += 4;
     return { agent, score };
   });
 
@@ -215,11 +226,68 @@ function selectFallbackSpeakers(input: {
   };
 }
 
+function applyHandoffPreference(input: {
+  mode: NaturalTeamMode;
+  speakers: AgentRecord[];
+  members: AgentRecord[];
+  activeAgentId?: string | null;
+}) {
+  if (!input.activeAgentId) {
+    return input.speakers;
+  }
+  const active = input.members.find((agent) => agent.id === input.activeAgentId);
+  if (!active) {
+    return input.speakers;
+  }
+  const others = input.speakers.filter((agent) => agent.id !== active.id);
+  return [active, ...others];
+}
+
+function extractMentionTokens(input: string) {
+  const tokens: string[] = [];
+  const seen = new Set<string>();
+  const pattern = /(?:^|[\s([{（【])[@＠]([^\s@＠,，。.!?！？;；:：)）\]】}]+)/g;
+  for (const match of input.matchAll(pattern)) {
+    const token = match[1]?.trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function normalizeMentionToken(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function resolveMentionedMembers(content: string, members: AgentRecord[]) {
+  const tokens = extractMentionTokens(content);
+  const matchedIds: string[] = [];
+  const matchedSet = new Set<string>();
+
+  for (const token of tokens) {
+    const normalizedToken = normalizeMentionToken(token);
+    const idWithoutPrefix = normalizedToken.replace(/^agent-/, "");
+    const match =
+      members.find((member) => normalizeMentionToken(member.name) === normalizedToken) ??
+      members.find((member) => normalizeMentionToken(member.id) === normalizedToken) ??
+      members.find(
+        (member) => normalizeMentionToken(member.id).replace(/^agent-/, "") === idWithoutPrefix,
+      );
+    if (!match || matchedSet.has(match.id)) {
+      continue;
+    }
+    matchedSet.add(match.id);
+    matchedIds.push(match.id);
+  }
+
+  return matchedIds;
+}
+
 function extractMentionedAgentIds(content: string, members: AgentRecord[]) {
-  const names = [...content.matchAll(/@([\w\u4e00-\u9fa5-]+)/g)].map((item) => item[1].toLowerCase());
-  return members
-    .filter((agent) => names.includes(agent.name.toLowerCase()))
-    .map((agent) => agent.id);
+  return resolveMentionedMembers(content, members);
 }
 
 function normalizeTargetPath(value: string) {
@@ -362,6 +430,7 @@ export async function selectNaturalTeamSpeakers(input: {
   members: AgentRecord[];
   profile: UserProfile;
   context: TeamContext;
+  handoff: TeamHandoffState | null;
   history: { senderName: string; visibility: string; content: string }[];
   userInput: string;
   explicitMentionIds: string[];
@@ -371,6 +440,7 @@ export async function selectNaturalTeamSpeakers(input: {
   const fallback = selectFallbackSpeakers({
     members: cappedMembers,
     explicitMentionIds: input.explicitMentionIds,
+    activeAgentId: input.handoff?.activeAgentId ?? null,
     userInput: input.userInput,
   });
 
@@ -429,6 +499,12 @@ export async function selectNaturalTeamSpeakers(input: {
         "最近公开对话：",
         buildRecentHistory(selectPublicHistory(input.history)),
         "",
+        "handoff 状态：",
+        `- 当前接棒 Agent id：${input.handoff?.activeAgentId ?? "无"}`,
+        `- 上次发言 Agent id：${input.handoff?.lastSpeakerId ?? "无"}`,
+        `- 下一候选 Agent ids：${input.handoff?.nextAgentIds.join("、") || "无"}`,
+        `- 最近接棒原因：${input.handoff?.reason || "无"}`,
+        "",
         "用户最新输入：",
         input.userInput,
         "",
@@ -442,7 +518,12 @@ export async function selectNaturalTeamSpeakers(input: {
     const rawSpeakers = result.speakerIds
       .map((id) => memberMap.get(id))
       .filter((item): item is AgentRecord => item !== undefined);
-    const speakers = rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers;
+    const speakers = applyHandoffPreference({
+      mode: result.mode ?? fallback.mode,
+      speakers: rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers,
+      members: cappedMembers,
+      activeAgentId: input.handoff?.activeAgentId ?? null,
+    });
     const mode = result.mode ?? fallback.mode;
 
     return {
@@ -472,19 +553,30 @@ export async function selectNaturalTeamSpeakers(input: {
 function buildFallbackExecutionPlan(input: {
   members: AgentRecord[];
   explicitMentionIds: string[];
+  activeAgentId?: string | null;
   userInput: string;
 }) {
   const fallback = selectFallbackSpeakers(input);
   const owners = fallback.speakers.slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
+  const normalizedInput = input.userInput.toLowerCase();
+  const prefersParallel = /并行|同时|simultaneous|in parallel|parallel/.test(normalizedInput);
+  const prefersSequential =
+    !prefersParallel &&
+    /(先.*(再|然后)|完成后|结束后|基于.*结果|依赖|等待|after|then|once)/.test(normalizedInput);
   const workItems = owners.map((owner, index) => ({
     id: `work-${index + 1}`,
     owner,
     summary: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分`,
-    kickoffMessage: index === 0 ? "我先开始处理这个部分。" : "我这边也同步处理一部分。",
+    kickoffMessage:
+      index === 0
+        ? "我先开始处理这个部分。"
+        : prefersSequential
+          ? "我会等前置部分完成后继续接棒。"
+          : "我这边也同步处理一部分。",
     readTargets: [],
     writeTargets: [],
-    dependsOnAgentIds: [],
-    canRunInParallel: true,
+    dependsOnAgentIds: prefersSequential && index > 0 ? [owners[index - 1]?.id].filter(Boolean) : [],
+    canRunInParallel: prefersParallel || !prefersSequential,
   }));
 
   return {
@@ -502,6 +594,7 @@ export async function planTeamExecution(input: {
   members: AgentRecord[];
   profile: UserProfile;
   context: TeamContext;
+  handoff: TeamHandoffState | null;
   history: { senderName: string; visibility: string; content: string }[];
   userInput: string;
   explicitMentionIds: string[];
@@ -515,6 +608,7 @@ export async function planTeamExecution(input: {
   const fallback = buildFallbackExecutionPlan({
     members: cappedMembers,
     explicitMentionIds: input.explicitMentionIds,
+    activeAgentId: input.handoff?.activeAgentId ?? null,
     userInput: input.userInput,
   });
 
@@ -669,6 +763,12 @@ export async function executeNaturalTeamWorkItem(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onUpdate?: (event: {
+    phase: "started" | "streaming" | "completed" | "failed";
+    owner: AgentRecord;
+    summary: string;
+    content: string;
+  }) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
 }) {
@@ -678,6 +778,7 @@ export async function executeNaturalTeamWorkItem(input: {
     `你的能力：${input.workItem.owner.capabilities.join("、") || "未设置"}。`,
     "当前已经进入执行模式，请真正完成分配给你的工作，而不是只讨论。",
     "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
+    "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
     "请只在当前 workspace 内工作。",
     "如果任务无法执行，请明确说明阻塞原因。",
     "",
@@ -700,20 +801,58 @@ export async function executeNaturalTeamWorkItem(input: {
     "请直接执行，并在完成后用自然群聊口吻汇报：做了什么、结果是什么、如果改了文件请简要提及。",
   ].join("\n");
 
-  return invokeWorkerText({
-    name: input.workItem.owner.name,
-    provider: input.provider,
-    workspacePath: input.workspacePath,
-    systemPrompt,
-    message,
-    threadId: `${input.conversationId}:${input.runId}:${input.workItem.owner.id}:execution`,
-    memoryPaths: ["/memory/MEMORY.md"],
-    mcpServers: input.mcpServers,
-    mcpConnections: input.mcpConnections,
-    onMcpInvocation: input.onMcpInvocation,
-    onTextStream: input.onTextStream,
-    additionalTools: input.additionalTools,
+  await input.onUpdate?.({
+    phase: "started",
+    owner: input.workItem.owner,
+    summary: input.workItem.summary,
+    content: `${input.workItem.owner.name}：我开始处理 ${input.workItem.summary}。`,
   });
+  let announcedStreaming = false;
+  try {
+    const result = await invokeWorkerText({
+      name: input.workItem.owner.name,
+      provider: input.provider,
+      workspacePath: input.workspacePath,
+      systemPrompt,
+      message,
+      threadId: `${input.conversationId}:${input.runId}:${input.workItem.owner.id}:execution`,
+      memoryPaths: ["/memory/MEMORY.md"],
+      mcpServers: input.mcpServers,
+      mcpConnections: input.mcpConnections,
+      onMcpInvocation: input.onMcpInvocation,
+      onTextStream: async (aggregatedText, deltaText) => {
+        await input.onTextStream?.(aggregatedText, deltaText);
+        if (!announcedStreaming && deltaText.trim().length > 0) {
+          announcedStreaming = true;
+          await input.onUpdate?.({
+            phase: "streaming",
+            owner: input.workItem.owner,
+            summary: input.workItem.summary,
+            content: `${input.workItem.owner.name}：我正在处理，先同步一版中间结果。`,
+          });
+        }
+      },
+      additionalTools: input.additionalTools,
+    });
+    await input.onUpdate?.({
+      phase: "completed",
+      owner: input.workItem.owner,
+      summary: input.workItem.summary,
+      content: `${input.workItem.owner.name}：这部分已经处理完成。`,
+    });
+    return result;
+  } catch (error) {
+    await input.onUpdate?.({
+      phase: "failed",
+      owner: input.workItem.owner,
+      summary: input.workItem.summary,
+      content:
+        error instanceof Error
+          ? `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到问题：${error.message}`
+          : `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到未知问题。`,
+    });
+    throw error;
+  }
 }
 
 export async function generateNaturalTeamAgentMessage(input: {
@@ -756,8 +895,6 @@ export async function generateNaturalTeamAgentMessage(input: {
     "- 除非用户要求详细分析，否则保持简短",
     "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
     input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
-    `- 当前模式：${input.mode}`,
-    `- 当前小轮：${input.roundIndex + 1} / ${MAX_TEAM_SUBROUNDS}`,
     "",
     "群组上下文：",
     buildContextText(input.team, input.context),

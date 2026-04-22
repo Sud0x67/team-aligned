@@ -146,6 +146,16 @@ export function ChatMessageThread({
   const lastRunIdRef = useRef<string | null>(null);
   const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const hasStreamingVisibleMessage = useMemo(() => {
+    if (!run) return false;
+    return visibleMessages.some(
+      (message) =>
+        message.runId === run.id &&
+        message.visibility === "public" &&
+        message.senderKind === "agent" &&
+        message.metadata?.streaming === true,
+    );
+  }, [run, visibleMessages]);
 
   const updateShouldStickToBottom = () => {
     const container = scrollContainerRef.current;
@@ -345,7 +355,7 @@ export function ChatMessageThread({
             );
           })}
 
-          {pendingSystemMessage ? (
+          {pendingSystemMessage && !hasStreamingVisibleMessage ? (
             <div className="flex justify-start">
               <div className="flex max-w-[72%] items-start gap-2.5">
                 {pendingActor ? (

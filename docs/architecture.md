@@ -185,9 +185,10 @@ TeamalignedRuntime
 │  ├─ Workspace Tools
 │  └─ MCP Tools
 ├─ Team Runtime
-│  ├─ Speaker Selection
+│  ├─ Handoff State Machine
 │  ├─ Natural Multi-Agent Replies
-│  ├─ Controlled Multi-Round Collaboration
+│  ├─ Execution Work Items + Subagents
+│  ├─ Messages + Updates Dual Streaming
 │  └─ Team Memory Updates
 ├─ Slash Command Router
 ├─ Provider Validation / Connection Test
@@ -254,7 +255,9 @@ TeamalignedRuntime
 4. 如果用户 `@Agent`，被点名 Agent 优先发言
 5. 如果没有 `@`，系统根据语义选择 1 到 5 个相关 Agent
 6. 被选中的 Agent 像真实群成员一样在主线程自然发言
-7. collaboration 模式下，Agent 可以互相 `@`，但最多 2 个小轮、最多 15 条 Agent 消息
+7. Agent `@` 会触发接棒，handoff 状态持续写回
+8. 执行意图触发 work item，并由 execution subagent 执行重任务
+9. messages + updates 双轨输出过程与结果
 
 ### 群聊发言控制
 
@@ -265,6 +268,9 @@ TeamalignedRuntime
 - 普通问题通常 1 到 2 个 Agent 发言
 - 多视角问题 2 到 4 个 Agent 发言
 - 复杂协作 3 到 5 个 Agent 发言
+- 每个 team turn 最多 5 个小轮
+- 每个 team turn 最多 50 条 Agent 消息
+- 每个 Agent 每 turn 最多发言 10 次
 - Agent 没有新增观点时应保持沉默
 - Agent 互相 `@` 只能触发下一小轮，不能无限循环
 
@@ -279,12 +285,13 @@ TeamalignedRuntime
 - workspace 摘要
 - pinned artifacts
 - 最近公开消息
+- handoff 状态（active/last/next/reason/revision）
 
 ### 群聊当前边界
 
 当前群聊已具备真实协作链路，但仍有边界：
 
-- 单聊流式输出已接入，群聊还不是完整逐 token 流式
+- 群聊执行中的工具状态仍需继续优化节流，避免长任务刷屏
 - 工具级权限仍是下一阶段能力
 - 更强的 checkpoint / failure recovery 仍待加强
 

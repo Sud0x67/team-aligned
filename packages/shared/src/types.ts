@@ -174,6 +174,14 @@ export interface TeamContext {
   recentDecisions: string[];
   pinnedArtifacts: string[];
   workspaceSummary: string;
+  handoff?: {
+    activeAgentId: string | null;
+    lastSpeakerId: string | null;
+    nextAgentIds: string[];
+    reason: string;
+    revision: number;
+    updatedAt: number;
+  };
 }
 
 export interface ConversationMeta {

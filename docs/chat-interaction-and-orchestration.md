@@ -134,9 +134,9 @@
 
 - 每个群组最多 5 个 Agent
 - 每个用户消息开启一个 `team turn`
-- 每个 `team turn` 最多 2 个小轮
-- 每个 `team turn` 最多 15 条 Agent 消息
-- 同一个 Agent 在同一个 `team turn` 中最多发言 3 次
+- 每个 `team turn` 最多 5 个小轮
+- 每个 `team turn` 最多 50 条 Agent 消息
+- 同一个 Agent 在同一个 `team turn` 中最多发言 10 次
 
 ### Agent 之间通信
 
@@ -238,11 +238,13 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 建议运行时流程：
 
 1. 用户消息进入 team ingress
-2. 系统构建群组共享上下文
+2. 系统构建群组共享上下文与 handoff 状态
 3. 不可见 system orchestrator 选择发言模式和 Agent
 4. 被选中的 Agent 依次在主线程自然发言
-5. collaboration 模式下，Agent 互相 `@` 可触发下一小轮
-6. 事件、产物、状态、共享记忆统一落盘
+5. Agent `@` 触发接棒，handoff 状态持续写回
+6. 执行意图触发 work item，并由 execution subagent 处理重任务
+7. messages + updates 双轨流式回传
+8. 事件、产物、状态、共享记忆统一落盘
 
 ### 主线程与内部线程
 
@@ -274,6 +276,8 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 - specialist 内部对话
 
 应放入可展开的 run 详情中。
+
+运行中的 `system updates` 也需要持续进入“思考中”过程气泡，避免出现长时间静默导致“像卡住”的体验。
 
 ## 6. UI 建议
 
@@ -320,7 +324,8 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 - 群聊支持 Agent 公开互相 `@`
 - 群聊支持共享上下文摘要
 - 群聊默认由不可见 orchestrator 选择 1 到 5 个 Agent 自然发言
-- 群聊限制最多 5 个成员、2 个小轮、15 条 Agent 消息
+- 群聊限制最多 5 个成员、5 个小轮、50 条 Agent 消息
+- 群聊执行模式支持 execution subagent、依赖等待提示、工具过程自然输出
 
 ### 后续版本再做
 

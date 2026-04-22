@@ -104,21 +104,46 @@ export function ChatPage() {
     if (!activeRun) return null;
 
     const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
-    const hasVisibleAgentReply = runMessages.some(
-      (message) =>
-        message.visibility === "public" &&
-        message.senderKind !== "user",
-    );
-
-    if (hasVisibleAgentReply) {
-      return null;
-    }
-
-    const latest = [...runMessages]
+    const latestSystem = [...runMessages]
       .filter((message) => message.visibility === "system")
       .sort((left, right) => right.createdAt - left.createdAt)[0];
 
-    return latest?.content ?? t.chat("thinking");
+    if (!latestSystem) {
+      return t.chat("thinking");
+    }
+
+    const latestVisibleAgent = [...runMessages]
+      .filter((message) => message.visibility === "public" && message.senderKind === "agent")
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+    const latestStreamingAgent = [...runMessages]
+      .filter(
+        (message) =>
+          message.visibility === "public" &&
+          message.senderKind === "agent" &&
+          message.metadata?.streaming === true,
+      )
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+
+    const isRunActive = !["completed", "failed", "cancelled"].includes(activeRun.status);
+    if (!isRunActive) {
+      return null;
+    }
+
+    if (latestStreamingAgent) {
+      return null;
+    }
+
+    if (!latestVisibleAgent) {
+      return latestSystem.content;
+    }
+
+    const latestSystemStage =
+      typeof latestSystem.metadata?.stage === "string" ? latestSystem.metadata.stage : null;
+    if (latestSystemStage === "execution_waiting" && latestSystem.createdAt >= latestVisibleAgent.createdAt) {
+      return latestSystem.content;
+    }
+
+    return null;
   }, [activeMessages, activeRun, t]);
 
   const conversationTokenUsage = useMemo(() => {
@@ -219,7 +244,24 @@ export function ChatPage() {
 
     if (activeConversation.kind === "team" && activeRun) {
       const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
-      const latestUserMessage = [...runMessages]
+      const latestTeamUpdate = [...runMessages]
+        .filter((message) => message.visibility === "system" && message.metadata?.teamUpdate === true)
+        .sort((left, right) => right.createdAt - left.createdAt)[0];
+      const updateActorId =
+        typeof latestTeamUpdate?.metadata?.actorId === "string" ? latestTeamUpdate.metadata.actorId : null;
+      if (updateActorId) {
+        const updateActor = agents.find((agent) => agent.id === updateActorId);
+        if (updateActor) {
+          return {
+            name: updateActor.name,
+            avatarPath: updateActor.avatarPath,
+            avatar: updateActor.avatar,
+            avatarColor: updateActor.avatarColor,
+          };
+        }
+      }
+
+      const latestUserMessage = [...activeMessages]
         .reverse()
         .find((message) => message.senderKind === "user" && message.visibility === "public");
       const firstMentionedAgentId = latestUserMessage?.mentions.find((mention) => mention !== "user");

@@ -1,162 +1,121 @@
-# 群组运行时设计
+# 群组运行时设计（Handoff + 双轨输出）
 
-## 当前方向
+## 当前设计目标
 
-`teamaligned` 的群聊不再采用默认的 `manager -> specialist` 强编排模式。
+群聊默认体验应当像真实团队聊天：
 
-当前方案改为：
+- 用户 `@谁`，谁先接话
+- 没有 `@` 时，系统选择最相关成员
+- 多轮对话保持“接棒”连续感
+- 执行时持续输出过程，而不是只在开始和结束说一句
+
+对应实现是：
 
 ```text
-自然群聊 = @ 优先 + 语义选人 + 受控多轮发言 + 不可见 orchestrator
+handoff 状态机 + messages/updates 双轨输出 + execution subagent
 ```
 
-用户看到的是多个 Agent 像真实群成员一样自然发言；系统内部仍然有不可见的 orchestrator 负责选择谁说话、控制轮数、限制 token 成本和避免循环。
+## 核心机制
 
-## 设计目标
+### 1. handoff 状态机
 
-- 群聊像人类群聊一样自然。
-- 默认不出现 manager 或主持人。
-- 用户 `@Agent` 时，被点名 Agent 优先回应。
-- 没有 `@` 时，系统按语义选择相关 Agent。
-- 复杂问题可以展示多个 Agent 的交流过程。
-- Agent 可以互相 `@`，但不能无限循环聊天。
-- 群聊规模和每轮消息数必须有硬上限。
+`TeamContext` 现在持久化 `handoff`：
 
-## 群组规模
+- `activeAgentId`
+- `lastSpeakerId`
+- `nextAgentIds`
+- `reason`
+- `revision`
+- `updatedAt`
 
-第一版群组规则：
+规则：
+
+- 用户显式 `@Agent`：该 Agent 直接接棒。
+- 无显式 `@`：优先延续 `activeAgentId`，再结合语义选择。
+- Agent 消息里 `@` 下一位：下一小轮由被 `@` 成员接棒。
+- 每轮结束后写回 handoff 状态，保证下一条用户消息具备连续上下文。
+
+### 2. messages + updates 双轨输出
+
+群聊运行中同时输出两类信息：
+
+- `messages`：公开聊天消息（用户可见气泡，含流式文本）
+- `updates`：运行过程更新（system run updates，用于“思考中/进行中”过程反馈）
+
+`updates` 现在覆盖：
+
+- 选人完成
+- 接棒变化
+- 并行批次开始/完成
+- 依赖等待
+- 工具调用开始/成功/失败
+- 子任务完成/失败
+
+这样即使某个 Agent 正在执行工具链，主线程也不会“静默像卡住”。
+
+### 3. execution subagent（执行重活下沉）
+
+执行模式不由主对话 Agent 直接做重活，而是由 `execution work item` 对应的独立 worker 执行：
+
+- 独立 `thread_id`
+- 独立工具观测
+- 可流式回写文本
+- 可上报阶段更新（started/streaming/completed/failed）
+
+主线程只承载自然过程消息和结果消息，不暴露底层调度术语。
+
+## 模式与限制
+
+### 群成员上限
 
 - 每个群组最多 `5` 个 Agent。
-- 创建群组时 UI 限制最多选择 5 个成员。
-- 存储层也会兜底裁剪到 5 个成员。
-- 运行时只在最多 5 个有效成员中选择发言者。
+- UI 和存储层都做兜底裁剪。
 
-这个限制是产品规则，不只是性能优化。它可以降低 token 成本，也能让用户更容易理解谁可能参与发言。
+### 对话轮次与消息上限
 
-## 发言模式
+- 每个 `team turn` 最多 `5` 个小轮
+- 每个 Agent 每个 turn 最多发言 `10` 次
+- 每个 `team turn` 最多 `50` 条 Agent 消息
 
-运行时定义三种模式：
+### 执行上限
 
-### 1. `focused`
+- 每个 Agent 每个 turn 最多 `5` 个 work item
+- 同时最多 `5` 个 work item 并行执行
 
-用于普通问题。
+## 模式选择
 
-- 选择 1 到 2 个 Agent。
-- 不默认拉全员。
-- 不默认互相 `@`。
+- `focused`：普通问题，优先 1~2 位成员
+- `multi_voice`：多视角问题，优先 2~4 位成员
+- `collaboration`：复杂协作，可扩展至 5 位成员并允许受控接力
 
-### 2. `multi_voice`
+## 用户可见体验
 
-用于多视角讨论。
+群聊里默认看到的是自然协作表达：
 
-- 选择 2 到 4 个 Agent。
-- 每个 Agent 直接在群里给出自己的视角。
-- 不强制汇总。
+- 谁开始了
+- 谁在继续
+- 谁在等待前置依赖
+- 谁完成了当前步骤
 
-### 3. `collaboration`
+不默认展示：
 
-用于脑暴、分工、复杂协作或跨多个能力域的问题。
-
-- 选择 3 到 5 个 Agent。
-- Agent 可以互相 `@`。
-- 最多 2 个小轮。
-- 每个用户消息最多 15 条 Agent 消息。
-- 到达上限后必须停止。
-
-## @ 优先规则
-
-如果用户显式 `@Agent`：
-
-- 被 `@` 的 Agent 优先发言。
-- 如果只 `@` 一个 Agent，默认只让它回应。
-- 如果 `@` 多个 Agent，让这些 Agent 依次回应。
-- 未被 `@` 的 Agent 默认不抢话，除非后续版本明确引入补充机制。
-
-如果没有 `@`：
-
-- system orchestrator 根据用户语义、Agent role、capabilities、最近上下文选择 1 到 5 个 Agent。
-- 普通问题通常只选 1 到 2 个。
-- 只有复杂问题才选 3 到 5 个。
-
-## 防止无限循环
-
-第一版硬边界：
-
-- 每个群组最多 5 个 Agent。
-- 每个用户消息开启一个 `team turn`。
-- 每个 `team turn` 最多 2 个小轮。
-- 每个小轮最多 5 个 Agent 发言。
-- 每个 `team turn` 最多 15 条 Agent 消息。
-- Agent 互相 `@` 只能触发下一小轮。
-- 同一个 Agent 在同一个 `team turn` 中最多发言 3 次。
-
-这些规则保证群聊可以展示协作过程，但不会变成无限 Agent 对话。
-
-## 静默规则
-
-每个 Agent 的 prompt 都要求：
-
-- 如果你的观点和前面 Agent 重复，请保持沉默。
-- 如果你没有明显贡献，不要为了发言而发言。
-- 回复要像群聊消息，不要写成长篇报告。
-- 除非用户要求详细分析，否则保持简短、具体、可执行。
-
-## 运行流程
-
-```text
-用户消息
-  ↓
-读取群组成员，最多 5 个
-  ↓
-解析用户 @
-  ↓
-system orchestrator 选择模式 focused / multi_voice / collaboration
-  ↓
-选择本轮发言 Agent
-  ↓
-Agent 依次生成自然群聊消息
-  ↓
-如果 collaboration 中出现互相 @，最多进入下一小轮
-  ↓
-达到终止条件
-  ↓
-更新 shared-memory 与 run 状态
-```
-
-## 用户可见消息
-
-群聊主线程可见：
-
-- 用户消息
-- Agent 自然回复
-- Agent 之间公开 `@`
-- Agent 向用户的明确问题
-
-默认不再显示：
-
-- manager 分派消息
-- specialist 内部报告
-- 强制汇总消息
-
-内部 run 状态仍然会落盘，但不应该抢占主线程体验。
+- manager/specialist 术语
+- 批处理实现细节
+- work item id 或调度内部字段
 
 ## 当前实现状态
 
-当前代码已经实现：
+当前代码已落地：
 
-- 不可见 system orchestrator 选择发言 Agent。
-- `@` 优先。
-- 无 `@` 时按语义选择 1 到 5 个 Agent。
-- `focused / multi_voice / collaboration` 三种模式。
-- 群组最多 5 个 Agent。
-- 每个 team turn 最多 2 小轮、最多 15 条 Agent 消息。
-- Agent 可在复杂协作中互相 `@`，触发下一小轮。
-- 群组 shared-memory 会记录本轮话题、发言成员和阶段性结论。
+- handoff 状态持久化与跨轮延续
+- 选人时对 `activeAgentId` 的偏好
+- 受控多轮接棒（含 Agent 间 @）
+- messages/updates 双轨输出
+- execution subagent 阶段更新回传
+- 群聊过程中的工具调用自然化输出
 
-## 后续可优化
+## 后续可继续优化
 
-- 更好的 speaker selection 可解释性。
-- UI 展示“本轮参与 Agent”。
-- 群聊消息的轻量类型标识，例如 suggestion / question / result。
-- 更强的多轮上下文压缩。
-- 群聊失败恢复和 checkpoint。
+- 长任务“心跳式”节奏更新（防长时间等待焦虑）
+- handoff 可解释性（例如右侧栏显示最近接棒原因）
+- execution updates 的密度自适应（避免过多刷屏）

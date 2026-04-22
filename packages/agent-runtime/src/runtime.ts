@@ -63,6 +63,7 @@ import {
   planTeamExecution,
   selectNaturalTeamSpeakers,
   TEAM_MEMBER_LIMIT,
+  type TeamHandoffState,
   type TeamExecutionPlan,
   type TeamExecutionWorkItem,
   type NaturalTeamAgentMessage,
@@ -171,12 +172,58 @@ function getMcpConfiguredHint(server: McpCatalogRecord) {
   return `${server.name} 已加入本地连接列表。请在扩展页确认本地启动命令后，再点击“保存并检测”。`;
 }
 
+function extractMentionTokens(input: string) {
+  const tokens: string[] = [];
+  const seen = new Set<string>();
+  const pattern = /(?:^|[\s([{（【])[@＠]([^\s@＠,，。.!?！？;；:：)）\]】}]+)/g;
+  for (const match of input.matchAll(pattern)) {
+    const token = match[1]?.trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function normalizeMentionToken(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function resolveMentionedAgents(input: string, agents: AgentRecord[]) {
+  const tokens = extractMentionTokens(input);
+  const matchedAgents: AgentRecord[] = [];
+  const unresolvedTokens: string[] = [];
+  const seenAgentIds = new Set<string>();
+
+  for (const token of tokens) {
+    const normalizedToken = normalizeMentionToken(token);
+    const idWithoutPrefix = normalizedToken.replace(/^agent-/, "");
+    const match =
+      agents.find((agent) => normalizeMentionToken(agent.name) === normalizedToken) ??
+      agents.find((agent) => normalizeMentionToken(agent.id) === normalizedToken) ??
+      agents.find(
+        (agent) => normalizeMentionToken(agent.id).replace(/^agent-/, "") === idWithoutPrefix,
+      );
+    if (!match) {
+      unresolvedTokens.push(token);
+      continue;
+    }
+    if (seenAgentIds.has(match.id)) continue;
+    seenAgentIds.add(match.id);
+    matchedAgents.push(match);
+  }
+
+  return {
+    tokens,
+    matchedAgents,
+    unresolvedTokens,
+  };
+}
+
 function extractAgentMentions(input: string, agents: AgentRecord[]) {
-  const matches = [...input.matchAll(/@([\w\u4e00-\u9fa5-]+)/g)].map((item) => item[1]);
-  const mentioned = agents.filter((agent) =>
-    matches.some((match) => agent.name.toLowerCase() === match.toLowerCase()),
-  );
-  return mentioned;
+  return resolveMentionedAgents(input, agents).matchedAgents;
 }
 
 function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
@@ -185,6 +232,52 @@ function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
     members.find((agent) => agent.role.includes("经理") || agent.name === "Planner") ??
     members[0]
   );
+}
+
+function normalizeTeamHandoffState(
+  context: TeamContext,
+  members: AgentRecord[],
+): TeamHandoffState {
+  const memberIds = new Set(members.map((member) => member.id));
+  const raw = context.handoff;
+  const activeAgentId =
+    raw?.activeAgentId && memberIds.has(raw.activeAgentId) ? raw.activeAgentId : null;
+  const lastSpeakerId =
+    raw?.lastSpeakerId && memberIds.has(raw.lastSpeakerId) ? raw.lastSpeakerId : null;
+  const nextAgentIds = (raw?.nextAgentIds ?? []).filter((id) => memberIds.has(id)).slice(0, TEAM_MEMBER_LIMIT);
+
+  return {
+    activeAgentId,
+    lastSpeakerId,
+    nextAgentIds,
+    reason: raw?.reason?.trim() || "等待接棒",
+    revision: typeof raw?.revision === "number" ? raw.revision : 0,
+    updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : Date.now(),
+  };
+}
+
+function buildNextHandoffState(input: {
+  current: TeamHandoffState;
+  members: AgentRecord[];
+  turnMessages: NaturalTeamAgentMessage[];
+  defaultSpeakerId?: string | null;
+  reason: string;
+}) {
+  const memberIds = new Set(input.members.map((member) => member.id));
+  const latest = input.turnMessages.at(-1) ?? null;
+  const nextAgentIds =
+    latest?.mentions.filter((id) => memberIds.has(id) && id !== latest.speaker.id).slice(0, TEAM_MEMBER_LIMIT) ?? [];
+  const activeAgentId = nextAgentIds[0] ?? latest?.speaker.id ?? input.defaultSpeakerId ?? null;
+  const lastSpeakerId = latest?.speaker.id ?? input.current.lastSpeakerId;
+
+  return {
+    activeAgentId,
+    lastSpeakerId: lastSpeakerId && memberIds.has(lastSpeakerId) ? lastSpeakerId : null,
+    nextAgentIds,
+    reason: input.reason,
+    revision: input.current.revision + 1,
+    updatedAt: Date.now(),
+  } satisfies TeamHandoffState;
 }
 
 export class TeamalignedRuntime extends EventEmitter {
@@ -278,6 +371,9 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const slashDirectives = this.resolveSlashDirectives(conversation, payload.input);
 
+    const mentionResolution = resolveMentionedAgents(payload.input, snapshot.agents);
+    const mentionedAgentIds = mentionResolution.matchedAgents.map((agent) => agent.id);
+
     this.storage.addMessage({
       conversationId: payload.conversationId,
       senderId: "user",
@@ -286,7 +382,7 @@ export class TeamalignedRuntime extends EventEmitter {
       messageType: "user",
       visibility: "public",
       content: buildUserMessageContent(payload.input, attachments),
-      mentions: extractAgentMentions(payload.input, snapshot.agents).map((agent) => agent.id),
+      mentions: mentionedAgentIds,
       runId: null,
       metadata: {
         ...(attachments.length > 0 ? { attachments } : {}),
@@ -309,7 +405,23 @@ export class TeamalignedRuntime extends EventEmitter {
     if (conversation.kind === "agent") {
       await this.startAgentRun(conversation, runtimeInput, slashDirectives, attachments);
     } else {
-      await this.startTeamRun(conversation, runtimeInput, slashDirectives);
+      const team = snapshot.teams.find((item) => item.id === conversation.targetId);
+      const memberIds = new Set(team?.memberIds ?? []);
+      const explicitMentionIds = mentionedAgentIds.filter((id) => memberIds.has(id));
+      const outOfTeamMentions = mentionResolution.matchedAgents
+        .filter((agent) => !memberIds.has(agent.id))
+        .map((agent) => `@${agent.name}`);
+      const unresolvedMentions = mentionResolution.unresolvedTokens.map((token) => `@${token}`);
+      if (outOfTeamMentions.length > 0 || unresolvedMentions.length > 0) {
+        const ignored = Array.from(new Set([...outOfTeamMentions, ...unresolvedMentions]));
+        this.addPublicNotice(
+          conversation.id,
+          `以下 @ 未命中当前群组成员，已忽略：${ignored.join("、")}。${
+            explicitMentionIds.length > 0 ? "我会按已命中的 @ 继续执行。" : "我将按语义选择当前群组成员继续。"
+          }`,
+        );
+      }
+      await this.startTeamRun(conversation, runtimeInput, slashDirectives, explicitMentionIds);
     }
 
     this.emitSnapshot();
@@ -737,6 +849,7 @@ export class TeamalignedRuntime extends EventEmitter {
     conversationId: string;
     runId: string;
     speaker: AgentRecord;
+    onUpdate?: (content: string, metadata?: Record<string, unknown>) => void;
   }) {
     const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
     let announcedContextLookup = false;
@@ -744,6 +857,8 @@ export class TeamalignedRuntime extends EventEmitter {
       await baseObserver(event);
 
       const toolName = event.toolName.replace(/^workspace_/, "");
+      const sourceName = "server" in event ? event.server.name : event.serverName;
+      const isLocalTool = !("server" in event);
       if (event.phase === "start") {
         let content: string | null = null;
         if (
@@ -752,14 +867,20 @@ export class TeamalignedRuntime extends EventEmitter {
         ) {
           if (!announcedContextLookup) {
             announcedContextLookup = true;
-            content = `${input.speaker.name}：我先看一下现有文件和上下文。`;
+            content = isLocalTool
+              ? `${input.speaker.name}：我先看一下现有文件和上下文。`
+              : `${input.speaker.name}：我先从 ${sourceName} 里取一下相关上下文。`;
           }
         } else if (toolName === "write_text_file") {
-          content = `${input.speaker.name}：我开始把这部分改进文件里。`;
+          content = isLocalTool
+            ? `${input.speaker.name}：我开始把这部分改进文件里。`
+            : `${input.speaker.name}：我先通过 ${sourceName} 改这部分内容。`;
         } else if (toolName === "run_workspace_command") {
           content = `${input.speaker.name}：我先跑一个命令确认一下。`;
         } else {
-          content = `${input.speaker.name}：我先调用 ${toolName} 看看。`;
+          content = isLocalTool
+            ? `${input.speaker.name}：我先调用 ${toolName} 看看。`
+            : `${input.speaker.name}：我先调用 ${sourceName} 的 ${toolName} 看看。`;
         }
         if (!content) {
           return;
@@ -780,20 +901,35 @@ export class TeamalignedRuntime extends EventEmitter {
           },
           createdAt: Date.now(),
         });
+        input.onUpdate?.(
+          isLocalTool
+            ? `${input.speaker.name} 正在执行 ${toolName}`
+            : `${input.speaker.name} 正在通过 ${sourceName} 执行 ${toolName}`,
+          {
+            phase: "tool_start",
+            toolName,
+            sourceName,
+            local: isLocalTool,
+          },
+        );
         return;
       }
 
       if (event.phase === "success") {
         let content: string | null = null;
         if (toolName === "write_text_file") {
-          content = `${input.speaker.name}：这部分改动已经写进文件了。`;
+          content = isLocalTool
+            ? `${input.speaker.name}：这部分改动已经写进文件了。`
+            : `${input.speaker.name}：我已经通过 ${sourceName} 把这部分改动提交出去了。`;
         } else if (toolName === "run_workspace_command") {
           content = `${input.speaker.name}：命令已经跑完了，我继续往下处理。`;
         } else if (
           !["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
           !toolName.startsWith("skill_")
         ) {
-          content = `${input.speaker.name}：我拿到 ${toolName} 这一步的结果了，继续推进。`;
+          content = isLocalTool
+            ? `${input.speaker.name}：我拿到 ${toolName} 这一步的结果了，继续推进。`
+            : `${input.speaker.name}：我已经拿到 ${sourceName} 的 ${toolName} 结果，继续推进。`;
         }
         if (!content) {
           return;
@@ -815,6 +951,17 @@ export class TeamalignedRuntime extends EventEmitter {
           },
           createdAt: Date.now(),
         });
+        input.onUpdate?.(
+          isLocalTool
+            ? `${input.speaker.name} 已完成 ${toolName}`
+            : `${input.speaker.name} 已完成 ${sourceName}.${toolName}`,
+          {
+            phase: "tool_success",
+            toolName,
+            sourceName,
+            local: isLocalTool,
+          },
+        );
         return;
       }
 
@@ -826,7 +973,9 @@ export class TeamalignedRuntime extends EventEmitter {
           senderKind: "agent",
           messageType: "notification",
           visibility: "public",
-          content: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`,
+          content: isLocalTool
+            ? `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`
+            : `${input.speaker.name}：我在 ${sourceName} 的 ${toolName} 这一步遇到了问题：${event.error}`,
           mentions: ["user"],
           runId: input.runId,
           metadata: {
@@ -836,6 +985,18 @@ export class TeamalignedRuntime extends EventEmitter {
           },
           createdAt: Date.now(),
         });
+        input.onUpdate?.(
+          isLocalTool
+            ? `${input.speaker.name} 在 ${toolName} 失败：${event.error}`
+            : `${input.speaker.name} 在 ${sourceName}.${toolName} 失败：${event.error}`,
+          {
+            phase: "tool_error",
+            toolName,
+            sourceName,
+            local: isLocalTool,
+            error: event.error,
+          },
+        );
       }
     };
   }
@@ -1361,12 +1522,22 @@ export class TeamalignedRuntime extends EventEmitter {
     conversation: ConversationRecord,
     input: string,
     _slashContext: SlashDirectiveContext,
+    inputMentionIds: string[] = [],
   ) {
     const snapshot = this.storage.getSnapshot();
     const team = snapshot.teams.find((item) => item.id === conversation.targetId);
     if (!team) return;
-    const members = snapshot.agents
-      .filter((agent) => team.memberIds.includes(agent.id))
+    const allMembers = snapshot.agents.filter((agent) => team.memberIds.includes(agent.id));
+    const prioritizedMemberIds = Array.from(
+      new Set([
+        ...inputMentionIds,
+        ...(team.context.handoff?.activeAgentId ? [team.context.handoff.activeAgentId] : []),
+      ]),
+    );
+    const prioritizedMembers = prioritizedMemberIds
+      .map((id) => allMembers.find((agent) => agent.id === id))
+      .filter((agent): agent is AgentRecord => agent !== undefined);
+    const members = [...prioritizedMembers, ...allMembers.filter((agent) => !prioritizedMemberIds.includes(agent.id))]
       .slice(0, TEAM_MEMBER_LIMIT);
     if (members.length === 0) {
       this.addSystemMessage(conversation.id, "当前群组还没有可参与的 Agent，请先在管理页添加成员。");
@@ -1374,9 +1545,13 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     const memberIds = new Set(members.map((agent) => agent.id));
-    const explicitMentions = extractAgentMentions(input, members)
-      .map((agent) => agent.id)
-      .filter((id) => memberIds.has(id));
+    const explicitMentions =
+      inputMentionIds.length > 0
+        ? inputMentionIds.filter((id) => memberIds.has(id)).slice(0, TEAM_MEMBER_LIMIT)
+        : extractAgentMentions(input, members)
+            .map((agent) => agent.id)
+            .filter((id) => memberIds.has(id))
+            .slice(0, TEAM_MEMBER_LIMIT);
     const provider = this.resolveActiveProvider(snapshot);
     const providerIssue = validateProviderForSingleChat(provider);
     if (providerIssue) {
@@ -1390,6 +1565,11 @@ export class TeamalignedRuntime extends EventEmitter {
       activeTasks: Array.from(
         new Set([`${input.slice(0, 24)}${input.length > 24 ? "..." : ""}`, ...team.context.activeTasks]),
       ).slice(0, 5),
+    };
+    let handoffState = normalizeTeamHandoffState(updatedContext, members);
+    updatedContext = {
+      ...updatedContext,
+      handoff: handoffState,
     };
     this.storage.updateTeamContext(team.id, updatedContext);
     const workspacePath = team.workspacePath;
@@ -1413,17 +1593,29 @@ export class TeamalignedRuntime extends EventEmitter {
           const mentionedAgents = explicitMentions
             .map((id) => members.find((agent) => agent.id === id))
             .filter((agent): agent is AgentRecord => agent !== undefined);
+          const handoffAgent =
+            !mentionedAgents.length && handoffState.activeAgentId
+              ? members.find((agent) => agent.id === handoffState.activeAgentId) ?? null
+              : null;
           const thinkingText =
             mentionedAgents.length === 1
               ? `${mentionedAgents[0].name} 正在查看你的请求。`
               : mentionedAgents.length > 1
                 ? `${mentionedAgents.map((agent) => agent.name).join("、")} 正在查看你的请求。`
+                : handoffAgent
+                  ? `${handoffAgent.name} 正在接着上一轮继续处理。`
                 : `我先看一下这个问题，并叫上合适的成员来回复你。`;
           this.addRunMessage(
             conversation.id,
             runId,
             thinkingText,
             "system",
+            {
+              teamUpdate: true,
+              stage: "handoff",
+              actorId: handoffAgent?.id ?? mentionedAgents[0]?.id ?? null,
+              actorName: handoffAgent?.name ?? mentionedAgents[0]?.name ?? null,
+            },
           );
         },
       },
@@ -1439,6 +1631,7 @@ export class TeamalignedRuntime extends EventEmitter {
             },
             members,
             context: updatedContext,
+            handoff: handoffState,
             history: this.storage.listMessages(conversation.id).map((message) => ({
               senderName: message.senderName,
               visibility: message.visibility,
@@ -1460,7 +1653,35 @@ export class TeamalignedRuntime extends EventEmitter {
                 ? Array.from(new Set([executionPlan.decision, ...updatedContext.recentDecisions])).slice(0, 5)
                 : updatedContext.recentDecisions,
             };
+            handoffState = {
+              ...handoffState,
+              activeAgentId: executionPlan.workItems[0]?.owner.id ?? handoffState.activeAgentId,
+              nextAgentIds: executionPlan.workItems.map((item) => item.owner.id).slice(0, TEAM_MEMBER_LIMIT),
+              reason: executionPlan.reason || "进入执行模式",
+              revision: handoffState.revision + 1,
+              updatedAt: Date.now(),
+            };
+            updatedContext = {
+              ...updatedContext,
+              handoff: handoffState,
+            };
             this.storage.updateTeamContext(team.id, updatedContext);
+            this.emitTeamUpdate({
+              conversationId: conversation.id,
+              runId,
+              stage: "selection",
+              actorId: handoffState.activeAgentId,
+              actorName:
+                members.find((agent) => agent.id === handoffState.activeAgentId)?.name ?? null,
+              content:
+                executionPlan.workItems.length > 1
+                  ? `我已经排好了执行分工，先由 ${executionPlan.workItems.map((item) => item.owner.name).join("、")} 推进。`
+                  : `${executionPlan.workItems[0]?.owner.name ?? "成员"} 会先接手这一轮。`,
+              metadata: {
+                execution: true,
+                workItemCount: executionPlan.workItems.length,
+              },
+            });
             return;
           }
 
@@ -1473,6 +1694,7 @@ export class TeamalignedRuntime extends EventEmitter {
             },
             members,
             context: updatedContext,
+            handoff: handoffState,
             history: this.storage.listMessages(conversation.id).map((message) => ({
               senderName: message.senderName,
               visibility: message.visibility,
@@ -1493,7 +1715,34 @@ export class TeamalignedRuntime extends EventEmitter {
               ? Array.from(new Set([selection.decision, ...updatedContext.recentDecisions])).slice(0, 5)
               : updatedContext.recentDecisions,
           };
+          handoffState = {
+            ...handoffState,
+            activeAgentId: selection.speakers[0]?.id ?? handoffState.activeAgentId,
+            nextAgentIds: selection.speakers.map((agent) => agent.id).slice(0, TEAM_MEMBER_LIMIT),
+            reason: selection.reason || "语义选择",
+            revision: handoffState.revision + 1,
+            updatedAt: Date.now(),
+          };
+          updatedContext = {
+            ...updatedContext,
+            handoff: handoffState,
+          };
           this.storage.updateTeamContext(team.id, updatedContext);
+          this.emitTeamUpdate({
+            conversationId: conversation.id,
+            runId,
+            stage: "selection",
+            actorId: handoffState.activeAgentId,
+            actorName: selection.speakers[0]?.name ?? null,
+            content:
+              selection.speakers.length > 1
+                ? `${selection.speakers.map((agent) => agent.name).join("、")} 会先一起回应这一轮。`
+                : `${selection.speakers[0]?.name ?? "成员"} 会先接这条消息。`,
+            metadata: {
+              mode: selection.mode,
+              reason: selection.reason,
+            },
+          });
 
         },
       },
@@ -1540,27 +1789,33 @@ export class TeamalignedRuntime extends EventEmitter {
                   },
                   createdAt: Date.now(),
                 });
+                this.emitTeamUpdate({
+                  conversationId: conversation.id,
+                  runId,
+                  stage: "execution_waiting",
+                  actorId: item.owner.id,
+                  actorName: item.owner.name,
+                  content: `${item.owner.name} 正在等待前置步骤：${dependencyNames.join("、") || "前置成员"}。`,
+                  metadata: {
+                    workItemId: item.id,
+                    dependsOnAgentIds: item.dependsOnAgentIds,
+                  },
+                });
                 announcedWaitingWorkItems.add(item.id);
               }
 
               if (batch.length > 1) {
-                this.storage.addMessage({
+                this.emitTeamUpdate({
                   conversationId: conversation.id,
-                  senderId: team.id,
-                  senderName: team.name,
-                  senderKind: "agent",
-                  messageType: "agent",
-                  visibility: "public",
-                  content: `这一步先由 ${batch.map((item) => item.owner.name).join("、")} 并行处理，完成后我再继续推进。`,
-                  mentions: [],
                   runId,
+                  stage: "execution_batch",
+                  actorId: team.id,
+                  actorName: team.name,
+                  content: `并行批次开始：${batch.map((item) => item.owner.name).join("、")}。`,
                   metadata: {
-                    teamId: team.id,
-                    execution: true,
-                    batch: true,
+                    batchIndex,
                     batchSize: batch.length,
                   },
-                  createdAt: Date.now(),
                 });
               }
 
@@ -1585,6 +1840,18 @@ export class TeamalignedRuntime extends EventEmitter {
                     batchIndex,
                   },
                   createdAt: Date.now(),
+                });
+                this.emitTeamUpdate({
+                  conversationId: conversation.id,
+                  runId,
+                  stage: "execution_progress",
+                  actorId: item.owner.id,
+                  actorName: item.owner.name,
+                  content: `${item.owner.name} 已接手：${item.summary}`,
+                  metadata: {
+                    workItemId: item.id,
+                    batchIndex,
+                  },
                 });
               }
 
@@ -1613,7 +1880,42 @@ export class TeamalignedRuntime extends EventEmitter {
                         conversationId: conversation.id,
                         runId,
                         speaker: item.owner,
+                        onUpdate: (content, metadata) => {
+                          this.emitTeamUpdate({
+                            conversationId: conversation.id,
+                            runId,
+                            stage:
+                              metadata?.phase === "tool_error"
+                                ? "tool_error"
+                                : metadata?.phase === "tool_success"
+                                  ? "tool_success"
+                                  : "tool_start",
+                            actorId: item.owner.id,
+                            actorName: item.owner.name,
+                            content,
+                            metadata,
+                          });
+                        },
                       }),
+                      onUpdate: ({ phase, content }) => {
+                        this.emitTeamUpdate({
+                          conversationId: conversation.id,
+                          runId,
+                          stage:
+                            phase === "failed"
+                              ? "execution_result"
+                              : phase === "completed"
+                                ? "execution_result"
+                                : "execution_progress",
+                          actorId: item.owner.id,
+                          actorName: item.owner.name,
+                          content,
+                          metadata: {
+                            phase,
+                            workItemId: item.id,
+                          },
+                        });
+                      },
                       onTextStream: async (aggregatedText) => {
                         if (streamMessageId) {
                           this.storage.updateMessage(streamMessageId, {
@@ -1708,31 +2010,35 @@ export class TeamalignedRuntime extends EventEmitter {
                     createdAt: Date.now(),
                   });
                 }
+                handoffState = {
+                  ...handoffState,
+                  activeAgentId: result.item.owner.id,
+                  lastSpeakerId: result.item.owner.id,
+                  nextAgentIds: [],
+                  reason: result.ok ? "执行完成，继续推进" : "执行失败，等待修正",
+                  revision: handoffState.revision + 1,
+                  updatedAt: Date.now(),
+                };
+                updatedContext = {
+                  ...updatedContext,
+                  handoff: handoffState,
+                };
+                this.storage.updateTeamContext(team.id, updatedContext);
               }
 
               if (batchIndex < batches.length - 1) {
                 const finishedNames = batch.map((item) => item.owner.name).join("、");
-                this.storage.addMessage({
+                this.emitTeamUpdate({
                   conversationId: conversation.id,
-                  senderId: team.id,
-                  senderName: team.name,
-                  senderKind: "agent",
-                  messageType: "agent",
-                  visibility: "public",
-                  content:
-                    batch.length > 1
-                      ? `${finishedNames} 这一轮已经完成，我继续推进下一步。`
-                      : `${finishedNames} 这一步先完成了，我继续往下推进。`,
-                  mentions: [],
                   runId,
+                  stage: "execution_batch",
+                  actorId: team.id,
+                  actorName: team.name,
+                  content: `${finishedNames} 完成当前批次，继续下一步。`,
                   metadata: {
-                    teamId: team.id,
-                    execution: true,
-                    batch: true,
-                    batchCompleted: true,
-                    batchSize: batch.length,
+                    batchIndex,
+                    completed: true,
                   },
-                  createdAt: Date.now(),
                 });
               }
             }
@@ -1748,6 +2054,14 @@ export class TeamalignedRuntime extends EventEmitter {
               },
               "group_message",
             );
+            this.emitTeamUpdate({
+              conversationId: conversation.id,
+              runId,
+              stage: "execution_result",
+              actorId: team.id,
+              actorName: team.name,
+              content: `${team.name} 本轮执行已完成。`,
+            });
             return;
           }
 
@@ -1765,22 +2079,16 @@ export class TeamalignedRuntime extends EventEmitter {
 
             const roundMessages: NaturalTeamAgentMessage[] = [];
             if (roundIndex > 0 && speakers.length > 0) {
-              this.storage.addMessage({
+              this.emitTeamUpdate({
                 conversationId: conversation.id,
-                senderId: team.id,
-                senderName: team.name,
-                senderKind: "agent",
-                messageType: "agent",
-                visibility: "public",
-                content: `我继续叫上 ${speakers.map((agent) => agent.name).join("、")} 补充这一轮。`,
-                mentions: [],
                 runId,
+                stage: "handoff",
+                actorId: speakers[0]?.id ?? null,
+                actorName: speakers[0]?.name ?? null,
+                content: `进入第 ${roundIndex + 1} 小轮：${speakers.map((agent) => agent.name).join("、")} 接棒。`,
                 metadata: {
-                  teamId: team.id,
                   roundIndex,
-                  orchestration: true,
                 },
-                createdAt: Date.now(),
               });
             }
             for (const speaker of speakers) {
@@ -1791,6 +2099,18 @@ export class TeamalignedRuntime extends EventEmitter {
                 continue;
               }
               let streamMessageId: string | null = null;
+              this.emitTeamUpdate({
+                conversationId: conversation.id,
+                runId,
+                stage: "execution_progress",
+                actorId: speaker.id,
+                actorName: speaker.name,
+                content: `${speaker.name} 正在思考并组织回复。`,
+                metadata: {
+                  mode: selectedMode,
+                  roundIndex,
+                },
+              });
               const message = await generateNaturalTeamAgentMessage({
               provider: provider!,
               profile: snapshot.profile,
@@ -1817,6 +2137,22 @@ export class TeamalignedRuntime extends EventEmitter {
                 conversationId: conversation.id,
                 runId,
                 speaker,
+                onUpdate: (content, metadata) => {
+                  this.emitTeamUpdate({
+                    conversationId: conversation.id,
+                    runId,
+                    stage:
+                      metadata?.phase === "tool_error"
+                        ? "tool_error"
+                        : metadata?.phase === "tool_success"
+                          ? "tool_success"
+                          : "tool_start",
+                    actorId: speaker.id,
+                    actorName: speaker.name,
+                    content,
+                    metadata,
+                  });
+                },
               }),
               onTextStream: async (aggregatedText) => {
                 if (streamMessageId) {
@@ -1867,7 +2203,7 @@ export class TeamalignedRuntime extends EventEmitter {
               turnMessages.push(message);
               roundMessages.push(message);
             if (streamMessageId) {
-              this.storage.updateMessage(
+                this.storage.updateMessage(
                 streamMessageId,
                 {
                   content: message.content,
@@ -1882,8 +2218,20 @@ export class TeamalignedRuntime extends EventEmitter {
                   },
                 },
                 { appendTranscript: true },
-              );
-            } else {
+                );
+                this.emitTeamUpdate({
+                  conversationId: conversation.id,
+                  runId,
+                  stage: "execution_result",
+                  actorId: message.speaker.id,
+                  actorName: message.speaker.name,
+                  content: `${message.speaker.name} 完成了这一条回复。`,
+                  metadata: {
+                    mode: selectedMode,
+                    roundIndex: message.roundIndex,
+                  },
+                });
+              } else {
               this.storage.addMessage({
                 conversationId: conversation.id,
                   senderId: message.speaker.id,
@@ -1901,9 +2249,21 @@ export class TeamalignedRuntime extends EventEmitter {
                     kind: message.kind,
                 },
                 createdAt: Date.now(),
-              });
+                });
+                this.emitTeamUpdate({
+                  conversationId: conversation.id,
+                  runId,
+                  stage: "execution_result",
+                  actorId: message.speaker.id,
+                  actorName: message.speaker.name,
+                  content: `${message.speaker.name} 完成了这一条回复。`,
+                  metadata: {
+                    mode: selectedMode,
+                    roundIndex: message.roundIndex,
+                  },
+                });
+              }
             }
-          }
 
             if (roundIndex >= MAX_TEAM_SUBROUNDS - 1) {
               break;
@@ -1912,11 +2272,59 @@ export class TeamalignedRuntime extends EventEmitter {
               .filter((id) => memberIds.has(id) && (speakerMessageCounts.get(id) ?? 0) < MAX_AGENT_MESSAGES_PER_TURN)
               .slice(0, TEAM_MEMBER_LIMIT);
             if (nextIds.length === 0) {
+              handoffState = buildNextHandoffState({
+                current: handoffState,
+                members,
+                turnMessages: roundMessages,
+                defaultSpeakerId: turnMessages.at(-1)?.speaker.id ?? selection.speakers[0]?.id ?? null,
+                reason: "本轮发言完成",
+              });
+              updatedContext = {
+                ...updatedContext,
+                handoff: handoffState,
+              };
+              this.storage.updateTeamContext(team.id, updatedContext);
               break;
             }
+            handoffState = {
+              ...handoffState,
+              activeAgentId: nextIds[0] ?? handoffState.activeAgentId,
+              lastSpeakerId: roundMessages.at(-1)?.speaker.id ?? handoffState.lastSpeakerId,
+              nextAgentIds: nextIds,
+              reason: `${roundMessages.at(-1)?.speaker.name ?? "成员"} @ 了下一位成员`,
+              revision: handoffState.revision + 1,
+              updatedAt: Date.now(),
+            };
+            updatedContext = {
+              ...updatedContext,
+              handoff: handoffState,
+            };
+            this.storage.updateTeamContext(team.id, updatedContext);
             speakers = nextIds
               .map((id) => members.find((agent) => agent.id === id))
               .filter((agent): agent is AgentRecord => agent !== undefined);
+          }
+
+          if (turnMessages.length > 0) {
+            const nextHandoff = buildNextHandoffState({
+              current: handoffState,
+              members,
+              turnMessages,
+              defaultSpeakerId: selection.speakers[0]?.id ?? null,
+              reason: "本轮群聊发言完成",
+            });
+            if (
+              nextHandoff.activeAgentId !== handoffState.activeAgentId ||
+              nextHandoff.lastSpeakerId !== handoffState.lastSpeakerId ||
+              nextHandoff.nextAgentIds.join(",") !== handoffState.nextAgentIds.join(",")
+            ) {
+              handoffState = nextHandoff;
+              updatedContext = {
+                ...updatedContext,
+                handoff: handoffState,
+              };
+              this.storage.updateTeamContext(team.id, updatedContext);
+            }
           }
 
           if (turnMessages.length === 0) {
@@ -2352,6 +2760,22 @@ export class TeamalignedRuntime extends EventEmitter {
     });
   }
 
+  private addPublicNotice(conversationId: string, content: string) {
+    this.storage.addMessage({
+      conversationId,
+      senderId: "system",
+      senderName: "System",
+      senderKind: "system",
+      messageType: "notification",
+      visibility: "public",
+      content,
+      mentions: [],
+      runId: null,
+      metadata: { notice: true },
+      createdAt: Date.now(),
+    });
+  }
+
   private addSlashFeedbackMessage(
     conversation: ConversationRecord,
     input: {
@@ -2403,6 +2827,7 @@ export class TeamalignedRuntime extends EventEmitter {
     runId: string,
     content: string,
     visibility: MessageVisibility,
+    metadata?: Record<string, unknown> | null,
   ) {
     this.storage.addMessage({
       conversationId,
@@ -2414,8 +2839,36 @@ export class TeamalignedRuntime extends EventEmitter {
       content,
       mentions: [],
       runId,
-      metadata: null,
+      metadata: metadata ?? null,
       createdAt: Date.now(),
+    });
+  }
+
+  private emitTeamUpdate(input: {
+    conversationId: string;
+    runId: string;
+    content: string;
+    stage:
+      | "handoff"
+      | "selection"
+      | "execution"
+      | "execution_waiting"
+      | "execution_batch"
+      | "execution_progress"
+      | "execution_result"
+      | "tool_start"
+      | "tool_success"
+      | "tool_error";
+    actorId?: string | null;
+    actorName?: string | null;
+    metadata?: Record<string, unknown>;
+  }) {
+    this.addRunMessage(input.conversationId, input.runId, input.content, "system", {
+      teamUpdate: true,
+      stage: input.stage,
+      actorId: input.actorId ?? null,
+      actorName: input.actorName ?? null,
+      ...(input.metadata ?? {}),
     });
   }
 
