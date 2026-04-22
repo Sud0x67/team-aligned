@@ -739,11 +739,31 @@ export class TeamalignedRuntime extends EventEmitter {
     speaker: AgentRecord;
   }) {
     const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
+    let announcedContextLookup = false;
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
       await baseObserver(event);
 
       const toolName = event.toolName.replace(/^workspace_/, "");
       if (event.phase === "start") {
+        let content: string | null = null;
+        if (
+          ["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) ||
+          toolName.startsWith("skill_")
+        ) {
+          if (!announcedContextLookup) {
+            announcedContextLookup = true;
+            content = `${input.speaker.name}：我先看一下现有文件和上下文。`;
+          }
+        } else if (toolName === "write_text_file") {
+          content = `${input.speaker.name}：我开始把这部分改进文件里。`;
+        } else if (toolName === "run_workspace_command") {
+          content = `${input.speaker.name}：我先跑一个命令确认一下。`;
+        } else {
+          content = `${input.speaker.name}：我先调用 ${toolName} 看看。`;
+        }
+        if (!content) {
+          return;
+        }
         this.storage.addMessage({
           conversationId: input.conversationId,
           senderId: input.speaker.id,
@@ -751,12 +771,47 @@ export class TeamalignedRuntime extends EventEmitter {
           senderKind: "agent",
           messageType: "agent",
           visibility: "public",
-          content: `${input.speaker.name}：我先用 ${toolName} 看看。`,
+          content,
           mentions: [],
           runId: input.runId,
           metadata: {
             toolProgress: true,
             toolName,
+          },
+          createdAt: Date.now(),
+        });
+        return;
+      }
+
+      if (event.phase === "success") {
+        let content: string | null = null;
+        if (toolName === "write_text_file") {
+          content = `${input.speaker.name}：这部分改动已经写进文件了。`;
+        } else if (toolName === "run_workspace_command") {
+          content = `${input.speaker.name}：命令已经跑完了，我继续往下处理。`;
+        } else if (
+          !["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
+          !toolName.startsWith("skill_")
+        ) {
+          content = `${input.speaker.name}：我拿到 ${toolName} 这一步的结果了，继续推进。`;
+        }
+        if (!content) {
+          return;
+        }
+        this.storage.addMessage({
+          conversationId: input.conversationId,
+          senderId: input.speaker.id,
+          senderName: input.speaker.name,
+          senderKind: "agent",
+          messageType: "agent",
+          visibility: "public",
+          content,
+          mentions: [],
+          runId: input.runId,
+          metadata: {
+            toolProgress: true,
+            toolName,
+            completed: true,
           },
           createdAt: Date.now(),
         });
@@ -1355,10 +1410,19 @@ export class TeamalignedRuntime extends EventEmitter {
         label: "同步群组上下文",
         delayMs: 300,
         execute: () => {
+          const mentionedAgents = explicitMentions
+            .map((id) => members.find((agent) => agent.id === id))
+            .filter((agent): agent is AgentRecord => agent !== undefined);
+          const thinkingText =
+            mentionedAgents.length === 1
+              ? `${mentionedAgents[0].name} 正在查看你的请求。`
+              : mentionedAgents.length > 1
+                ? `${mentionedAgents.map((agent) => agent.name).join("、")} 正在查看你的请求。`
+                : `我先看一下这个问题，并叫上合适的成员来回复你。`;
           this.addRunMessage(
             conversation.id,
             runId,
-            `我先看一下这个问题，并叫上合适的成员来回复你。`,
+            thinkingText,
             "system",
           );
         },
@@ -1397,28 +1461,6 @@ export class TeamalignedRuntime extends EventEmitter {
                 : updatedContext.recentDecisions,
             };
             this.storage.updateTeamContext(team.id, updatedContext);
-            for (const item of executionPlan.workItems) {
-              this.storage.addMessage({
-                conversationId: conversation.id,
-                senderId: item.owner.id,
-                senderName: item.owner.name,
-                senderKind: "agent",
-                messageType: "agent",
-                visibility: "public",
-                content: item.kickoffMessage || `我先处理：${item.summary}`,
-                mentions: [],
-                runId,
-                metadata: {
-                  teamId: team.id,
-                  execution: true,
-                  workItemId: item.id,
-                  writeTargets: item.writeTargets,
-                  readTargets: item.readTargets,
-                  kickoff: true,
-                },
-                createdAt: Date.now(),
-              });
-            }
             return;
           }
 
@@ -1461,8 +1503,46 @@ export class TeamalignedRuntime extends EventEmitter {
           if (executionPlan && executionPlan.workItems.length > 0) {
             const batches = buildExecutionBatches(executionPlan.workItems);
             const completedOutputs: string[] = [];
+            const completedWorkItemIds = new Set<string>();
+            const announcedWaitingWorkItems = new Set<string>();
 
-            for (const batch of batches) {
+            for (const [batchIndex, batch] of batches.entries()) {
+              const batchIds = new Set(batch.map((item) => item.id));
+              const batchOwnerIds = new Set(batch.map((item) => item.owner.id));
+              const waitingItems = executionPlan.workItems.filter(
+                (item) =>
+                  !completedWorkItemIds.has(item.id) &&
+                  !batchIds.has(item.id) &&
+                  !announcedWaitingWorkItems.has(item.id) &&
+                  item.dependsOnAgentIds.some((id) => batchOwnerIds.has(id)),
+              );
+
+              for (const item of waitingItems) {
+                const dependencyNames = item.dependsOnAgentIds
+                  .map((id) => members.find((agent) => agent.id === id)?.name)
+                  .filter((name): name is string => Boolean(name));
+                this.storage.addMessage({
+                  conversationId: conversation.id,
+                  senderId: item.owner.id,
+                  senderName: item.owner.name,
+                  senderKind: "agent",
+                  messageType: "agent",
+                  visibility: "public",
+                  content: `${item.owner.name}：我先等 ${dependencyNames.join("、") || "前置成员"} 完成前置部分，再继续处理 ${item.summary}。`,
+                  mentions: [],
+                  runId,
+                  metadata: {
+                    teamId: team.id,
+                    execution: true,
+                    workItemId: item.id,
+                    waiting: true,
+                    dependsOnAgentIds: item.dependsOnAgentIds,
+                  },
+                  createdAt: Date.now(),
+                });
+                announcedWaitingWorkItems.add(item.id);
+              }
+
               if (batch.length > 1) {
                 this.storage.addMessage({
                   conversationId: conversation.id,
@@ -1482,23 +1562,27 @@ export class TeamalignedRuntime extends EventEmitter {
                   },
                   createdAt: Date.now(),
                 });
-              } else if (batch.length === 1) {
-                const item = batch[0];
+              }
+
+              for (const item of batch) {
                 this.storage.addMessage({
                   conversationId: conversation.id,
-                  senderId: team.id,
-                  senderName: team.name,
+                  senderId: item.owner.id,
+                  senderName: item.owner.name,
                   senderKind: "agent",
                   messageType: "agent",
                   visibility: "public",
-                  content: `${item.owner.name} 正在处理：${item.summary}`,
+                  content: item.kickoffMessage || `我先处理：${item.summary}`,
                   mentions: [],
                   runId,
                   metadata: {
                     teamId: team.id,
                     execution: true,
-                    batch: true,
-                    batchSize: 1,
+                    workItemId: item.id,
+                    writeTargets: item.writeTargets,
+                    readTargets: item.readTargets,
+                    kickoff: true,
+                    batchIndex,
                   },
                   createdAt: Date.now(),
                 });
@@ -1584,6 +1668,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
               for (const result of results) {
                 completedOutputs.push(result.content);
+                completedWorkItemIds.add(result.item.id);
                 if (result.streamMessageId) {
                   this.storage.updateMessage(
                     result.streamMessageId,
@@ -1623,6 +1708,32 @@ export class TeamalignedRuntime extends EventEmitter {
                     createdAt: Date.now(),
                   });
                 }
+              }
+
+              if (batchIndex < batches.length - 1) {
+                const finishedNames = batch.map((item) => item.owner.name).join("、");
+                this.storage.addMessage({
+                  conversationId: conversation.id,
+                  senderId: team.id,
+                  senderName: team.name,
+                  senderKind: "agent",
+                  messageType: "agent",
+                  visibility: "public",
+                  content:
+                    batch.length > 1
+                      ? `${finishedNames} 这一轮已经完成，我继续推进下一步。`
+                      : `${finishedNames} 这一步先完成了，我继续往下推进。`,
+                  mentions: [],
+                  runId,
+                  metadata: {
+                    teamId: team.id,
+                    execution: true,
+                    batch: true,
+                    batchCompleted: true,
+                    batchSize: batch.length,
+                  },
+                  createdAt: Date.now(),
+                });
               }
             }
 

@@ -217,6 +217,25 @@ export function ChatPage() {
   const pendingActor = useMemo(() => {
     if (!activeConversation) return null;
 
+    if (activeConversation.kind === "team" && activeRun) {
+      const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
+      const latestUserMessage = [...runMessages]
+        .reverse()
+        .find((message) => message.senderKind === "user" && message.visibility === "public");
+      const firstMentionedAgentId = latestUserMessage?.mentions.find((mention) => mention !== "user");
+      if (firstMentionedAgentId) {
+        const mentionedAgent = agents.find((agent) => agent.id === firstMentionedAgentId);
+        if (mentionedAgent) {
+          return {
+            name: mentionedAgent.name,
+            avatarPath: mentionedAgent.avatarPath,
+            avatar: mentionedAgent.avatar,
+            avatarColor: mentionedAgent.avatarColor,
+          };
+        }
+      }
+    }
+
     if (activeTarget) {
       return {
         name: activeTarget.name,
@@ -226,7 +245,7 @@ export function ChatPage() {
       };
     }
     return null;
-  }, [activeConversation, activeTarget]);
+  }, [activeConversation, activeMessages, activeRun, activeTarget, agents]);
 
   const handleSend = async (payload: { input: string; attachments: AttachmentAssetRecord[] }) => {
     if (!activeConversation) return;
