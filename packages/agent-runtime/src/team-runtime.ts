@@ -18,6 +18,7 @@ import {
   normalizeMessageContent,
 } from "./deep-agent.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
+import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
 
 export const TEAM_MEMBER_LIMIT = 5;
 export const MAX_AGENT_MESSAGES_PER_TURN = 10;
@@ -122,24 +123,43 @@ function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
 }
 
-function buildRecentHistory(history: string[]) {
+function buildRecentHistory(history: string[], language: RuntimeLanguage) {
   if (history.length === 0) {
-    return "最近没有可参考的公开对话。";
+    return byLanguage(language, {
+      zh: "最近没有可参考的公开对话。",
+      en: "No recent public messages are available.",
+    });
   }
 
   return history.map((line, index) => `${index + 1}. ${line}`).join("\n");
 }
 
-function buildContextText(team: TeamRecord, context: TeamContext) {
+function buildContextText(team: TeamRecord, context: TeamContext, language: RuntimeLanguage) {
+  const noneText = byLanguage(language, { zh: "无", en: "none" });
   return [
-    `群组：${team.name}`,
-    `群组目标：${team.objective}`,
-    `当前阶段：${context.phase}`,
-    `约束：${context.constraints.join("；") || "无"}`,
-    `当前任务：${context.activeTasks.join("；") || "无"}`,
-    `最近决策：${context.recentDecisions.join("；") || "无"}`,
-    `Pinned Artifacts：${context.pinnedArtifacts.join("；") || "无"}`,
-    `Workspace 摘要：${context.workspaceSummary || "无"}`,
+    byLanguage(language, { zh: `群组：${team.name}`, en: `Team: ${team.name}` }),
+    byLanguage(language, { zh: `群组目标：${team.objective}`, en: `Objective: ${team.objective}` }),
+    byLanguage(language, { zh: `当前阶段：${context.phase}`, en: `Current phase: ${context.phase}` }),
+    byLanguage(language, {
+      zh: `约束：${context.constraints.join("；") || noneText}`,
+      en: `Constraints: ${context.constraints.join("; ") || noneText}`,
+    }),
+    byLanguage(language, {
+      zh: `当前任务：${context.activeTasks.join("；") || noneText}`,
+      en: `Active tasks: ${context.activeTasks.join("; ") || noneText}`,
+    }),
+    byLanguage(language, {
+      zh: `最近决策：${context.recentDecisions.join("；") || noneText}`,
+      en: `Recent decisions: ${context.recentDecisions.join("; ") || noneText}`,
+    }),
+    byLanguage(language, {
+      zh: `Pinned Artifacts：${context.pinnedArtifacts.join("；") || noneText}`,
+      en: `Pinned artifacts: ${context.pinnedArtifacts.join("; ") || noneText}`,
+    }),
+    byLanguage(language, {
+      zh: `Workspace 摘要：${context.workspaceSummary || noneText}`,
+      en: `Workspace summary: ${context.workspaceSummary || noneText}`,
+    }),
   ].join("\n");
 }
 
@@ -150,15 +170,22 @@ function selectPublicHistory(history: { senderName: string; visibility: string; 
     .map((message) => `${message.senderName}：${compact(message.content)}`);
 }
 
-function buildNaturalRoster(members: AgentRecord[]) {
+function buildNaturalRoster(members: AgentRecord[], language: RuntimeLanguage) {
   if (members.length === 0) {
-    return "当前群组没有可发言的 Agent。";
+    return byLanguage(language, {
+      zh: "当前群组没有可发言的 Agent。",
+      en: "No available agents can speak in this team right now.",
+    });
   }
 
   return members
     .map(
       (agent) =>
-        `- id=${agent.id} | name=${agent.name} | role=${agent.role} | capabilities=${agent.capabilities.join("、") || "未设置"}`,
+        `- id=${agent.id} | name=${agent.name} | role=${agent.role} | capabilities=${
+          agent.capabilities.length > 0
+            ? formatList(agent.capabilities, language)
+            : byLanguage(language, { zh: "未设置", en: "not set" })
+        }`,
     )
     .join("\n");
 }
@@ -188,6 +215,7 @@ function selectFallbackSpeakers(input: {
   explicitMentionIds: string[];
   activeAgentId?: string | null;
   userInput: string;
+  responseLanguage: RuntimeLanguage;
 }) {
   const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
   const explicit = input.explicitMentionIds
@@ -200,7 +228,10 @@ function selectFallbackSpeakers(input: {
     return {
       mode,
       speakers: explicit.slice(0, TEAM_MEMBER_LIMIT),
-      reason: "用户显式 @ 了这些 Agent。",
+      reason: byLanguage(input.responseLanguage, {
+        zh: "用户显式 @ 了这些 Agent。",
+        en: "The user explicitly @ mentioned these agents.",
+      }),
     };
   }
 
@@ -230,7 +261,12 @@ function selectFallbackSpeakers(input: {
       .sort((a, b) => b.score - a.score || a.agent.name.localeCompare(b.agent.name, "zh-Hans-CN"))
       .map((item) => item.agent)
       .slice(0, take),
-    reason: complex ? "用户表达了多 Agent 协作意图。" : "根据角色和能力选择最相关 Agent。",
+    reason: byLanguage(input.responseLanguage, {
+      zh: complex ? "用户表达了多 Agent 协作意图。" : "根据角色和能力选择最相关 Agent。",
+      en: complex
+        ? "The user is asking for multi-agent collaboration."
+        : "Selected the most relevant agents based on roles and capabilities.",
+    }),
   };
 }
 
@@ -334,7 +370,11 @@ export function resolveTeamMessageMentions(
   return Array.from(new Set([...agentMentionIds, ...(hasUserMention ? (["user"] as const) : [])]));
 }
 
-export function normalizeTeamHandoffState(context: TeamContext, members: AgentRecord[]): TeamHandoffState {
+export function normalizeTeamHandoffState(
+  context: TeamContext,
+  members: AgentRecord[],
+  responseLanguage: RuntimeLanguage = "zh",
+): TeamHandoffState {
   const memberIds = new Set(members.map((member) => member.id));
   const raw = context.handoff;
   const activeAgentId =
@@ -349,7 +389,9 @@ export function normalizeTeamHandoffState(context: TeamContext, members: AgentRe
     activeAgentId,
     lastSpeakerId,
     nextAgentIds,
-    reason: raw?.reason?.trim() || "等待接棒",
+    reason:
+      raw?.reason?.trim() ||
+      byLanguage(responseLanguage, { zh: "等待接棒", en: "Waiting for handoff" }),
     revision: typeof raw?.revision === "number" ? raw.revision : 0,
     updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : Date.now(),
   };
@@ -442,6 +484,7 @@ async function invokeWorkerText(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  responseLanguage?: RuntimeLanguage;
 }) {
   const worker = createEphemeralWorker(input);
   const messages = [{ role: "user" as const, content: input.message }];
@@ -496,7 +539,14 @@ async function invokeWorkerText(input: {
   }
 
   const result = await worker.invoke({ messages }, { configurable: { thread_id: input.threadId } });
-  return extractAgentText(result) || normalizeMessageContent(result) || "模型已完成调用，但没有返回可显示的文本内容。";
+  return (
+    extractAgentText(result) ||
+    normalizeMessageContent(result) ||
+    byLanguage(input.responseLanguage ?? "zh", {
+      zh: "模型已完成调用，但没有返回可显示的文本内容。",
+      en: "The model finished the call, but returned no displayable text.",
+    })
+  );
 }
 
 function extractStreamText(chunk: unknown) {
@@ -526,20 +576,26 @@ export async function selectNaturalTeamSpeakers(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
+  responseLanguage?: RuntimeLanguage;
 }) {
+  const responseLanguage = input.responseLanguage ?? "zh";
   const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
   const fallback = selectFallbackSpeakers({
     members: cappedMembers,
     explicitMentionIds: input.explicitMentionIds,
     activeAgentId: input.handoff?.activeAgentId ?? null,
     userInput: input.userInput,
+    responseLanguage,
   });
 
   if (cappedMembers.length === 0) {
     return {
       mode: "focused",
       speakers: [],
-      reason: "群组没有可用成员。",
+      reason: byLanguage(responseLanguage, {
+        zh: "群组没有可用成员。",
+        en: "No available members in this team.",
+      }),
       activeTask: "",
       nextPhase: "",
       decision: "",
@@ -564,45 +620,88 @@ export async function selectNaturalTeamSpeakers(input: {
   try {
     const model = createProviderModel(input.provider).withStructuredOutput(naturalSelectionSchema);
     const result = naturalSelectionSchema.parse(
-      await model.invoke([
-        "你是 teamaligned 群聊中的不可见 system orchestrator。",
-        "你的任务不是作为群成员发言，而是选择本轮应该发言的 Agent。",
-        "请让群聊像真实人类群聊一样自然：该谁说谁说，没必要全员发言。",
-        `群组最多激活 ${TEAM_MEMBER_LIMIT} 个 Agent。`,
-        "普通问题选择 1 到 2 个 Agent；多视角问题选择 2 到 4 个 Agent；明确脑暴、分工、复杂协作选择 3 到 5 个 Agent。",
-        "如果某个 Agent 没有明显贡献，不要选择它。",
-        "",
-        "模式定义：focused / multi_voice / collaboration。",
-        "",
-        "当前用户资料：",
-        `- 姓名：${input.profile.name}`,
-        `- 角色：${input.profile.role || "未设置"}`,
-        `- 团队：${input.profile.team || "未设置"}`,
-        "",
-        "群组上下文：",
-        buildContextText(input.team, input.context),
-        "",
-        "Agent roster：",
-        buildNaturalRoster(cappedMembers),
-        "",
-        `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-        "",
-        "最近公开对话：",
-        buildRecentHistory(selectPublicHistory(input.history)),
-        "",
-        "handoff 状态：",
-        `- 当前接棒 Agent id：${input.handoff?.activeAgentId ?? "无"}`,
-        `- 上次发言 Agent id：${input.handoff?.lastSpeakerId ?? "无"}`,
-        `- 下一候选 Agent ids：${input.handoff?.nextAgentIds.join("、") || "无"}`,
-        `- 最近接棒原因：${input.handoff?.reason || "无"}`,
-        "",
-        "用户最新输入：",
-        input.userInput,
-        "",
-        "输出要求：",
-        "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-        "- speakerIds 必须来自 roster id",
-      ].join("\n")),
+      await model.invoke(
+        byLanguage(responseLanguage, {
+          zh: [
+            "你是 teamaligned 群聊中的不可见 system orchestrator。",
+            "你的任务不是作为群成员发言，而是选择本轮应该发言的 Agent。",
+            "请让群聊像真实人类群聊一样自然：该谁说谁说，没必要全员发言。",
+            `群组最多激活 ${TEAM_MEMBER_LIMIT} 个 Agent。`,
+            "普通问题选择 1 到 2 个 Agent；多视角问题选择 2 到 4 个 Agent；明确脑暴、分工、复杂协作选择 3 到 5 个 Agent。",
+            "如果某个 Agent 没有明显贡献，不要选择它。",
+            "",
+            "模式定义：focused / multi_voice / collaboration。",
+            "",
+            "当前用户资料：",
+            `- 姓名：${input.profile.name}`,
+            `- 角色：${input.profile.role || "未设置"}`,
+            `- 团队：${input.profile.team || "未设置"}`,
+            "",
+            "群组上下文：",
+            buildContextText(input.team, input.context, responseLanguage),
+            "",
+            "Agent roster：",
+            buildNaturalRoster(cappedMembers, responseLanguage),
+            "",
+            `当前可用 MCP 服务：${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+            "",
+            "最近公开对话：",
+            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
+            "",
+            "handoff 状态：",
+            `- 当前接棒 Agent id：${input.handoff?.activeAgentId ?? "无"}`,
+            `- 上次发言 Agent id：${input.handoff?.lastSpeakerId ?? "无"}`,
+            `- 下一候选 Agent ids：${formatList(input.handoff?.nextAgentIds ?? [], responseLanguage)}`,
+            `- 最近接棒原因：${input.handoff?.reason || "无"}`,
+            "",
+            "用户最新输入：",
+            input.userInput,
+            "",
+            "输出要求：",
+            "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
+            "- speakerIds 必须来自 roster id",
+          ],
+          en: [
+            "You are the invisible system orchestrator in TeamAligned group chat.",
+            "Your job is not to speak as a member, but to choose which agent(s) should reply this turn.",
+            "Keep the chat natural: only the right people speak, not everyone.",
+            `At most ${TEAM_MEMBER_LIMIT} agents can be active in this group.`,
+            "For normal requests choose 1-2 agents; for multi-perspective requests choose 2-4; for explicit brainstorm/division/collaboration choose 3-5.",
+            "If an agent has no clear contribution, do not select that agent.",
+            "",
+            "Mode definitions: focused / multi_voice / collaboration.",
+            "",
+            "Current user profile:",
+            `- Name: ${input.profile.name}`,
+            `- Role: ${input.profile.role || "not set"}`,
+            `- Team: ${input.profile.team || "not set"}`,
+            "",
+            "Group context:",
+            buildContextText(input.team, input.context, responseLanguage),
+            "",
+            "Agent roster:",
+            buildNaturalRoster(cappedMembers, responseLanguage),
+            "",
+            `Available MCP servers: ${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+            "",
+            "Recent public messages:",
+            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
+            "",
+            "Handoff state:",
+            `- Active handoff agent id: ${input.handoff?.activeAgentId ?? "none"}`,
+            `- Last speaker agent id: ${input.handoff?.lastSpeakerId ?? "none"}`,
+            `- Next candidate agent ids: ${formatList(input.handoff?.nextAgentIds ?? [], responseLanguage)}`,
+            `- Latest handoff reason: ${input.handoff?.reason || "none"}`,
+            "",
+            "Latest user input:",
+            input.userInput,
+            "",
+            "Output requirements:",
+            "- Return only a valid JSON object. No markdown. No extra commentary.",
+            "- speakerIds must come from roster ids.",
+          ],
+        }).join("\n"),
+      ),
     );
 
     const memberMap = new Map(cappedMembers.map((agent) => [agent.id, agent]));
@@ -646,6 +745,7 @@ function buildFallbackExecutionPlan(input: {
   explicitMentionIds: string[];
   activeAgentId?: string | null;
   userInput: string;
+  responseLanguage: RuntimeLanguage;
 }) {
   const fallback = selectFallbackSpeakers(input);
   const owners = fallback.speakers.slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
@@ -657,13 +757,16 @@ function buildFallbackExecutionPlan(input: {
   const workItems = owners.map((owner, index) => ({
     id: `work-${index + 1}`,
     owner,
-    summary: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分`,
+    summary: byLanguage(input.responseLanguage, {
+      zh: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分`,
+      en: `Handle the part of "${compact(input.userInput)}" related to ${owner.role}`,
+    }),
     kickoffMessage:
       index === 0
-        ? "我先开始处理这个部分。"
+        ? byLanguage(input.responseLanguage, { zh: "我先开始处理这个部分。", en: "I'll start with this part first." })
         : prefersSequential
-          ? "我会等前置部分完成后继续接棒。"
-          : "我这边也同步处理一部分。",
+          ? byLanguage(input.responseLanguage, { zh: "我会等前置部分完成后继续接棒。", en: "I'll wait for prerequisites to finish, then continue." })
+          : byLanguage(input.responseLanguage, { zh: "我这边也同步处理一部分。", en: "I'll handle another part in parallel." }),
     readTargets: [],
     writeTargets: [],
     dependsOnAgentIds: prefersSequential && index > 0 ? [owners[index - 1]?.id].filter(Boolean) : [],
@@ -671,10 +774,18 @@ function buildFallbackExecutionPlan(input: {
   }));
 
   return {
-    reason: input.explicitMentionIds.length > 0 ? "用户明确要求相关 Agent 直接开始执行。" : "用户表达了明确的执行意图。",
+    reason: byLanguage(input.responseLanguage, {
+      zh: input.explicitMentionIds.length > 0 ? "用户明确要求相关 Agent 直接开始执行。" : "用户表达了明确的执行意图。",
+      en: input.explicitMentionIds.length > 0
+        ? "The user explicitly asked these agents to execute immediately."
+        : "The user expressed a clear execution intent.",
+    }),
     activeTask: compact(input.userInput),
-    nextPhase: "执行中",
-    decision: "启动第一版群聊执行模式。",
+    nextPhase: byLanguage(input.responseLanguage, { zh: "执行中", en: "Executing" }),
+    decision: byLanguage(input.responseLanguage, {
+      zh: "启动第一版群聊执行模式。",
+      en: "Start the first version of execution mode in group chat.",
+    }),
     workItems,
   } satisfies TeamExecutionPlan;
 }
@@ -690,7 +801,9 @@ export async function planTeamExecution(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
+  responseLanguage?: RuntimeLanguage;
 }) {
+  const responseLanguage = input.responseLanguage ?? "zh";
   const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
   if (!isExecutionIntent(input.userInput)) {
     return null;
@@ -701,6 +814,7 @@ export async function planTeamExecution(input: {
     explicitMentionIds: input.explicitMentionIds,
     activeAgentId: input.handoff?.activeAgentId ?? null,
     userInput: input.userInput,
+    responseLanguage,
   });
 
   if (input.explicitMentionIds.length > 0) {
@@ -710,44 +824,86 @@ export async function planTeamExecution(input: {
   try {
     const model = createProviderModel(input.provider).withStructuredOutput(executionPlanSchema);
     const result = executionPlanSchema.parse(
-      await model.invoke([
-        "你是 teamaligned 群聊中的不可见 system orchestrator。",
-        "你的任务是判断这条用户消息是否应该进入执行模式，并把任务拆成可执行 work items。",
-        "系统支持并行和串行执行，但必须避免文件冲突和无意义并行。",
-        `群组最多 ${TEAM_MEMBER_LIMIT} 个成员，同时最多 ${MAX_PARALLEL_TEAM_EXECUTIONS} 个 work item 并行执行。`,
-        "",
-        "执行模式规则：",
-        "- 只有明确要实现、修改、创建、修复、落地、写代码时才 shouldExecute=true",
-        "- work item 应尽量让不同角色处理不同文件或不同分工",
-        "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
-        "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
-        "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
-        `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
-        "",
-        "当前用户资料：",
-        `- 姓名：${input.profile.name}`,
-        `- 角色：${input.profile.role || "未设置"}`,
-        "",
-        "群组上下文：",
-        buildContextText(input.team, input.context),
-        "",
-        "Agent roster：",
-        buildNaturalRoster(cappedMembers),
-        "",
-        `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-        "",
-        "最近公开对话：",
-        buildRecentHistory(selectPublicHistory(input.history)),
-        "",
-        "用户最新输入：",
-        input.userInput,
-        "",
-        `用户显式提及的成员 id：${input.explicitMentionIds.join("、") || "无"}`,
-        "",
-        "输出要求：",
-        "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-        "- ownerAgentId 必须来自 roster id",
-      ].join("\n")),
+      await model.invoke(
+        byLanguage(responseLanguage, {
+          zh: [
+            "你是 teamaligned 群聊中的不可见 system orchestrator。",
+            "你的任务是判断这条用户消息是否应该进入执行模式，并把任务拆成可执行 work items。",
+            "系统支持并行和串行执行，但必须避免文件冲突和无意义并行。",
+            `群组最多 ${TEAM_MEMBER_LIMIT} 个成员，同时最多 ${MAX_PARALLEL_TEAM_EXECUTIONS} 个 work item 并行执行。`,
+            "",
+            "执行模式规则：",
+            "- 只有明确要实现、修改、创建、修复、落地、写代码时才 shouldExecute=true",
+            "- work item 应尽量让不同角色处理不同文件或不同分工",
+            "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
+            "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
+            "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
+            `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
+            "",
+            "当前用户资料：",
+            `- 姓名：${input.profile.name}`,
+            `- 角色：${input.profile.role || "未设置"}`,
+            "",
+            "群组上下文：",
+            buildContextText(input.team, input.context, responseLanguage),
+            "",
+            "Agent roster：",
+            buildNaturalRoster(cappedMembers, responseLanguage),
+            "",
+            `当前可用 MCP 服务：${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+            "",
+            "最近公开对话：",
+            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
+            "",
+            "用户最新输入：",
+            input.userInput,
+            "",
+            `用户显式提及的成员 id：${formatList(input.explicitMentionIds, responseLanguage)}`,
+            "",
+            "输出要求：",
+            "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
+            "- ownerAgentId 必须来自 roster id",
+          ],
+          en: [
+            "You are the invisible system orchestrator in TeamAligned group chat.",
+            "Decide whether this user message should enter execution mode, then split tasks into executable work items.",
+            "The system supports both parallel and sequential execution, but avoid file conflicts and meaningless parallelism.",
+            `The group can have at most ${TEAM_MEMBER_LIMIT} members, and at most ${MAX_PARALLEL_TEAM_EXECUTIONS} work items can run in parallel.`,
+            "",
+            "Execution mode rules:",
+            "- Set shouldExecute=true only when the user clearly asks to implement/modify/create/fix/deliver/code",
+            "- Work items should let different roles own different files or responsibilities",
+            "- If a task depends on another agent's output, include dependsOnAgentIds",
+            "- If two tasks might touch the same file, set canRunInParallel=false",
+            "- Prefer workspace-relative paths for writeTargets/readTargets",
+            `- Each agent can own at most ${MAX_AGENT_WORK_ITEMS} work items`,
+            "",
+            "Current user profile:",
+            `- Name: ${input.profile.name}`,
+            `- Role: ${input.profile.role || "not set"}`,
+            "",
+            "Group context:",
+            buildContextText(input.team, input.context, responseLanguage),
+            "",
+            "Agent roster:",
+            buildNaturalRoster(cappedMembers, responseLanguage),
+            "",
+            `Available MCP servers: ${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+            "",
+            "Recent public messages:",
+            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
+            "",
+            "Latest user input:",
+            input.userInput,
+            "",
+            `Explicitly mentioned member ids: ${formatList(input.explicitMentionIds, responseLanguage)}`,
+            "",
+            "Output requirements:",
+            "- Return only a valid JSON object. No markdown. No extra commentary.",
+            "- ownerAgentId must come from roster ids.",
+          ],
+        }).join("\n"),
+      ),
     );
 
     if (!result.shouldExecute || result.workItems.length === 0) {
@@ -766,8 +922,18 @@ export async function planTeamExecution(input: {
       workItems.push({
         id: `work-${index + 1}`,
         owner,
-        summary: compact(item.summary) || `处理与 ${owner.role} 相关的部分`,
-        kickoffMessage: compact(item.kickoffMessage) || `我来处理和 ${owner.role} 相关的部分。`,
+        summary:
+          compact(item.summary) ||
+          byLanguage(responseLanguage, {
+            zh: `处理与 ${owner.role} 相关的部分`,
+            en: `Handle the part related to ${owner.role}`,
+          }),
+        kickoffMessage:
+          compact(item.kickoffMessage) ||
+          byLanguage(responseLanguage, {
+            zh: `我来处理和 ${owner.role} 相关的部分。`,
+            en: `I'll take the part related to ${owner.role}.`,
+          }),
         readTargets: item.readTargets.map(normalizeTargetPath).filter(Boolean),
         writeTargets: item.writeTargets.map(normalizeTargetPath).filter(Boolean),
         dependsOnAgentIds: item.dependsOnAgentIds.filter((id) => memberMap.has(id)),
@@ -782,7 +948,9 @@ export async function planTeamExecution(input: {
     return {
       reason: compact(result.reason) || fallback.reason,
       activeTask: compact(result.activeTask) || fallback.activeTask,
-      nextPhase: compact(result.nextPhase) || "执行中",
+      nextPhase:
+        compact(result.nextPhase) ||
+        byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
       decision: compact(result.decision) || fallback.decision,
       workItems,
     } satisfies TeamExecutionPlan;
@@ -862,41 +1030,77 @@ export async function executeNaturalTeamWorkItem(input: {
   }) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  responseLanguage?: RuntimeLanguage;
 }) {
-  const systemPrompt = [
-    `你是 ${input.team.name} 群聊中的成员 ${input.workItem.owner.name}。`,
-    `你的角色：${input.workItem.owner.role}。`,
-    `你的能力：${input.workItem.owner.capabilities.join("、") || "未设置"}。`,
-    "当前已经进入执行模式，请真正完成分配给你的工作，而不是只讨论。",
-    "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
-    "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
-    "请只在当前 workspace 内工作。",
-    "如果任务无法执行，请明确说明阻塞原因。",
-    "",
-    "本次 work item：",
-    `- 摘要：${input.workItem.summary}`,
-    `- 读取范围：${input.workItem.readTargets.join("、") || "未指定"}`,
-    `- 写入范围：${input.workItem.writeTargets.join("、") || "未指定"}`,
-    `- 并行：${input.workItem.canRunInParallel ? "可并行" : "需要串行"}`,
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    "本轮其他执行结果：",
-    input.previousOutputs.length > 0 ? input.previousOutputs.join("\n\n") : "暂无",
-  ].join("\n");
+  const responseLanguage = input.responseLanguage ?? "zh";
+  const systemPrompt = byLanguage(responseLanguage, {
+    zh: [
+      `你是 ${input.team.name} 群聊中的成员 ${input.workItem.owner.name}。`,
+      `你的角色：${input.workItem.owner.role}。`,
+      `你的能力：${input.workItem.owner.capabilities.join("、") || "未设置"}。`,
+      "当前已经进入执行模式，请真正完成分配给你的工作，而不是只讨论。",
+      "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
+      "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
+      "请只在当前 workspace 内工作。",
+      "如果任务无法执行，请明确说明阻塞原因。",
+      "",
+      "本次 work item：",
+      `- 摘要：${input.workItem.summary}`,
+      `- 读取范围：${formatList(input.workItem.readTargets, responseLanguage)}`,
+      `- 写入范围：${formatList(input.workItem.writeTargets, responseLanguage)}`,
+      `- 并行：${input.workItem.canRunInParallel ? "可并行" : "需要串行"}`,
+      "",
+      "群组上下文：",
+      buildContextText(input.team, input.context, responseLanguage),
+      "",
+      "本轮其他执行结果：",
+      input.previousOutputs.length > 0 ? input.previousOutputs.join("\n\n") : "暂无",
+    ],
+    en: [
+      `You are ${input.workItem.owner.name}, a member in ${input.team.name}.`,
+      `Your role: ${input.workItem.owner.role}.`,
+      `Your capabilities: ${formatList(input.workItem.owner.capabilities, responseLanguage)}.`,
+      "This turn is in execution mode. Complete your assigned work instead of discussing only.",
+      "You can use injected file, search, command, and MCP tools.",
+      "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
+      "Only work inside the current workspace.",
+      "If the task cannot proceed, clearly explain the blocker.",
+      "",
+      "Current work item:",
+      `- Summary: ${input.workItem.summary}`,
+      `- Read scope: ${formatList(input.workItem.readTargets, responseLanguage)}`,
+      `- Write scope: ${formatList(input.workItem.writeTargets, responseLanguage)}`,
+      `- Parallelism: ${input.workItem.canRunInParallel ? "parallel allowed" : "sequential required"}`,
+      "",
+      "Group context:",
+      buildContextText(input.team, input.context, responseLanguage),
+      "",
+      "Other outputs from this turn:",
+      input.previousOutputs.length > 0 ? input.previousOutputs.join("\n\n") : "none",
+    ],
+  }).join("\n");
 
-  const message = [
-    `用户原始请求：${input.userInput}`,
-    `你需要执行的任务：${input.workItem.summary}`,
-    "请直接执行，并在完成后用自然群聊口吻汇报：做了什么、结果是什么、如果改了文件请简要提及。",
-  ].join("\n");
+  const message = byLanguage(responseLanguage, {
+    zh: [
+      `用户原始请求：${input.userInput}`,
+      `你需要执行的任务：${input.workItem.summary}`,
+      "请直接执行，并在完成后用自然群聊口吻汇报：做了什么、结果是什么、如果改了文件请简要提及。",
+    ],
+    en: [
+      `Original user request: ${input.userInput}`,
+      `Task to execute: ${input.workItem.summary}`,
+      "Execute directly, then report in natural group-chat style: what you did, what result you got, and briefly mention changed files.",
+    ],
+  }).join("\n");
 
   await input.onUpdate?.({
     phase: "started",
     owner: input.workItem.owner,
     summary: input.workItem.summary,
-    content: `${input.workItem.owner.name}：我开始处理 ${input.workItem.summary}。`,
+    content: byLanguage(responseLanguage, {
+      zh: `${input.workItem.owner.name}：我开始处理 ${input.workItem.summary}。`,
+      en: `${input.workItem.owner.name}: I’m starting ${input.workItem.summary}.`,
+    }),
   });
   let announcedStreaming = false;
   try {
@@ -919,17 +1123,24 @@ export async function executeNaturalTeamWorkItem(input: {
             phase: "streaming",
             owner: input.workItem.owner,
             summary: input.workItem.summary,
-            content: `${input.workItem.owner.name}：我正在处理，先同步一版中间结果。`,
+            content: byLanguage(responseLanguage, {
+              zh: `${input.workItem.owner.name}：我正在处理，先同步一版中间结果。`,
+              en: `${input.workItem.owner.name}: I’m working on it and sharing an interim update.`,
+            }),
           });
         }
       },
+      responseLanguage,
       additionalTools: input.additionalTools,
     });
     await input.onUpdate?.({
       phase: "completed",
       owner: input.workItem.owner,
       summary: input.workItem.summary,
-      content: `${input.workItem.owner.name}：这部分已经处理完成。`,
+      content: byLanguage(responseLanguage, {
+        zh: `${input.workItem.owner.name}：这部分已经处理完成。`,
+        en: `${input.workItem.owner.name}: This part is completed.`,
+      }),
     });
     return result;
   } catch (error) {
@@ -938,15 +1149,21 @@ export async function executeNaturalTeamWorkItem(input: {
       label: input.provider.label,
       baseUrl: input.provider.baseUrl,
       defaultModel: input.provider.defaultModel,
-    });
+    }, responseLanguage);
     await input.onUpdate?.({
       phase: "failed",
       owner: input.workItem.owner,
       summary: input.workItem.summary,
       content:
         normalizedError
-          ? `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到问题：${normalizedError}`
-          : `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到未知问题。`,
+          ? byLanguage(responseLanguage, {
+              zh: `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到问题：${normalizedError}`,
+              en: `${input.workItem.owner.name}: I hit an issue while handling ${input.workItem.summary}: ${normalizedError}`,
+            })
+          : byLanguage(responseLanguage, {
+              zh: `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到未知问题。`,
+              en: `${input.workItem.owner.name}: I hit an unknown issue while handling ${input.workItem.summary}.`,
+            }),
     });
     throw new Error(normalizedError);
   }
@@ -972,48 +1189,93 @@ export async function generateNaturalTeamAgentMessage(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  responseLanguage?: RuntimeLanguage;
 }) {
+  const responseLanguage = input.responseLanguage ?? "zh";
   const previousText =
     input.previousTurnMessages.length > 0
       ? input.previousTurnMessages
           .map((message) => `${message.speaker.name}：${message.content}`)
           .join("\n")
-      : "本轮还没有其他 Agent 发言。";
-  const systemPrompt = [
-    `你是 ${input.team.name} 群聊中的成员 ${input.speaker.name}。`,
-    `你的角色：${input.speaker.role}。`,
-    `你的能力：${input.speaker.capabilities.join("、") || "未设置"}。`,
-    "你正在真实群聊里发言，不是写报告，也不是 manager 汇总。",
-    "请像人类群成员一样自然、简洁、具体地说话。",
-    "",
-    "硬性规则：",
-    "- 如果你的观点和前面 Agent 重复，或者没有明显贡献，请只输出 [SKIP]",
-    "- 不要为了发言而发言",
-    "- 除非用户要求详细分析，否则保持简短",
-    "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
-    input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
-    "",
-    "群组上下文：",
-    buildContextText(input.team, input.context),
-    "",
-    "当前群成员：",
-    buildNaturalRoster(input.members),
-    "",
-    `当前可用 MCP 服务：${input.mcpServers.map((server) => server.name).join("、") || "无"}`,
-    "",
-    "用户资料：",
-    `- 姓名：${input.profile.name}`,
-    `- 角色：${input.profile.role || "未设置"}`,
-  ].filter(Boolean).join("\n");
+      : byLanguage(responseLanguage, {
+          zh: "本轮还没有其他 Agent 发言。",
+          en: "No other agent has spoken in this turn yet.",
+        });
+  const systemPrompt = byLanguage(responseLanguage, {
+    zh: [
+      `你是 ${input.team.name} 群聊中的成员 ${input.speaker.name}。`,
+      `你的角色：${input.speaker.role}。`,
+      `你的能力：${input.speaker.capabilities.join("、") || "未设置"}。`,
+      "你正在真实群聊里发言，不是写报告，也不是 manager 汇总。",
+      "请像人类群成员一样自然、简洁、具体地说话。",
+      "",
+      "硬性规则：",
+      "- 如果你的观点和前面 Agent 重复，或者没有明显贡献，请只输出 [SKIP]",
+      "- 不要为了发言而发言",
+      "- 除非用户要求详细分析，否则保持简短",
+      "- 你可以 @ 其他 Agent，但只有确实需要对方补充时才这么做",
+      input.isFinalSpeaker ? "- 你是本轮最后一位发言者，请尽量给出阶段性结论或下一步" : "",
+      "",
+      "群组上下文：",
+      buildContextText(input.team, input.context, responseLanguage),
+      "",
+      "当前群成员：",
+      buildNaturalRoster(input.members, responseLanguage),
+      "",
+      `当前可用 MCP 服务：${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+      "",
+      "用户资料：",
+      `- 姓名：${input.profile.name}`,
+      `- 角色：${input.profile.role || "未设置"}`,
+    ],
+    en: [
+      `You are ${input.speaker.name}, a member in ${input.team.name}.`,
+      `Your role: ${input.speaker.role}.`,
+      `Your capabilities: ${formatList(input.speaker.capabilities, responseLanguage)}.`,
+      "You are speaking in a real group chat, not writing a report or manager summary.",
+      "Speak naturally like a human teammate: concise and concrete.",
+      "",
+      "Hard rules:",
+      "- If your point repeats others or adds no value, output [SKIP] only",
+      "- Do not speak just for the sake of speaking",
+      "- Keep it short unless user requests detailed analysis",
+      "- You may @ other agents only when you truly need their follow-up",
+      input.isFinalSpeaker ? "- You are the final speaker of this round; try to provide a stage conclusion or next step" : "",
+      "",
+      "Group context:",
+      buildContextText(input.team, input.context, responseLanguage),
+      "",
+      "Current members:",
+      buildNaturalRoster(input.members, responseLanguage),
+      "",
+      `Available MCP servers: ${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+      "",
+      "User profile:",
+      `- Name: ${input.profile.name}`,
+      `- Role: ${input.profile.role || "not set"}`,
+    ],
+  })
+    .filter(Boolean)
+    .join("\n");
 
-  const message = [
-    `用户消息：${input.userInput}`,
-    "",
-    "本轮已有发言：",
-    previousText,
-    "",
-    "请直接输出你要发到群里的那条自然语言消息。",
-  ].join("\n");
+  const message = byLanguage(responseLanguage, {
+    zh: [
+      `用户消息：${input.userInput}`,
+      "",
+      "本轮已有发言：",
+      previousText,
+      "",
+      "请直接输出你要发到群里的那条自然语言消息。",
+    ],
+    en: [
+      `User message: ${input.userInput}`,
+      "",
+      "Messages already sent in this round:",
+      previousText,
+      "",
+      "Output only the natural-language message you want to send to the group.",
+    ],
+  }).join("\n");
 
   const content = compact(
     await invokeWorkerText({
@@ -1028,6 +1290,7 @@ export async function generateNaturalTeamAgentMessage(input: {
       mcpConnections: input.mcpConnections,
       onMcpInvocation: input.onMcpInvocation,
       onTextStream: input.onTextStream,
+      responseLanguage,
       additionalTools: input.additionalTools,
     }),
   );
@@ -1036,7 +1299,6 @@ export async function generateNaturalTeamAgentMessage(input: {
     return null;
   }
 
-  const memberIds = new Set(input.members.map((agent) => agent.id));
   const mentionIds = resolveTeamMessageMentions(content, input.members, input.profile).filter(
     (id) => id !== input.speaker.id,
   );

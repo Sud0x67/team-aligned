@@ -15,6 +15,7 @@ import type {
   UserProfile,
 } from "@teamaligned/shared";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
+import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 
 type TokenUsageSummary = {
   inputTokens: number | null;
@@ -119,14 +120,17 @@ function extractTroubleshootingUrl(rawMessage: string) {
 export function normalizeProviderErrorMessage(
   error: unknown,
   provider?: Pick<ProviderConfig, "id" | "label" | "baseUrl" | "defaultModel">,
+  language: RuntimeLanguage = "zh",
 ) {
   const raw = toErrorText(error).trim();
   const normalized = raw.toLowerCase();
   const normalizedCompat = normalized.replace(/[_-]+/g, " ");
-  const providerLabel = provider?.label ?? provider?.id ?? "模型服务";
+  const providerLabel = provider?.label ?? provider?.id ?? byLanguage(language, { zh: "模型服务", en: "model provider" });
   const baseUrlHint = provider?.baseUrl ? `（${provider.baseUrl}）` : "";
   const troubleshootingUrl = extractTroubleshootingUrl(raw);
-  const troubleshootingHint = troubleshootingUrl ? `\n排查参考：${troubleshootingUrl}` : "";
+  const troubleshootingHint = troubleshootingUrl
+    ? byLanguage(language, { zh: `\n排查参考：${troubleshootingUrl}`, en: `\nTroubleshooting: ${troubleshootingUrl}` })
+    : "";
 
   if (
     /(^|[\s:])401([\s:]|$)|unauthorized|invalid api key|incorrect api key|authentication|auth|api key|apikey error/i.test(
@@ -134,11 +138,17 @@ export function normalizeProviderErrorMessage(
     ) ||
     normalizedCompat.includes("incorrect api key")
   ) {
-    return `${providerLabel} 鉴权失败。请检查 API Key 是否正确、是否过期，并确认当前账号有该模型的调用权限。${troubleshootingHint}`;
+    return byLanguage(language, {
+      zh: `${providerLabel} 鉴权失败。请检查 API Key 是否正确、是否过期，并确认当前账号有该模型的调用权限。${troubleshootingHint}`,
+      en: `${providerLabel} authentication failed. Check whether the API key is correct, valid, and authorized for this model.${troubleshootingHint}`,
+    });
   }
 
   if (/(^|[\s:])403([\s:]|$)|forbidden|permission denied/i.test(normalized)) {
-    return `${providerLabel} 拒绝访问。请检查账号权限、组织策略或服务端白名单配置。`;
+    return byLanguage(language, {
+      zh: `${providerLabel} 拒绝访问。请检查账号权限、组织策略或服务端白名单配置。`,
+      en: `${providerLabel} rejected the request. Check account permissions, org policy, or service allowlist settings.`,
+    });
   }
 
   if (
@@ -146,7 +156,10 @@ export function normalizeProviderErrorMessage(
       normalized,
     )
   ) {
-    return `${providerLabel} 调用受限（限流或额度不足）。请稍后重试，或检查配额与计费状态。`;
+    return byLanguage(language, {
+      zh: `${providerLabel} 调用受限（限流或额度不足）。请稍后重试，或检查配额与计费状态。`,
+      en: `${providerLabel} is rate-limited or out of quota. Retry later, or check quota and billing status.`,
+    });
   }
 
   if (
@@ -154,11 +167,17 @@ export function normalizeProviderErrorMessage(
       normalized,
     )
   ) {
-    return `${providerLabel} 模型不可用。请检查模型名称是否正确，并确认该模型在当前接口可访问。`;
+    return byLanguage(language, {
+      zh: `${providerLabel} 模型不可用。请检查模型名称是否正确，并确认该模型在当前接口可访问。`,
+      en: `${providerLabel} model is unavailable. Verify model name and make sure this endpoint can access it.`,
+    });
   }
 
   if (/timeout|timed out|etimedout|aborted|abort/i.test(normalized)) {
-    return `连接 ${providerLabel} 超时。请检查网络和 Base URL${baseUrlHint}，然后重试。`;
+    return byLanguage(language, {
+      zh: `连接 ${providerLabel} 超时。请检查网络和 Base URL${baseUrlHint}，然后重试。`,
+      en: `Connection to ${providerLabel} timed out. Check network and Base URL${baseUrlHint}, then retry.`,
+    });
   }
 
   if (
@@ -166,7 +185,10 @@ export function normalizeProviderErrorMessage(
       normalized,
     )
   ) {
-    return `无法连接到 ${providerLabel}。请检查 Base URL${baseUrlHint}、网络连通性和证书配置。${troubleshootingHint}`;
+    return byLanguage(language, {
+      zh: `无法连接到 ${providerLabel}。请检查 Base URL${baseUrlHint}、网络连通性和证书配置。${troubleshootingHint}`,
+      en: `Cannot connect to ${providerLabel}. Check Base URL${baseUrlHint}, network connectivity, and certificate settings.${troubleshootingHint}`,
+    });
   }
 
   if (
@@ -174,10 +196,13 @@ export function normalizeProviderErrorMessage(
       normalized,
     )
   ) {
-    return `${providerLabel} 服务暂时不可用。请稍后重试。`;
+    return byLanguage(language, {
+      zh: `${providerLabel} 服务暂时不可用。请稍后重试。`,
+      en: `${providerLabel} service is temporarily unavailable. Please retry later.`,
+    });
   }
 
-  return raw || "模型调用失败，请稍后重试。";
+  return raw || byLanguage(language, { zh: "模型调用失败，请稍后重试。", en: "Model call failed. Please retry later." });
 }
 
 export function normalizeMessageContent(content: unknown): string {
@@ -349,7 +374,11 @@ function buildImageDataUrl(attachment: AttachmentAssetRecord) {
   return `data:${attachment.mimeType};base64,${data}`;
 }
 
-function buildLatestUserMessage(input: string, attachments: AttachmentAssetRecord[]): ChatInputMessage {
+function buildLatestUserMessage(
+  input: string,
+  attachments: AttachmentAssetRecord[],
+  responseLanguage: RuntimeLanguage,
+): ChatInputMessage {
   const imageAttachments = attachments.filter((attachment) => attachment.mimeType.startsWith("image/"));
   if (imageAttachments.length === 0) {
     return { role: "user", content: input };
@@ -361,7 +390,10 @@ function buildLatestUserMessage(input: string, attachments: AttachmentAssetRecor
       text: [
         input,
         "",
-        "请理解并结合下面上传的图片内容进行回答。若图片无法读取，请明确说明。",
+        byLanguage(responseLanguage, {
+          zh: "请理解并结合下面上传的图片内容进行回答。若图片无法读取，请明确说明。",
+          en: "Please answer based on the uploaded image content. If any image cannot be read, state that clearly.",
+        }),
       ].join("\n"),
     },
   ];
@@ -375,7 +407,10 @@ function buildLatestUserMessage(input: string, attachments: AttachmentAssetRecor
     } catch {
       content.push({
         type: "text",
-        text: `图片 ${attachment.name} 读取失败，路径：${attachment.path}`,
+        text: byLanguage(responseLanguage, {
+          zh: `图片 ${attachment.name} 读取失败，路径：${attachment.path}`,
+          en: `Failed to read image ${attachment.name}. Path: ${attachment.path}`,
+        }),
       });
     }
   }
@@ -392,6 +427,7 @@ function buildSystemPrompt(input: {
   activeMcpServers: McpCatalogRecord[];
   runtimeToolSummary: string;
   workspacePath: string;
+  responseLanguage: RuntimeLanguage;
 }) {
   const {
     agent,
@@ -402,30 +438,58 @@ function buildSystemPrompt(input: {
     activeMcpServers,
     runtimeToolSummary,
     workspacePath,
+    responseLanguage,
   } =
     input;
-  const capabilities = agent.capabilities.join("、") || "未设置";
-  const mcpServerNames = activeMcpServers.map((server) => server.name).join("、");
+  const capabilities =
+    responseLanguage === "en"
+      ? agent.capabilities.join(", ") || "not set"
+      : agent.capabilities.join("、") || "未设置";
+  const mcpServerNames =
+    responseLanguage === "en"
+      ? activeMcpServers.map((server) => server.name).join(", ")
+      : activeMcpServers.map((server) => server.name).join("、");
 
-  return [
-    `你是 ${agent.name}，角色是 ${agent.role}。`,
-    `你运行在 teamaligned 的本地桌面应用里，当前首要目标是稳定支持单聊场景。`,
-    `当前模型供应商：${provider.label}，模型：${provider.defaultModel}。`,
-    `当前 workspace：${workspacePath}。`,
-    `你的能力标签：${capabilities}。`,
-    activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前会话未指定额外技能。",
-    activeSkillDefinition
-      ? `请严格参考下面这份 SKILL 定义执行：\n\n${activeSkillDefinition}`
-      : "",
-    activeMcpServers.length > 0
-      ? `当前可用 MCP 服务：${mcpServerNames}。如需外部能力，请优先通过已注入的 MCP tools 调用。`
-      : "当前没有可用 MCP 服务。",
-    `当前用户资料：姓名 ${profile.name}，角色 ${profile.role || "未设置"}，团队 ${profile.team || "未设置"}。`,
-    "请优先使用与用户相同的语言回复。",
-    "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
-    runtimeToolSummary,
-    "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
-  ]
+  return byLanguage(responseLanguage, {
+    zh: [
+      `你是 ${agent.name}，角色是 ${agent.role}。`,
+      "你运行在 teamaligned 的本地桌面应用里，当前首要目标是稳定支持单聊场景。",
+      `当前模型供应商：${provider.label}，模型：${provider.defaultModel}。`,
+      `当前 workspace：${workspacePath}。`,
+      `你的能力标签：${capabilities}。`,
+      activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前会话未指定额外技能。",
+      activeSkillDefinition
+        ? `请严格参考下面这份 SKILL 定义执行：\n\n${activeSkillDefinition}`
+        : "",
+      activeMcpServers.length > 0
+        ? `当前可用 MCP 服务：${mcpServerNames}。如需外部能力，请优先通过已注入的 MCP tools 调用。`
+        : "当前没有可用 MCP 服务。",
+      `当前用户资料：姓名 ${profile.name}，角色 ${profile.role || "未设置"}，团队 ${profile.team || "未设置"}。`,
+      "请优先使用与用户相同的语言回复。",
+      "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
+      runtimeToolSummary,
+      "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
+    ],
+    en: [
+      `You are ${agent.name}, and your role is ${agent.role}.`,
+      "You run inside the local TeamAligned desktop app. Your primary goal is to provide stable one-on-one chat support.",
+      `Current model provider: ${provider.label}, model: ${provider.defaultModel}.`,
+      `Current workspace: ${workspacePath}.`,
+      `Your capability tags: ${capabilities}.`,
+      activeSkill ? `Active skill for this conversation: ${activeSkill}.` : "No extra skill is active for this conversation.",
+      activeSkillDefinition
+        ? `Strictly follow this SKILL definition:\n\n${activeSkillDefinition}`
+        : "",
+      activeMcpServers.length > 0
+        ? `Available MCP servers: ${mcpServerNames}. When external capabilities are needed, prefer injected MCP tools.`
+        : "No MCP server is currently available.",
+      `Current user profile: name ${profile.name}, role ${profile.role || "not set"}, team ${profile.team || "not set"}.`,
+      "Reply in the same language the user is currently using.",
+      "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
+      runtimeToolSummary,
+      "If local config or request constraints block progress, clearly explain what information or configuration is missing.",
+    ],
+  })
     .filter(Boolean)
     .join("\n");
 }
@@ -453,8 +517,18 @@ function createSignature(input: {
   activeSkillDefinition: string | null;
   mcpToolSignature: string;
   workspacePath: string;
+  responseLanguage: RuntimeLanguage;
 }) {
-  const { provider, agent, profile, activeSkill, activeSkillDefinition, mcpToolSignature, workspacePath } =
+  const {
+    provider,
+    agent,
+    profile,
+    activeSkill,
+    activeSkillDefinition,
+    mcpToolSignature,
+    workspacePath,
+    responseLanguage,
+  } =
     input;
   return JSON.stringify({
     provider: {
@@ -480,26 +554,46 @@ function createSignature(input: {
     activeSkillDefinition,
     mcpToolSignature,
     workspacePath,
+    responseLanguage,
   });
 }
 
-export function validateProviderForSingleChat(provider: ProviderConfig | null) {
+export function validateProviderForSingleChat(
+  provider: ProviderConfig | null,
+  language: RuntimeLanguage = "zh",
+) {
   if (!provider) {
-    return "当前没有可用的模型供应商，请先在设置页完成配置。";
+    return byLanguage(language, {
+      zh: "当前没有可用的模型供应商，请先在设置页完成配置。",
+      en: "No model provider is available. Please finish provider configuration in Settings.",
+    });
   }
 
   if (isPlaceholderApiKey(provider.apiKey)) {
-    return provider.id === "qwen"
-      ? "当前百炼 API Key 仍是示例值，请先在设置页填写真实 API Key。"
-      : "当前 OpenAI API Key 仍是示例值，请先在设置页填写真实 API Key。";
+    if (provider.id === "qwen") {
+      return byLanguage(language, {
+        zh: "当前百炼 API Key 仍是示例值，请先在设置页填写真实 API Key。",
+        en: "The DashScope API key is still a placeholder. Please set a real API key in Settings.",
+      });
+    }
+    return byLanguage(language, {
+      zh: "当前 OpenAI API Key 仍是示例值，请先在设置页填写真实 API Key。",
+      en: "The OpenAI API key is still a placeholder. Please set a real API key in Settings.",
+    });
   }
 
   if (!provider.baseUrl.trim()) {
-    return "当前 provider 缺少 Base URL，请先在设置页补全。";
+    return byLanguage(language, {
+      zh: "当前 provider 缺少 Base URL，请先在设置页补全。",
+      en: "The current provider is missing Base URL. Please complete it in Settings.",
+    });
   }
 
   if (!provider.supportsToolCalling) {
-    return "当前 provider 未开启工具调用，DeepAgents 无法正常工作。";
+    return byLanguage(language, {
+      zh: "当前 provider 未开启工具调用，DeepAgents 无法正常工作。",
+      en: "Tool calling is disabled for the current provider, so DeepAgents cannot work properly.",
+    });
   }
 
   return null;
@@ -510,32 +604,39 @@ export function validateProviderConfig(
     ProviderConnectionTestInput,
     "id" | "baseUrl" | "apiKey" | "defaultModel" | "supportsToolCalling"
   > | null,
+  language: RuntimeLanguage = "zh",
 ) {
   if (!provider) {
-    return ["当前没有可用的模型供应商配置。"];
+    return [byLanguage(language, { zh: "当前没有可用的模型供应商配置。", en: "No model provider configuration is available." })];
   }
 
   const issues: string[] = [];
   if (!provider.baseUrl.trim()) {
-    issues.push("请填写 Base URL。");
+    issues.push(byLanguage(language, { zh: "请填写 Base URL。", en: "Please provide Base URL." }));
   } else if (!isLikelyHttpUrl(provider.baseUrl.trim())) {
-    issues.push("Base URL 格式无效，请填写完整的 http(s) 地址。");
+    issues.push(byLanguage(language, {
+      zh: "Base URL 格式无效，请填写完整的 http(s) 地址。",
+      en: "Invalid Base URL format. Please provide a complete http(s) URL.",
+    }));
   }
 
   if (!provider.defaultModel.trim()) {
-    issues.push("请填写模型名称。");
+    issues.push(byLanguage(language, { zh: "请填写模型名称。", en: "Please provide a model name." }));
   }
 
   if (isPlaceholderApiKey(provider.apiKey)) {
     issues.push(
       provider.id === "qwen"
-        ? "请填写真实的百炼 API Key。"
-        : "请填写真实的 OpenAI API Key。",
+        ? byLanguage(language, { zh: "请填写真实的百炼 API Key。", en: "Please provide a real DashScope API key." })
+        : byLanguage(language, { zh: "请填写真实的 OpenAI API Key。", en: "Please provide a real OpenAI API key." }),
     );
   }
 
   if (!provider.supportsToolCalling) {
-    issues.push("当前 provider 未开启工具调用，DeepAgents 无法正常工作。");
+    issues.push(byLanguage(language, {
+      zh: "当前 provider 未开启工具调用，DeepAgents 无法正常工作。",
+      en: "Tool calling is disabled for the current provider, so DeepAgents cannot work properly.",
+    }));
   }
 
   return issues;
@@ -543,8 +644,9 @@ export function validateProviderConfig(
 
 export async function testProviderConnection(
   input: ProviderConnectionTestInput,
+  language: RuntimeLanguage = "zh",
 ): Promise<ProviderConnectionTestResult> {
-  const issues = validateProviderConfig(input);
+  const issues = validateProviderConfig(input, language);
   if (issues.length > 0) {
     return {
       ok: false,
@@ -564,7 +666,7 @@ export async function testProviderConnection(
     const text = normalizeMessageContent("content" in response ? response.content : response);
     return {
       ok: true,
-      message: text || "连接成功，模型已返回响应。",
+      message: text || byLanguage(language, { zh: "连接成功，模型已返回响应。", en: "Connection succeeded. The model returned a response." }),
       latencyMs: Date.now() - startedAt,
     };
   } catch (error) {
@@ -575,7 +677,7 @@ export async function testProviderConnection(
         label: input.label ?? input.id,
         baseUrl: input.baseUrl,
         defaultModel: input.defaultModel,
-      }),
+      }, language),
       latencyMs: Date.now() - startedAt,
     };
   }
@@ -599,6 +701,7 @@ export async function invokeSingleChatDeepAgent(input: {
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  responseLanguage?: RuntimeLanguage;
 }): Promise<{ text: string; usage: TokenUsageSummary | null }> {
   const {
     sessions,
@@ -617,6 +720,7 @@ export async function invokeSingleChatDeepAgent(input: {
     additionalTools,
     runtimeToolSummary,
     onTextStream,
+    responseLanguage = "zh",
   } = input;
 
   const mcpConnectionMap = new Map(mcpConnections.map((connection) => [connection.serverId, connection]));
@@ -646,6 +750,7 @@ export async function invokeSingleChatDeepAgent(input: {
     activeSkillDefinition,
     mcpToolSignature,
     workspacePath,
+    responseLanguage,
   });
   const cached = sessions.get(conversationId);
   const shouldCreate = !cached || cached.signature !== signature;
@@ -662,13 +767,14 @@ export async function invokeSingleChatDeepAgent(input: {
               agent,
               provider,
               profile,
-      activeSkill,
-      activeSkillDefinition,
-      activeMcpServers: mcpServers,
-      runtimeToolSummary: runtimeToolSummary ?? "",
-      workspacePath,
-    }),
-    tools,
+              activeSkill,
+              activeSkillDefinition,
+              activeMcpServers: mcpServers,
+              runtimeToolSummary: runtimeToolSummary ?? "",
+              workspacePath,
+              responseLanguage,
+            }),
+            tools,
             backend: new FilesystemBackend({
               rootDir: workspacePath,
               virtualMode: true,
@@ -681,7 +787,7 @@ export async function invokeSingleChatDeepAgent(input: {
 
   sessions.set(conversationId, session);
 
-  const latestUserMessage = buildLatestUserMessage(latestInput, attachments);
+  const latestUserMessage = buildLatestUserMessage(latestInput, attachments, responseLanguage);
   const historyMessages = toAgentMessages(history);
   const previousMessages =
     historyMessages.at(-1)?.role === "user" ? historyMessages.slice(0, -1) : historyMessages;
@@ -745,7 +851,12 @@ export async function invokeSingleChatDeepAgent(input: {
 
   const text = extractAgentText(result);
   return {
-    text: text || "模型已完成调用，但没有返回可显示的文本内容。",
+    text:
+      text ||
+      byLanguage(responseLanguage, {
+        zh: "模型已完成调用，但没有返回可显示的文本内容。",
+        en: "The model finished the call, but returned no displayable text.",
+      }),
     usage: extractTokenUsage(result),
   };
 }

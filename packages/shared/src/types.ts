@@ -379,7 +379,7 @@ export interface AppSnapshot {
 
 export interface SlashCommand {
   raw: string;
-  name: "skills" | "mcp";
+  name: "skills" | "mcp" | "clear";
   args: string[];
 }
 

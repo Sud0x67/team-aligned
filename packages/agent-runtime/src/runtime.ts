@@ -72,6 +72,7 @@ import {
   type TeamExecutionWorkItem,
   type NaturalTeamAgentMessage,
 } from "./team-runtime.ts";
+import { byLanguage, detectRuntimeLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
 
 type RunStep = {
   label: string;
@@ -125,20 +126,33 @@ function sanitizeExportName(value: string) {
   return normalized || "conversation";
 }
 
-function summarizeAttachments(attachments: AttachmentAssetRecord[]) {
+function summarizeAttachments(attachments: AttachmentAssetRecord[], responseLanguage: RuntimeLanguage) {
   if (attachments.length === 0) return "";
-  return attachments.map((attachment) => attachment.name).join("、");
+  return responseLanguage === "en"
+    ? attachments.map((attachment) => attachment.name).join(", ")
+    : attachments.map((attachment) => attachment.name).join("、");
 }
 
-function buildUserMessageContent(input: string, attachments: AttachmentAssetRecord[]) {
+function buildUserMessageContent(
+  input: string,
+  attachments: AttachmentAssetRecord[],
+  responseLanguage: RuntimeLanguage,
+) {
   const trimmed = input.trim();
   if (trimmed) {
     return trimmed;
   }
-  return `已上传附件：${summarizeAttachments(attachments)}`;
+  return byLanguage(responseLanguage, {
+    zh: `已上传附件：${summarizeAttachments(attachments, responseLanguage)}`,
+    en: `Uploaded attachments: ${summarizeAttachments(attachments, responseLanguage)}`,
+  });
 }
 
-function buildRuntimePrompt(input: string, attachments: AttachmentAssetRecord[]) {
+function buildRuntimePrompt(
+  input: string,
+  attachments: AttachmentAssetRecord[],
+  responseLanguage: RuntimeLanguage,
+) {
   const trimmed = input.trim();
   if (attachments.length === 0) {
     return trimmed;
@@ -147,12 +161,23 @@ function buildRuntimePrompt(input: string, attachments: AttachmentAssetRecord[])
   const attachmentLines = attachments
     .map(
       (attachment) =>
-        `- ${attachment.name}\n  路径：${attachment.path}\n  类型：${attachment.mimeType}\n  大小：${attachment.sizeBytes} bytes`,
+        byLanguage(responseLanguage, {
+          zh: `- ${attachment.name}\n  路径：${attachment.path}\n  类型：${attachment.mimeType}\n  大小：${attachment.sizeBytes} bytes`,
+          en: `- ${attachment.name}\n  Path: ${attachment.path}\n  Type: ${attachment.mimeType}\n  Size: ${attachment.sizeBytes} bytes`,
+        }),
     )
     .join("\n");
 
-  const body = trimmed || "我上传了一些附件，请结合附件内容帮助我。";
-  return `${body}\n\n附件列表：\n${attachmentLines}`;
+  const body =
+    trimmed ||
+    byLanguage(responseLanguage, {
+      zh: "我上传了一些附件，请结合附件内容帮助我。",
+      en: "I uploaded some attachments. Please help based on them.",
+    });
+  return byLanguage(responseLanguage, {
+    zh: `${body}\n\n附件列表：\n${attachmentLines}`,
+    en: `${body}\n\nAttachment list:\n${attachmentLines}`,
+  });
 }
 
 function extractSlashAliases(input: string) {
@@ -170,20 +195,32 @@ function stripSlashAlias(input: string, alias: string) {
     .trim();
 }
 
-function getMcpConfiguredHint(server: McpCatalogRecord) {
+function getMcpConfiguredHint(server: McpCatalogRecord, responseLanguage: RuntimeLanguage) {
   if (server.transport === "http") {
-    return `${server.name} 已加入本地连接列表。请在扩展页补充远端 URL、请求头或 Token 后，再点击“保存并检测”。`;
+    return byLanguage(responseLanguage, {
+      zh: `${server.name} 已加入本地连接列表。请在扩展页补充远端 URL、请求头或 Token 后，再点击“保存并检测”。`,
+      en: `${server.name} has been added locally. In Extensions, fill remote URL/headers/token, then click "Save and Check".`,
+    });
   }
 
   if (server.authType === "env") {
-    return `${server.name} 已加入本地连接列表。请在扩展页补充环境变量后，再点击“保存并检测”。`;
+    return byLanguage(responseLanguage, {
+      zh: `${server.name} 已加入本地连接列表。请在扩展页补充环境变量后，再点击“保存并检测”。`,
+      en: `${server.name} has been added locally. In Extensions, add required environment variables, then click "Save and Check".`,
+    });
   }
 
   if (server.authType === "header") {
-    return `${server.name} 已加入本地连接列表。请在扩展页补充请求头后，再点击“保存并检测”。`;
+    return byLanguage(responseLanguage, {
+      zh: `${server.name} 已加入本地连接列表。请在扩展页补充请求头后，再点击“保存并检测”。`,
+      en: `${server.name} has been added locally. In Extensions, add required headers, then click "Save and Check".`,
+    });
   }
 
-  return `${server.name} 已加入本地连接列表。请在扩展页确认本地启动命令后，再点击“保存并检测”。`;
+  return byLanguage(responseLanguage, {
+    zh: `${server.name} 已加入本地连接列表。请在扩展页确认本地启动命令后，再点击“保存并检测”。`,
+    en: `${server.name} has been added locally. In Extensions, verify the local launch command, then click "Save and Check".`,
+  });
 }
 
 function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
@@ -252,12 +289,44 @@ export class TeamalignedRuntime extends EventEmitter {
     return conversation.kind === "agent" ? "agent_message" : "group_message";
   }
 
+  private resolveResponseLanguage(
+    conversation: ConversationRecord | null | undefined,
+    latestInput: string,
+    settingLanguage: string,
+  ): RuntimeLanguage {
+    const fallback: RuntimeLanguage = settingLanguage === "en" ? "en" : "zh";
+    if (latestInput.trim().length > 0) {
+      return detectRuntimeLanguage(latestInput, fallback);
+    }
+    if (conversation) {
+      const latestUserMessage = this.storage
+        .listMessages(conversation.id)
+        .slice()
+        .reverse()
+        .find((message) => message.senderKind === "user" && message.visibility === "public");
+      if (latestUserMessage) {
+        return detectRuntimeLanguage(latestUserMessage.content, fallback);
+      }
+    }
+    return fallback;
+  }
+
+  private getRunResponseLanguage(run: RunRecord): RuntimeLanguage {
+    const value = run.metadata?.responseLanguage;
+    return value === "en" ? "en" : "zh";
+  }
+
   async sendInput(payload: SendInputPayload) {
     const snapshot = this.storage.getSnapshot();
     const conversation = snapshot.conversations.find((item) => item.id === payload.conversationId);
     if (!conversation) {
       return this.getSnapshot();
     }
+    const responseLanguage = this.resolveResponseLanguage(
+      conversation,
+      payload.input,
+      snapshot.settings.language,
+    );
 
     this.storage.resetUnread(payload.conversationId);
 
@@ -267,7 +336,7 @@ export class TeamalignedRuntime extends EventEmitter {
       this.storage.addMessage({
         conversationId: payload.conversationId,
         senderId: "user",
-        senderName: "你",
+        senderName: byLanguage(responseLanguage, { zh: "你", en: "You" }),
         senderKind: "user",
         messageType: "command",
         visibility: "public",
@@ -277,7 +346,7 @@ export class TeamalignedRuntime extends EventEmitter {
         metadata: { command: command.name, args: command.args },
         createdAt: Date.now(),
       });
-      await this.handleSlashCommand(conversation, command.name, command.args);
+      await this.handleSlashCommand(conversation, command.name, command.args, responseLanguage);
       this.storage.resetUnread(payload.conversationId);
       this.emitSnapshot();
       return this.getSnapshot();
@@ -288,14 +357,14 @@ export class TeamalignedRuntime extends EventEmitter {
     const mentionResolution = resolveMentionedMembers(payload.input, snapshot.agents);
     const mentionedAgentIds = mentionResolution.matchedIds;
 
-    this.storage.addMessage({
-      conversationId: payload.conversationId,
-      senderId: "user",
-      senderName: "你",
-      senderKind: "user",
-      messageType: "user",
-      visibility: "public",
-      content: buildUserMessageContent(payload.input, attachments),
+      this.storage.addMessage({
+        conversationId: payload.conversationId,
+        senderId: "user",
+        senderName: byLanguage(responseLanguage, { zh: "你", en: "You" }),
+        senderKind: "user",
+        messageType: "user",
+        visibility: "public",
+        content: buildUserMessageContent(payload.input, attachments, responseLanguage),
       mentions: mentionedAgentIds,
       runId: null,
       metadata: {
@@ -312,12 +381,13 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const runtimeInput = this.buildSlashEnhancedRuntimeInput(
       conversation,
-      buildRuntimePrompt(slashDirectives.cleanedInput, attachments),
+      buildRuntimePrompt(slashDirectives.cleanedInput, attachments, responseLanguage),
       slashDirectives,
+      responseLanguage,
     );
 
     if (conversation.kind === "agent") {
-      await this.startAgentRun(conversation, runtimeInput, slashDirectives, attachments);
+      await this.startAgentRun(conversation, runtimeInput, slashDirectives, attachments, responseLanguage);
     } else {
       const team = snapshot.teams.find((item) => item.id === conversation.targetId);
       const memberIds = new Set(team?.memberIds ?? []);
@@ -330,12 +400,25 @@ export class TeamalignedRuntime extends EventEmitter {
         const ignored = Array.from(new Set([...outOfTeamMentions, ...unresolvedMentions]));
         this.addPublicNotice(
           conversation.id,
-          `以下 @ 未命中当前群组成员，已忽略：${ignored.join("、")}。${
-            explicitMentionIds.length > 0 ? "我会按已命中的 @ 继续执行。" : "我将按语义选择当前群组成员继续。"
-          }`,
+          byLanguage(responseLanguage, {
+            zh: `以下 @ 未命中当前群组成员，已忽略：${formatList(ignored, responseLanguage)}。${
+              explicitMentionIds.length > 0 ? "我会按已命中的 @ 继续执行。" : "我将按语义选择当前群组成员继续。"
+            }`,
+            en: `Ignored mentions not found in this group: ${formatList(ignored, responseLanguage)}. ${
+              explicitMentionIds.length > 0
+                ? "I'll continue with the valid @ mentions."
+                : "I'll continue by semantic member selection."
+            }`,
+          }),
         );
       }
-      await this.startTeamRun(conversation, runtimeInput, slashDirectives, explicitMentionIds);
+      await this.startTeamRun(
+        conversation,
+        runtimeInput,
+        slashDirectives,
+        explicitMentionIds,
+        responseLanguage,
+      );
     }
 
     this.emitSnapshot();
@@ -343,6 +426,9 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async controlRun(payload: RunControlPayload) {
+    const conversation = this.storage.getConversation(payload.conversationId);
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage = this.resolveResponseLanguage(conversation, "", settingsLanguage);
     const latest = this.storage
       .listRuns()
       .find(
@@ -352,7 +438,13 @@ export class TeamalignedRuntime extends EventEmitter {
       );
 
     if (!latest) {
-      this.addSystemMessage(payload.conversationId, "当前会话没有可控制的任务。");
+      this.addSystemMessage(
+        payload.conversationId,
+        byLanguage(responseLanguage, {
+          zh: "当前会话没有可控制的任务。",
+          en: "There is no controllable run in this conversation.",
+        }),
+      );
       this.emitSnapshot();
       return this.getSnapshot();
     }
@@ -368,13 +460,24 @@ export class TeamalignedRuntime extends EventEmitter {
         if (controller.timer) clearTimeout(controller.timer);
         controller.timer = null;
         this.storage.updateRun(latest.id, { status: "paused" });
-        this.addRunMessage(payload.conversationId, latest.id, "任务已暂停，可稍后继续。", "system");
+        this.addRunMessage(
+          payload.conversationId,
+          latest.id,
+          byLanguage(responseLanguage, {
+            zh: "任务已暂停，可稍后继续。",
+            en: "Run paused. You can resume later.",
+          }),
+          "system",
+        );
       } else {
         this.storage.updateRun(latest.id, { status: "pausing" });
         this.addRunMessage(
           payload.conversationId,
           latest.id,
-          "已收到暂停请求，将在当前步骤结束后暂停。",
+          byLanguage(responseLanguage, {
+            zh: "已收到暂停请求，将在当前步骤结束后暂停。",
+            en: "Pause request received. The run will pause after the current step.",
+          }),
           "system",
         );
       }
@@ -386,7 +489,15 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       this.storage.updateRun(latest.id, { status: "resuming" });
-      this.addRunMessage(payload.conversationId, latest.id, "任务正在恢复执行。", "system");
+      this.addRunMessage(
+        payload.conversationId,
+        latest.id,
+        byLanguage(responseLanguage, {
+          zh: "任务正在恢复执行。",
+          en: "Run is resuming.",
+        }),
+        "system",
+      );
       if (controller) {
         this.scheduleNext(controller, 300);
       }
@@ -399,7 +510,15 @@ export class TeamalignedRuntime extends EventEmitter {
       this.finalizeStreamingMessagesForRun(payload.conversationId, latest.id, "cancelled");
       this.storage.updateRun(latest.id, { status: "cancelled" });
       this.storage.cancelPendingRunSteps(latest.id);
-      this.addRunMessage(payload.conversationId, latest.id, "任务已取消。", "system");
+      this.addRunMessage(
+        payload.conversationId,
+        latest.id,
+        byLanguage(responseLanguage, {
+          zh: "任务已取消。",
+          en: "Run cancelled.",
+        }),
+        "system",
+      );
     }
 
     this.emitSnapshot();
@@ -431,12 +550,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async refreshSkillCatalog() {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const catalog = await fetchSkillCatalog();
     this.storage.replaceSkillCatalog(catalog);
     this.createAppNotification({
       type: "extension",
-      title: "Skill catalog 已同步",
-      body: `已同步 ${catalog.length} 个 Skill 元数据。`,
+      title: byLanguage(responseLanguage, { zh: "Skill catalog 已同步", en: "Skill catalog synced" }),
+      body: byLanguage(responseLanguage, {
+        zh: `已同步 ${catalog.length} 个 Skill 元数据。`,
+        en: `Synced ${catalog.length} skill metadata entries.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -445,12 +569,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async installSkill(skillId: string) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const skill = this.storage.getSkillCatalogEntry(skillId);
     if (!skill) {
       this.createAppNotification({
         type: "system",
-        title: "Skill 安装失败",
-        body: `未找到 Skill：${skillId}`,
+        title: byLanguage(responseLanguage, { zh: "Skill 安装失败", en: "Skill install failed" }),
+        body: byLanguage(responseLanguage, {
+          zh: `未找到 Skill：${skillId}`,
+          en: `Skill not found: ${skillId}`,
+        }),
         relatedConversationId: null,
         relatedRunId: null,
       });
@@ -469,8 +598,11 @@ export class TeamalignedRuntime extends EventEmitter {
     });
     this.createAppNotification({
       type: "extension",
-      title: "Skill 已安装",
-      body: `${skill.displayName || skill.name} 已安装到全局目录。`,
+      title: byLanguage(responseLanguage, { zh: "Skill 已安装", en: "Skill installed" }),
+      body: byLanguage(responseLanguage, {
+        zh: `${skill.displayName || skill.name} 已安装到全局目录。`,
+        en: `${skill.displayName || skill.name} has been installed globally.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -479,12 +611,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async removeSkill(skillId: string) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const skill = this.storage.getSkillCatalogEntry(skillId);
     if (!skill) {
       this.createAppNotification({
         type: "system",
-        title: "Skill 移除失败",
-        body: `未找到 Skill：${skillId}`,
+        title: byLanguage(responseLanguage, { zh: "Skill 移除失败", en: "Skill removal failed" }),
+        body: byLanguage(responseLanguage, {
+          zh: `未找到 Skill：${skillId}`,
+          en: `Skill not found: ${skillId}`,
+        }),
         relatedConversationId: null,
         relatedRunId: null,
       });
@@ -499,8 +636,11 @@ export class TeamalignedRuntime extends EventEmitter {
     this.storage.markSkillRemoved(skill.id);
     this.createAppNotification({
       type: "extension",
-      title: "Skill 已移除",
-      body: `${skill.displayName || skill.name} 已从全局目录移除。`,
+      title: byLanguage(responseLanguage, { zh: "Skill 已移除", en: "Skill removed" }),
+      body: byLanguage(responseLanguage, {
+        zh: `${skill.displayName || skill.name} 已从全局目录移除。`,
+        en: `${skill.displayName || skill.name} has been removed from global install.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -509,11 +649,16 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async savePromptAlias(payload: SavePromptAliasInput) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const promptAlias = this.storage.savePromptAlias(payload);
     this.createAppNotification({
       type: "extension",
-      title: "Prompt 已保存",
-      body: `/${promptAlias.alias} 已可在聊天中使用。`,
+      title: byLanguage(responseLanguage, { zh: "Prompt 已保存", en: "Prompt saved" }),
+      body: byLanguage(responseLanguage, {
+        zh: `/${promptAlias.alias} 已可在聊天中使用。`,
+        en: `/${promptAlias.alias} is now available in chat.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -522,12 +667,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async removePromptAlias(promptAliasId: string) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const existing = this.storage.listPromptAliases().find((item) => item.id === promptAliasId);
     this.storage.removePromptAlias(promptAliasId);
     this.createAppNotification({
       type: "extension",
-      title: "Prompt 已移除",
-      body: existing ? `/${existing.alias} 已从自定义命令中移除。` : "自定义 Prompt 已移除。",
+      title: byLanguage(responseLanguage, { zh: "Prompt 已移除", en: "Prompt removed" }),
+      body: byLanguage(responseLanguage, {
+        zh: existing ? `/${existing.alias} 已从自定义命令中移除。` : "自定义 Prompt 已移除。",
+        en: existing ? `/${existing.alias} has been removed from custom commands.` : "Custom prompt has been removed.",
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -536,12 +686,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async refreshMcpCatalog() {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const catalog = await fetchMcpCatalog();
     this.storage.replaceMcpCatalog(catalog);
     this.createAppNotification({
       type: "extension",
-      title: "MCP catalog 已同步",
-      body: `已同步 ${catalog.length} 个 MCP 元数据。`,
+      title: byLanguage(responseLanguage, { zh: "MCP catalog 已同步", en: "MCP catalog synced" }),
+      body: byLanguage(responseLanguage, {
+        zh: `已同步 ${catalog.length} 个 MCP 元数据。`,
+        en: `Synced ${catalog.length} MCP metadata entries.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -550,12 +705,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async connectMcp(payload: ConnectMcpInput) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const server = this.storage.getMcpCatalogEntry(payload.serverId);
     if (!server) {
       this.createAppNotification({
         type: "system",
-        title: "MCP 连接失败",
-        body: `未找到 MCP：${payload.serverId}`,
+        title: byLanguage(responseLanguage, { zh: "MCP 连接失败", en: "MCP connection failed" }),
+        body: byLanguage(responseLanguage, {
+          zh: `未找到 MCP：${payload.serverId}`,
+          en: `MCP not found: ${payload.serverId}`,
+        }),
         relatedConversationId: null,
         relatedRunId: null,
       });
@@ -605,16 +765,22 @@ export class TeamalignedRuntime extends EventEmitter {
       type: checkedConnection.status === "connected" ? "extension" : "system",
       title:
         checkedConnection.status === "connected"
-          ? "MCP 已连接"
+          ? byLanguage(responseLanguage, { zh: "MCP 已连接", en: "MCP connected" })
           : checkedConnection.status === "configured"
-            ? "MCP 已保存待配置"
-            : "MCP 连接失败",
+            ? byLanguage(responseLanguage, { zh: "MCP 已保存待配置", en: "MCP saved, pending config" })
+            : byLanguage(responseLanguage, { zh: "MCP 连接失败", en: "MCP connection failed" }),
       body:
         checkedConnection.status === "connected"
-          ? `${server.name} 已连接成功，并发现 ${checkedConnection.discoveredTools.length} 个工具。`
+          ? byLanguage(responseLanguage, {
+              zh: `${server.name} 已连接成功，并发现 ${checkedConnection.discoveredTools.length} 个工具。`,
+              en: `${server.name} connected successfully, discovered ${checkedConnection.discoveredTools.length} tools.`,
+            })
           : checkedConnection.status === "configured"
-            ? getMcpConfiguredHint(server)
-            : `${server.name} 连接失败：${checkedConnection.lastError ?? "未知错误"}`,
+            ? getMcpConfiguredHint(server, responseLanguage)
+            : byLanguage(responseLanguage, {
+                zh: `${server.name} 连接失败：${checkedConnection.lastError ?? "未知错误"}`,
+                en: `${server.name} connection failed: ${checkedConnection.lastError ?? "unknown error"}`,
+              }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -623,13 +789,18 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async checkMcpHealth(serverId: string) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const server = this.storage.getMcpCatalogEntry(serverId);
     const connection = this.storage.getMcpConnection(serverId);
     if (!server || !connection) {
       this.createAppNotification({
         type: "system",
-        title: "MCP 检测失败",
-        body: `未找到 MCP 连接：${serverId}`,
+        title: byLanguage(responseLanguage, { zh: "MCP 检测失败", en: "MCP health check failed" }),
+        body: byLanguage(responseLanguage, {
+          zh: `未找到 MCP 连接：${serverId}`,
+          en: `MCP connection not found: ${serverId}`,
+        }),
         relatedConversationId: null,
         relatedRunId: null,
       });
@@ -645,11 +816,20 @@ export class TeamalignedRuntime extends EventEmitter {
     this.storage.upsertMcpConnection(checked);
     this.createAppNotification({
       type: checked.status === "connected" ? "extension" : "system",
-      title: checked.status === "connected" ? "MCP 检测通过" : "MCP 检测失败",
+      title:
+        checked.status === "connected"
+          ? byLanguage(responseLanguage, { zh: "MCP 检测通过", en: "MCP health check passed" })
+          : byLanguage(responseLanguage, { zh: "MCP 检测失败", en: "MCP health check failed" }),
       body:
         checked.status === "connected"
-          ? `${server.name} 当前可用，已发现 ${checked.discoveredTools.length} 个工具。`
-          : `${server.name} 检测失败：${checked.lastError ?? "未知错误"}`,
+          ? byLanguage(responseLanguage, {
+              zh: `${server.name} 当前可用，已发现 ${checked.discoveredTools.length} 个工具。`,
+              en: `${server.name} is available, discovered ${checked.discoveredTools.length} tools.`,
+            })
+          : byLanguage(responseLanguage, {
+              zh: `${server.name} 检测失败：${checked.lastError ?? "未知错误"}`,
+              en: `${server.name} check failed: ${checked.lastError ?? "unknown error"}`,
+            }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -658,12 +838,17 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async disconnectMcp(serverId: string) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
     const server = this.storage.getMcpCatalogEntry(serverId);
     this.storage.removeMcpConnection(serverId);
     this.createAppNotification({
       type: "extension",
-      title: "MCP 已移除",
-      body: `${server?.name ?? serverId} 已从本地连接列表中移除。`,
+      title: byLanguage(responseLanguage, { zh: "MCP 已移除", en: "MCP removed" }),
+      body: byLanguage(responseLanguage, {
+        zh: `${server?.name ?? serverId} 已从本地连接列表中移除。`,
+        en: `${server?.name ?? serverId} has been removed from local connections.`,
+      }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -873,6 +1058,7 @@ export class TeamalignedRuntime extends EventEmitter {
     conversationId: string;
     runId: string;
     speaker: AgentRecord;
+    responseLanguage: RuntimeLanguage;
     onUpdate?: (content: string, metadata?: Record<string, unknown>) => void;
   }) {
     const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
@@ -893,19 +1079,40 @@ export class TeamalignedRuntime extends EventEmitter {
           if (!announcedContextLookup) {
             announcedContextLookup = true;
             content = isLocalTool
-              ? `${input.speaker.name}：我先看一下现有文件和上下文。`
-              : `${input.speaker.name}：我先从 ${sourceName} 里取一下相关上下文。`;
+              ? byLanguage(input.responseLanguage, {
+                  zh: `${input.speaker.name}：我先看一下现有文件和上下文。`,
+                  en: `${input.speaker.name}: I'll quickly scan the existing files and context first.`,
+                })
+              : byLanguage(input.responseLanguage, {
+                  zh: `${input.speaker.name}：我先从 ${sourceName} 里取一下相关上下文。`,
+                  en: `${input.speaker.name}: I'll fetch related context from ${sourceName} first.`,
+                });
           }
         } else if (toolName === "write_text_file") {
           content = isLocalTool
-            ? `${input.speaker.name}：我开始把这部分改进文件里。`
-            : `${input.speaker.name}：我先通过 ${sourceName} 改这部分内容。`;
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我开始把这部分改进文件里。`,
+                en: `${input.speaker.name}: I'm starting to apply this change to files.`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我先通过 ${sourceName} 改这部分内容。`,
+                en: `${input.speaker.name}: I'll update this part via ${sourceName} first.`,
+              });
         } else if (toolName === "run_workspace_command") {
-          content = `${input.speaker.name}：我先跑一个命令确认一下。`;
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：我先跑一个命令确认一下。`,
+            en: `${input.speaker.name}: I'll run a command to verify this first.`,
+          });
         } else {
           content = isLocalTool
-            ? `${input.speaker.name}：我先调用 ${toolName} 看看。`
-            : `${input.speaker.name}：我先调用 ${sourceName} 的 ${toolName} 看看。`;
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我先调用 ${toolName} 看看。`,
+                en: `${input.speaker.name}: I'll run ${toolName} first.`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我先调用 ${sourceName} 的 ${toolName} 看看。`,
+                en: `${input.speaker.name}: I'll call ${toolName} from ${sourceName} first.`,
+              });
         }
         if (!content) {
           return;
@@ -917,8 +1124,14 @@ export class TeamalignedRuntime extends EventEmitter {
         announcedToolStarts.add(dedupeKey);
         input.onUpdate?.(
           isLocalTool
-            ? `${input.speaker.name} 正在执行 ${toolName}`
-            : `${input.speaker.name} 正在通过 ${sourceName} 执行 ${toolName}`,
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 正在执行 ${toolName}`,
+                en: `${input.speaker.name} is running ${toolName}`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 正在通过 ${sourceName} 执行 ${toolName}`,
+                en: `${input.speaker.name} is running ${toolName} via ${sourceName}`,
+              }),
           {
             phase: "tool_start",
             toolName,
@@ -933,25 +1146,46 @@ export class TeamalignedRuntime extends EventEmitter {
         let content: string | null = null;
         if (toolName === "write_text_file") {
           content = isLocalTool
-            ? `${input.speaker.name}：这部分改动已经写进文件了。`
-            : `${input.speaker.name}：我已经通过 ${sourceName} 把这部分改动提交出去了。`;
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：这部分改动已经写进文件了。`,
+                en: `${input.speaker.name}: This part has been written to file.`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我已经通过 ${sourceName} 把这部分改动提交出去了。`,
+                en: `${input.speaker.name}: I've submitted this change via ${sourceName}.`,
+              });
         } else if (toolName === "run_workspace_command") {
-          content = `${input.speaker.name}：命令已经跑完了，我继续往下处理。`;
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：命令已经跑完了，我继续往下处理。`,
+            en: `${input.speaker.name}: Command finished. I'll continue.`,
+          });
         } else if (
           !["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
           !toolName.startsWith("skill_")
         ) {
           content = isLocalTool
-            ? `${input.speaker.name}：我拿到 ${toolName} 这一步的结果了，继续推进。`
-            : `${input.speaker.name}：我已经拿到 ${sourceName} 的 ${toolName} 结果，继续推进。`;
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我拿到 ${toolName} 这一步的结果了，继续推进。`,
+                en: `${input.speaker.name}: Got results from ${toolName}. I'll keep moving.`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name}：我已经拿到 ${sourceName} 的 ${toolName} 结果，继续推进。`,
+                en: `${input.speaker.name}: Got ${toolName} results from ${sourceName}. I'll keep moving.`,
+              });
         }
         if (!content) {
           return;
         }
         input.onUpdate?.(
           isLocalTool
-            ? `${input.speaker.name} 已完成 ${toolName}`
-            : `${input.speaker.name} 已完成 ${sourceName}.${toolName}`,
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 已完成 ${toolName}`,
+                en: `${input.speaker.name} completed ${toolName}`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 已完成 ${sourceName}.${toolName}`,
+                en: `${input.speaker.name} completed ${sourceName}.${toolName}`,
+              }),
           {
             phase: "tool_success",
             toolName,
@@ -965,8 +1199,14 @@ export class TeamalignedRuntime extends EventEmitter {
       if (event.phase === "error") {
         input.onUpdate?.(
           isLocalTool
-            ? `${input.speaker.name} 在 ${toolName} 失败：${event.error}`
-            : `${input.speaker.name} 在 ${sourceName}.${toolName} 失败：${event.error}`,
+            ? byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 在 ${toolName} 失败：${event.error}`,
+                en: `${input.speaker.name} failed on ${toolName}: ${event.error}`,
+              })
+            : byLanguage(input.responseLanguage, {
+                zh: `${input.speaker.name} 在 ${sourceName}.${toolName} 失败：${event.error}`,
+                en: `${input.speaker.name} failed on ${sourceName}.${toolName}: ${event.error}`,
+              }),
           {
             phase: "tool_error",
             toolName,
@@ -1036,7 +1276,7 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   private resolveSlashDirectives(conversation: ConversationRecord, input: string): SlashDirectiveContext {
-    const aliases = extractSlashAliases(input).filter((alias) => !["skills", "mcp"].includes(alias));
+    const aliases = extractSlashAliases(input).filter((alias) => !["skills", "mcp", "clear"].includes(alias));
     const availableSkills = this.getAvailableSkillsForConversation(conversation);
     const promptAliases = this.storage.listPromptAliases().filter((item) => item.enabled);
     let cleanedInput = input.trim();
@@ -1079,6 +1319,7 @@ export class TeamalignedRuntime extends EventEmitter {
     conversation: ConversationRecord,
     baseInput: string,
     context: SlashDirectiveContext,
+    responseLanguage: RuntimeLanguage,
   ) {
     const snapshot = this.storage.getSnapshot();
     const workspacePath = this.getWorkspaceForConversation(conversation, snapshot.agents, snapshot.teams);
@@ -1086,7 +1327,12 @@ export class TeamalignedRuntime extends EventEmitter {
       conversation.kind === "agent"
         ? snapshot.agents.find((agent) => agent.id === conversation.targetId)
         : snapshot.teams.find((team) => team.id === conversation.targetId);
-    const inputForTemplate = baseInput.trim() || "用户没有补充额外内容，请主动询问需要处理的内容。";
+    const inputForTemplate =
+      baseInput.trim() ||
+      byLanguage(responseLanguage, {
+        zh: "用户没有补充额外内容，请主动询问需要处理的内容。",
+        en: "The user did not provide extra details. Ask a follow-up question proactively.",
+      });
     let resolved = inputForTemplate;
 
     if (context.promptAlias) {
@@ -1104,13 +1350,19 @@ export class TeamalignedRuntime extends EventEmitter {
         template,
       );
       if (!hasPlaceholder) {
-        resolved = `${resolved.trim()}\n\n用户输入：\n${inputForTemplate}`;
+        resolved = byLanguage(responseLanguage, {
+          zh: `${resolved.trim()}\n\n用户输入：\n${inputForTemplate}`,
+          en: `${resolved.trim()}\n\nUser input:\n${inputForTemplate}`,
+        });
       }
     }
 
     if (context.skill) {
       const skillLabel = context.skill.displayName || context.skill.name;
-      resolved = `本轮消息临时使用 Skill：${skillLabel}（/${context.skill.slug}）。\n\n${resolved}`;
+      resolved = byLanguage(responseLanguage, {
+        zh: `本轮消息临时使用 Skill：${skillLabel}（/${context.skill.slug}）。\n\n${resolved}`,
+        en: `Temporary skill for this message: ${skillLabel} (/${context.skill.slug}).\n\n${resolved}`,
+      });
     }
 
     return resolved;
@@ -1120,7 +1372,71 @@ export class TeamalignedRuntime extends EventEmitter {
     conversation: ConversationRecord,
     commandName: string,
     args: string[],
+    responseLanguage: RuntimeLanguage,
   ) {
+    if (commandName === "clear") {
+      if (args.length > 0) {
+        this.addSlashFeedbackMessage(conversation, {
+          title: byLanguage(responseLanguage, { zh: "命令参数无效", en: "Invalid command arguments" }),
+          body: byLanguage(responseLanguage, {
+            zh: "用法：/clear",
+            en: "Usage: /clear",
+          }),
+          tone: "warning",
+        });
+        return;
+      }
+
+      const activeRun = this.storage
+        .listRuns()
+        .find(
+          (run) =>
+            run.conversationId === conversation.id &&
+            !["completed", "failed", "cancelled"].includes(run.status),
+        );
+      if (activeRun) {
+        this.addSlashFeedbackMessage(conversation, {
+          title: byLanguage(responseLanguage, { zh: "无法清空会话", en: "Cannot clear conversation yet" }),
+          body: byLanguage(responseLanguage, {
+            zh: "当前有任务仍在运行。请先取消运行，再执行 /clear。",
+            en: "A run is still active. Cancel it first, then run /clear.",
+          }),
+          tone: "warning",
+        });
+        return;
+      }
+
+      const removed = this.storage.clearConversationHistory(conversation.id);
+      this.addSlashFeedbackMessage(conversation, {
+        title: byLanguage(responseLanguage, { zh: "会话已清空", en: "Conversation cleared" }),
+        body: byLanguage(responseLanguage, {
+          zh: "当前会话历史已清空，后续回复会基于新的上下文。",
+          en: "Conversation history is cleared. Future replies will use fresh context.",
+        }),
+        items: [
+          byLanguage(responseLanguage, {
+            zh: `消息：${removed.removedMessages} 条`,
+            en: `Messages: ${removed.removedMessages}`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `运行记录：${removed.removedRuns} 条`,
+            en: `Runs: ${removed.removedRuns}`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `步骤记录：${removed.removedRunSteps} 条`,
+            en: `Run steps: ${removed.removedRunSteps}`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `工具调用：${removed.removedToolInvocations} 条`,
+            en: `Tool invocations: ${removed.removedToolInvocations}`,
+          }),
+        ],
+        tone: "success",
+      });
+      this.storage.resetUnread(conversation.id);
+      return;
+    }
+
     if (commandName === "skills") {
       const availableSkills = this.getAvailableSkillsForConversation(conversation);
       const currentMeta = conversation.meta;
@@ -1131,10 +1447,16 @@ export class TeamalignedRuntime extends EventEmitter {
 
       if (args.length === 0) {
         this.addSlashFeedbackMessage(conversation, {
-          title: "Skill 会话状态",
-          body: `当前激活技能：${currentSkillLabel ?? "默认"}`,
+          title: byLanguage(responseLanguage, { zh: "Skill 会话状态", en: "Skill session status" }),
+          body: byLanguage(responseLanguage, {
+            zh: `当前激活技能：${currentSkillLabel ?? "默认"}`,
+            en: `Current active skill: ${currentSkillLabel ?? "default"}`,
+          }),
           items: availableSkills.map((skill) => skill.displayName || skill.name),
-          emptyText: "当前会话还没有可用 Skill。",
+          emptyText: byLanguage(responseLanguage, {
+            zh: "当前会话还没有可用 Skill。",
+            en: "No Skill is available for this conversation yet.",
+          }),
         });
         return;
       }
@@ -1149,8 +1471,11 @@ export class TeamalignedRuntime extends EventEmitter {
       );
       if (!match) {
         this.addSlashFeedbackMessage(conversation, {
-          title: "Skill 不可用",
-          body: `当前会话不可用 Skill：${selectedSkill || "未指定"}。`,
+          title: byLanguage(responseLanguage, { zh: "Skill 不可用", en: "Skill unavailable" }),
+          body: byLanguage(responseLanguage, {
+            zh: `当前会话不可用 Skill：${selectedSkill || "未指定"}。`,
+            en: `Skill unavailable in this conversation: ${selectedSkill || "unspecified"}.`,
+          }),
           tone: "error",
         });
         return;
@@ -1158,8 +1483,11 @@ export class TeamalignedRuntime extends EventEmitter {
       const meta = { ...currentMeta, activeSkill: match.id };
       this.storage.updateConversationMeta(conversation.id, meta);
       this.addSlashFeedbackMessage(conversation, {
-        title: "Skill 已切换",
-        body: `已为当前会话切换技能：${match.displayName || match.name}。后续回复会优先参考该技能。`,
+        title: byLanguage(responseLanguage, { zh: "Skill 已切换", en: "Skill switched" }),
+        body: byLanguage(responseLanguage, {
+          zh: `已为当前会话切换技能：${match.displayName || match.name}。后续回复会优先参考该技能。`,
+          en: `Switched skill for this conversation to: ${match.displayName || match.name}. Future replies will prefer this skill.`,
+        }),
         tone: "success",
       });
       return;
@@ -1174,10 +1502,16 @@ export class TeamalignedRuntime extends EventEmitter {
 
       if (args.length === 0) {
         this.addSlashFeedbackMessage(conversation, {
-          title: "MCP 会话状态",
-          body: `当前固定 MCP：${currentMcpLabel ?? "未固定"}`,
+          title: byLanguage(responseLanguage, { zh: "MCP 会话状态", en: "MCP session status" }),
+          body: byLanguage(responseLanguage, {
+            zh: `当前固定 MCP：${currentMcpLabel ?? "未固定"}`,
+            en: `Current pinned MCP: ${currentMcpLabel ?? "none"}`,
+          }),
           items: availableServers.map((item) => item.name),
-          emptyText: "当前会话还没有可用 MCP。",
+          emptyText: byLanguage(responseLanguage, {
+            zh: "当前会话还没有可用 MCP。",
+            en: "No MCP is available for this conversation yet.",
+          }),
         });
         return;
       }
@@ -1194,8 +1528,11 @@ export class TeamalignedRuntime extends EventEmitter {
         const connection = match ? this.storage.getMcpConnection(match.id) : null;
         if (!match || !connection || connection.status !== "connected") {
           this.addSlashFeedbackMessage(conversation, {
-            title: "MCP 不可用",
-            body: `当前会话不可用 MCP：${selected || "未指定"}。`,
+            title: byLanguage(responseLanguage, { zh: "MCP 不可用", en: "MCP unavailable" }),
+            body: byLanguage(responseLanguage, {
+              zh: `当前会话不可用 MCP：${selected || "未指定"}。`,
+              en: `MCP unavailable in this conversation: ${selected || "unspecified"}.`,
+            }),
             tone: "error",
           });
           return;
@@ -1205,10 +1542,16 @@ export class TeamalignedRuntime extends EventEmitter {
           pinnedMcp: match.id,
         });
         this.addSlashFeedbackMessage(conversation, {
-          title: "MCP 已固定",
-          body: `已为当前会话固定 MCP：${match.name}。`,
+          title: byLanguage(responseLanguage, { zh: "MCP 已固定", en: "MCP pinned" }),
+          body: byLanguage(responseLanguage, {
+            zh: `已为当前会话固定 MCP：${match.name}。`,
+            en: `Pinned MCP for this conversation: ${match.name}.`,
+          }),
           items: connection.discoveredTools.map((tool) => tool.name),
-          emptyText: "当前没有发现可用工具。",
+          emptyText: byLanguage(responseLanguage, {
+            zh: "当前没有发现可用工具。",
+            en: "No available tools were discovered.",
+          }),
           tone: "success",
         });
         return;
@@ -1225,18 +1568,27 @@ export class TeamalignedRuntime extends EventEmitter {
         const connection = match ? this.storage.getMcpConnection(match.id) : null;
         if (!match) {
           this.addSlashFeedbackMessage(conversation, {
-            title: "未找到 MCP",
-            body: `未找到 MCP：${selected || "未指定"}。`,
+            title: byLanguage(responseLanguage, { zh: "未找到 MCP", en: "MCP not found" }),
+            body: byLanguage(responseLanguage, {
+              zh: `未找到 MCP：${selected || "未指定"}。`,
+              en: `MCP not found: ${selected || "unspecified"}.`,
+            }),
             tone: "error",
           });
           return;
         }
         this.addSlashFeedbackMessage(conversation, {
-          title: `${match.name} 工具列表`,
+          title: byLanguage(responseLanguage, {
+            zh: `${match.name} 工具列表`,
+            en: `${match.name} tool list`,
+          }),
           items:
             connection?.discoveredTools.map((tool) => tool.name) ??
             match.declaredTools,
-          emptyText: "当前没有发现可用工具。",
+          emptyText: byLanguage(responseLanguage, {
+            zh: "当前没有发现可用工具。",
+            en: "No available tools were discovered.",
+          }),
         });
         return;
       }
@@ -1251,8 +1603,11 @@ export class TeamalignedRuntime extends EventEmitter {
       const connection = match ? this.storage.getMcpConnection(match.id) : null;
       if (!match) {
         this.addSlashFeedbackMessage(conversation, {
-          title: "未找到 MCP",
-          body: `未找到 MCP：${selected || "未指定"}。`,
+          title: byLanguage(responseLanguage, { zh: "未找到 MCP", en: "MCP not found" }),
+          body: byLanguage(responseLanguage, {
+            zh: `未找到 MCP：${selected || "未指定"}。`,
+            en: `MCP not found: ${selected || "unspecified"}.`,
+          }),
           tone: "error",
         });
         return;
@@ -1260,14 +1615,27 @@ export class TeamalignedRuntime extends EventEmitter {
 
       this.addSlashFeedbackMessage(conversation, {
         title: match.name,
-        body: `连接状态：${connection?.status ?? "disconnected"}\n协议：${match.transport}`,
+        body: byLanguage(responseLanguage, {
+          zh: `连接状态：${connection?.status ?? "disconnected"}\n协议：${match.transport}`,
+          en: `Connection: ${connection?.status ?? "disconnected"}\nTransport: ${match.transport}`,
+        }),
         items: [
-          `能力：${match.capabilities.join("、") || "暂无"}`,
-          `工具：${
-            connection?.discoveredTools.map((tool) => tool.name).join("、") ||
-            match.declaredTools.join("、") ||
-            "暂无"
-          }`,
+          byLanguage(responseLanguage, {
+            zh: `能力：${formatList(match.capabilities, responseLanguage)}`,
+            en: `Capabilities: ${formatList(match.capabilities, responseLanguage)}`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `工具：${
+              connection?.discoveredTools.map((tool) => tool.name).join("、") ||
+              match.declaredTools.join("、") ||
+              "暂无"
+            }`,
+            en: `Tools: ${
+              connection?.discoveredTools.map((tool) => tool.name).join(", ") ||
+              match.declaredTools.join(", ") ||
+              "none"
+            }`,
+          }),
         ],
       });
       return;
@@ -1279,12 +1647,13 @@ export class TeamalignedRuntime extends EventEmitter {
     input: string,
     slashContext: SlashDirectiveContext,
     attachments: AttachmentAssetRecord[],
+    responseLanguage: RuntimeLanguage,
   ) {
     const snapshot = this.storage.getSnapshot();
     const agent = snapshot.agents.find((item) => item.id === conversation.targetId);
     if (!agent) return;
     const provider = this.resolveActiveProvider(snapshot);
-    const providerIssue = validateProviderForSingleChat(provider);
+    const providerIssue = validateProviderForSingleChat(provider, responseLanguage);
     if (providerIssue) {
       this.addSystemMessage(conversation.id, providerIssue);
       return;
@@ -1310,32 +1679,46 @@ export class TeamalignedRuntime extends EventEmitter {
     });
     const steps: RunStep[] = [
       {
-        label: "准备上下文",
+        label: byLanguage(responseLanguage, { zh: "准备上下文", en: "Prepare context" }),
         delayMs: 300,
         execute: () => {
           this.addRunMessage(
             conversation.id,
             runId,
-            `${agent.name} 正在准备上下文，并将使用 ${provider?.label} / ${provider?.defaultModel} 处理这次请求。`,
+            byLanguage(responseLanguage, {
+              zh: `${agent.name} 正在准备上下文，并将使用 ${provider?.label} / ${provider?.defaultModel} 处理这次请求。`,
+              en: `${agent.name} is preparing context and will use ${provider?.label} / ${provider?.defaultModel} for this request.`,
+            }),
             "system",
           );
         },
       },
       {
-        label: "检查技能与上下文",
+        label: byLanguage(responseLanguage, { zh: "检查技能与上下文", en: "Check skill and context" }),
         delayMs: 300,
         execute: () => {
-          const skillText = activeSkillLabel ? `当前会话激活技能：${activeSkillLabel}。` : "当前使用默认技能栈。";
+          const skillText = activeSkillLabel
+            ? byLanguage(responseLanguage, {
+                zh: `当前会话激活技能：${activeSkillLabel}。`,
+                en: `Active skill in this conversation: ${activeSkillLabel}.`,
+              })
+            : byLanguage(responseLanguage, {
+                zh: "当前使用默认技能栈。",
+                en: "Using the default skill stack.",
+              });
           this.addRunMessage(
             conversation.id,
             runId,
-            `${agent.name} 已读取上下文。\n${skillText}`,
+            byLanguage(responseLanguage, {
+              zh: `${agent.name} 已读取上下文。\n${skillText}`,
+              en: `${agent.name} has read the context.\n${skillText}`,
+            }),
             "system",
           );
         },
       },
       {
-        label: "调用真实模型",
+        label: byLanguage(responseLanguage, { zh: "调用真实模型", en: "Call real model" }),
         execute: async () => {
           let response;
           try {
@@ -1356,6 +1739,7 @@ export class TeamalignedRuntime extends EventEmitter {
               onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
+              responseLanguage,
               onTextStream: async (aggregatedText) => {
                 const currentRun = this.storage.getRun(runId);
                 if (!currentRun || currentRun.status === "cancelled") return;
@@ -1407,7 +1791,7 @@ export class TeamalignedRuntime extends EventEmitter {
                 label: provider!.label,
                 baseUrl: provider!.baseUrl,
                 defaultModel: provider!.defaultModel,
-              }),
+              }, responseLanguage),
             );
           }
 
@@ -1427,7 +1811,10 @@ export class TeamalignedRuntime extends EventEmitter {
           const memoryPath = this.appendMemory(
             workspacePath,
             "memory/MEMORY.md",
-            `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response.text)}`,
+            byLanguage(responseLanguage, {
+              zh: `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response.text)}`,
+              en: `- ${this.formatTimestamp()} | task: ${trimHeadline(input)} | output: ${trimHeadline(response.text)}`,
+            }),
           );
           const currentRun = this.storage.getRun(runId);
           const usage = response.usage;
@@ -1481,14 +1868,26 @@ export class TeamalignedRuntime extends EventEmitter {
           this.addRunMessage(
             conversation.id,
             runId,
-            `结果已写入产物：${artifactPath}\n记忆文件已更新：${memoryPath}`,
+            byLanguage(responseLanguage, {
+              zh: `结果已写入产物：${artifactPath}\n记忆文件已更新：${memoryPath}`,
+              en: `Result artifact written: ${artifactPath}\nMemory file updated: ${memoryPath}`,
+            }),
             "system",
           );
           this.createAppNotification(
             {
               type: "agent_message",
-              title: `${agent.name} 发来新消息`,
-              body: trimHeadline(response.text || "点开查看最新回复。"),
+              title: byLanguage(responseLanguage, {
+                zh: `${agent.name} 发来新消息`,
+                en: `${agent.name} sent a new message`,
+              }),
+              body: trimHeadline(
+                response.text ||
+                  byLanguage(responseLanguage, {
+                    zh: "点开查看最新回复。",
+                    en: "Open to view the latest reply.",
+                  }),
+              ),
               relatedConversationId: conversation.id,
               relatedRunId: runId,
             },
@@ -1501,10 +1900,14 @@ export class TeamalignedRuntime extends EventEmitter {
     this.beginRun({
       runId,
       conversationId: conversation.id,
-      title: `${agent.name} 处理请求`,
+      title: byLanguage(responseLanguage, {
+        zh: `${agent.name} 处理请求`,
+        en: `${agent.name} handling request`,
+      }),
       kind: "agent_task",
       actorId: agent.id,
       steps,
+      responseLanguage,
     });
   }
 
@@ -1513,6 +1916,7 @@ export class TeamalignedRuntime extends EventEmitter {
     input: string,
     _slashContext: SlashDirectiveContext,
     inputMentionIds: string[] = [],
+    responseLanguage: RuntimeLanguage,
   ) {
     const snapshot = this.storage.getSnapshot();
     const team = snapshot.teams.find((item) => item.id === conversation.targetId);
@@ -1530,7 +1934,13 @@ export class TeamalignedRuntime extends EventEmitter {
     const members = [...prioritizedMembers, ...allMembers.filter((agent) => !prioritizedMemberIds.includes(agent.id))]
       .slice(0, TEAM_MEMBER_LIMIT);
     if (members.length === 0) {
-      this.addSystemMessage(conversation.id, "当前群组还没有可参与的 Agent，请先在管理页添加成员。");
+      this.addSystemMessage(
+        conversation.id,
+        byLanguage(responseLanguage, {
+          zh: "当前群组还没有可参与的 Agent，请先在管理页添加成员。",
+          en: "No available agents are in this group yet. Add members from the Manage page first.",
+        }),
+      );
       return;
     }
 
@@ -1542,7 +1952,7 @@ export class TeamalignedRuntime extends EventEmitter {
             .filter((id) => memberIds.has(id))
             .slice(0, TEAM_MEMBER_LIMIT);
     const provider = this.resolveActiveProvider(snapshot);
-    const providerIssue = validateProviderForSingleChat(provider);
+    const providerIssue = validateProviderForSingleChat(provider, responseLanguage);
     if (providerIssue) {
       this.addSystemMessage(conversation.id, providerIssue);
       return;
@@ -1555,7 +1965,7 @@ export class TeamalignedRuntime extends EventEmitter {
         new Set([`${input.slice(0, 24)}${input.length > 24 ? "..." : ""}`, ...team.context.activeTasks]),
       ).slice(0, 5),
     };
-    let handoffState = normalizeTeamHandoffState(updatedContext, members);
+    let handoffState = normalizeTeamHandoffState(updatedContext, members, responseLanguage);
     updatedContext = {
       ...updatedContext,
       handoff: handoffState,
@@ -1576,7 +1986,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const steps: RunStep[] = [
       {
-        label: "同步群组上下文",
+        label: byLanguage(responseLanguage, { zh: "同步群组上下文", en: "Sync group context" }),
         delayMs: 300,
         execute: () => {
           const mentionedAgents = explicitMentions
@@ -1586,14 +1996,24 @@ export class TeamalignedRuntime extends EventEmitter {
             !mentionedAgents.length && handoffState.activeAgentId
               ? members.find((agent) => agent.id === handoffState.activeAgentId) ?? null
               : null;
-          const thinkingText =
-            mentionedAgents.length === 1
-              ? `${mentionedAgents[0].name} 正在查看你的请求。`
-              : mentionedAgents.length > 1
-                ? `${mentionedAgents.map((agent) => agent.name).join("、")} 正在查看你的请求。`
-                : handoffAgent
-                  ? `${handoffAgent.name} 正在接着上一轮继续处理。`
-                : `我先看一下这个问题，并叫上合适的成员来回复你。`;
+          const thinkingText = byLanguage(responseLanguage, {
+            zh:
+              mentionedAgents.length === 1
+                ? `${mentionedAgents[0].name} 正在查看你的请求。`
+                : mentionedAgents.length > 1
+                  ? `${mentionedAgents.map((agent) => agent.name).join("、")} 正在查看你的请求。`
+                  : handoffAgent
+                    ? `${handoffAgent.name} 正在接着上一轮继续处理。`
+                    : "我先看一下这个问题，并叫上合适的成员来回复你。",
+            en:
+              mentionedAgents.length === 1
+                ? `${mentionedAgents[0].name} is reviewing your request.`
+                : mentionedAgents.length > 1
+                  ? `${mentionedAgents.map((agent) => agent.name).join(", ")} are reviewing your request.`
+                  : handoffAgent
+                    ? `${handoffAgent.name} is continuing from the previous round.`
+                    : "I’ll review this first and bring in the right members to reply.",
+          });
           this.addRunMessage(
             conversation.id,
             runId,
@@ -1609,7 +2029,7 @@ export class TeamalignedRuntime extends EventEmitter {
         },
       },
       {
-        label: "选择发言成员",
+        label: byLanguage(responseLanguage, { zh: "选择发言成员", en: "Select speakers" }),
         execute: async () => {
           executionPlan = await planTeamExecution({
             provider: provider!,
@@ -1629,12 +2049,15 @@ export class TeamalignedRuntime extends EventEmitter {
             userInput: input,
             explicitMentionIds: explicitMentions,
             mcpServers: availableMcpServers,
+            responseLanguage,
           });
 
           if (executionPlan) {
             updatedContext = {
               ...updatedContext,
-              phase: executionPlan.nextPhase || "执行中",
+              phase:
+                executionPlan.nextPhase ||
+                byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
               activeTasks: executionPlan.activeTask
                 ? Array.from(new Set([executionPlan.activeTask, ...updatedContext.activeTasks])).slice(0, 5)
                 : updatedContext.activeTasks,
@@ -1646,7 +2069,9 @@ export class TeamalignedRuntime extends EventEmitter {
               ...handoffState,
               activeAgentId: executionPlan.workItems[0]?.owner.id ?? handoffState.activeAgentId,
               nextAgentIds: executionPlan.workItems.map((item) => item.owner.id).slice(0, TEAM_MEMBER_LIMIT),
-              reason: executionPlan.reason || "进入执行模式",
+              reason:
+                executionPlan.reason ||
+                byLanguage(responseLanguage, { zh: "进入执行模式", en: "Enter execution mode" }),
               revision: handoffState.revision + 1,
               updatedAt: Date.now(),
             };
@@ -1664,8 +2089,14 @@ export class TeamalignedRuntime extends EventEmitter {
                 members.find((agent) => agent.id === handoffState.activeAgentId)?.name ?? null,
               content:
                 executionPlan.workItems.length > 1
-                  ? `我已经排好了执行分工，先由 ${executionPlan.workItems.map((item) => item.owner.name).join("、")} 推进。`
-                  : `${executionPlan.workItems[0]?.owner.name ?? "成员"} 会先接手这一轮。`,
+                  ? byLanguage(responseLanguage, {
+                      zh: `我已经排好了执行分工，先由 ${executionPlan.workItems.map((item) => item.owner.name).join("、")} 推进。`,
+                      en: `Execution is split. ${executionPlan.workItems.map((item) => item.owner.name).join(", ")} will start first.`,
+                    })
+                  : byLanguage(responseLanguage, {
+                      zh: `${executionPlan.workItems[0]?.owner.name ?? "成员"} 会先接手这一轮。`,
+                      en: `${executionPlan.workItems[0]?.owner.name ?? "A member"} will take this turn first.`,
+                    }),
               metadata: {
                 execution: true,
                 workItemCount: executionPlan.workItems.length,
@@ -1692,6 +2123,7 @@ export class TeamalignedRuntime extends EventEmitter {
             userInput: input,
             explicitMentionIds: explicitMentions,
             mcpServers: availableMcpServers,
+            responseLanguage,
           });
 
           updatedContext = {
@@ -1708,7 +2140,9 @@ export class TeamalignedRuntime extends EventEmitter {
             ...handoffState,
             activeAgentId: selection.speakers[0]?.id ?? handoffState.activeAgentId,
             nextAgentIds: selection.speakers.map((agent) => agent.id).slice(0, TEAM_MEMBER_LIMIT),
-            reason: selection.reason || "语义选择",
+            reason:
+              selection.reason ||
+              byLanguage(responseLanguage, { zh: "语义选择", en: "Semantic selection" }),
             revision: handoffState.revision + 1,
             updatedAt: Date.now(),
           };
@@ -1723,10 +2157,16 @@ export class TeamalignedRuntime extends EventEmitter {
             stage: "selection",
             actorId: handoffState.activeAgentId,
             actorName: selection.speakers[0]?.name ?? null,
-            content:
-              selection.speakers.length > 1
-                ? `${selection.speakers.map((agent) => agent.name).join("、")} 会先一起回应这一轮。`
-                : `${selection.speakers[0]?.name ?? "成员"} 会先接这条消息。`,
+              content:
+                selection.speakers.length > 1
+                ? byLanguage(responseLanguage, {
+                    zh: `${selection.speakers.map((agent) => agent.name).join("、")} 会先一起回应这一轮。`,
+                    en: `${selection.speakers.map((agent) => agent.name).join(", ")} will respond first together.`,
+                  })
+                : byLanguage(responseLanguage, {
+                    zh: `${selection.speakers[0]?.name ?? "成员"} 会先接这条消息。`,
+                    en: `${selection.speakers[0]?.name ?? "A member"} will reply first.`,
+                  }),
             metadata: {
               mode: selection.mode,
               reason: selection.reason,
@@ -1736,7 +2176,7 @@ export class TeamalignedRuntime extends EventEmitter {
         },
       },
       {
-        label: "Agent 自然发言",
+        label: byLanguage(responseLanguage, { zh: "Agent 自然发言", en: "Agent natural replies" }),
         execute: async () => {
           if (executionPlan && executionPlan.workItems.length > 0) {
             const batches = buildExecutionBatches(executionPlan.workItems);
@@ -1766,7 +2206,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   senderKind: "agent",
                   messageType: "agent",
                   visibility: "public",
-                  content: `${item.owner.name}：我先等 ${dependencyNames.join("、") || "前置成员"} 完成前置部分，再继续处理 ${item.summary}。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${item.owner.name}：我先等 ${dependencyNames.join("、") || "前置成员"} 完成前置部分，再继续处理 ${item.summary}。`,
+                    en: `${item.owner.name}: I’ll wait for ${dependencyNames.join(", ") || "prerequisites"} to finish before continuing ${item.summary}.`,
+                  }),
                   mentions: [],
                   runId,
                   metadata: {
@@ -1784,7 +2227,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   stage: "execution_waiting",
                   actorId: item.owner.id,
                   actorName: item.owner.name,
-                  content: `${item.owner.name} 正在等待前置步骤：${dependencyNames.join("、") || "前置成员"}。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${item.owner.name} 正在等待前置步骤：${dependencyNames.join("、") || "前置成员"}。`,
+                    en: `${item.owner.name} is waiting on prerequisites: ${dependencyNames.join(", ") || "prerequisites"}.`,
+                  }),
                   metadata: {
                     workItemId: item.id,
                     dependsOnAgentIds: item.dependsOnAgentIds,
@@ -1800,7 +2246,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   stage: "execution_batch",
                   actorId: team.id,
                   actorName: team.name,
-                  content: `并行批次开始：${batch.map((item) => item.owner.name).join("、")}。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `并行批次开始：${batch.map((item) => item.owner.name).join("、")}。`,
+                    en: `Parallel batch started: ${batch.map((item) => item.owner.name).join(", ")}.`,
+                  }),
                   metadata: {
                     batchIndex,
                     batchSize: batch.length,
@@ -1836,7 +2285,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   stage: "execution_progress",
                   actorId: item.owner.id,
                   actorName: item.owner.name,
-                  content: `${item.owner.name} 已接手：${item.summary}`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${item.owner.name} 已接手：${item.summary}`,
+                    en: `${item.owner.name} has taken ownership: ${item.summary}`,
+                  }),
                   metadata: {
                     workItemId: item.id,
                     batchIndex,
@@ -1865,10 +2317,12 @@ export class TeamalignedRuntime extends EventEmitter {
                       previousOutputs: completedOutputs,
                       mcpServers: availableMcpServers,
                       mcpConnections: availableMcpConnections,
+                      responseLanguage,
                       onMcpInvocation: this.createTeamToolInvocationObserver({
                         conversationId: conversation.id,
                         runId,
                         speaker: item.owner,
+                        responseLanguage,
                         onUpdate: (content, metadata) => {
                           this.emitTeamUpdate({
                             conversationId: conversation.id,
@@ -1950,8 +2404,14 @@ export class TeamalignedRuntime extends EventEmitter {
                       streamMessageId,
                       content:
                         error instanceof Error
-                          ? `${item.owner.name}：我执行这个任务时遇到了问题：${error.message}`
-                          : `${item.owner.name}：我执行这个任务时遇到了未知问题。`,
+                          ? byLanguage(responseLanguage, {
+                              zh: `${item.owner.name}：我执行这个任务时遇到了问题：${error.message}`,
+                              en: `${item.owner.name}: I hit an issue while executing this task: ${error.message}`,
+                            })
+                          : byLanguage(responseLanguage, {
+                              zh: `${item.owner.name}：我执行这个任务时遇到了未知问题。`,
+                              en: `${item.owner.name}: I hit an unknown issue while executing this task.`,
+                            }),
                     };
                   }
                 }),
@@ -2004,7 +2464,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   activeAgentId: result.item.owner.id,
                   lastSpeakerId: result.item.owner.id,
                   nextAgentIds: [],
-                  reason: result.ok ? "执行完成，继续推进" : "执行失败，等待修正",
+                  reason: byLanguage(responseLanguage, {
+                    zh: result.ok ? "执行完成，继续推进" : "执行失败，等待修正",
+                    en: result.ok ? "Execution finished, continue next step" : "Execution failed, waiting for fix",
+                  }),
                   revision: handoffState.revision + 1,
                   updatedAt: Date.now(),
                 };
@@ -2016,14 +2479,20 @@ export class TeamalignedRuntime extends EventEmitter {
               }
 
               if (batchIndex < batches.length - 1) {
-                const finishedNames = batch.map((item) => item.owner.name).join("、");
+                const finishedNames =
+                  responseLanguage === "en"
+                    ? batch.map((item) => item.owner.name).join(", ")
+                    : batch.map((item) => item.owner.name).join("、");
                 this.emitTeamUpdate({
                   conversationId: conversation.id,
                   runId,
                   stage: "execution_batch",
                   actorId: team.id,
                   actorName: team.name,
-                  content: `${finishedNames} 完成当前批次，继续下一步。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${finishedNames} 完成当前批次，继续下一步。`,
+                    en: `${finishedNames} finished this batch. Continuing to the next step.`,
+                  }),
                   metadata: {
                     batchIndex,
                     completed: true,
@@ -2032,11 +2501,19 @@ export class TeamalignedRuntime extends EventEmitter {
               }
             }
 
-            const lastContent = completedOutputs.at(-1) ?? `${team.name} 已完成本轮执行。`;
+            const lastContent =
+              completedOutputs.at(-1) ??
+              byLanguage(responseLanguage, {
+                zh: `${team.name} 已完成本轮执行。`,
+                en: `${team.name} finished this execution turn.`,
+              });
             this.createAppNotification(
               {
                 type: "group_message",
-                title: `${team.name} 有新消息`,
+                title: byLanguage(responseLanguage, {
+                  zh: `${team.name} 有新消息`,
+                  en: `${team.name} has a new message`,
+                }),
                 body: trimHeadline(lastContent),
                 relatedConversationId: conversation.id,
                 relatedRunId: runId,
@@ -2049,7 +2526,10 @@ export class TeamalignedRuntime extends EventEmitter {
               stage: "execution_result",
               actorId: team.id,
               actorName: team.name,
-              content: `${team.name} 本轮执行已完成。`,
+              content: byLanguage(responseLanguage, {
+                zh: `${team.name} 本轮执行已完成。`,
+                en: `${team.name} finished this execution turn.`,
+              }),
             });
             return;
           }
@@ -2074,7 +2554,10 @@ export class TeamalignedRuntime extends EventEmitter {
                 stage: "handoff",
                 actorId: speakers[0]?.id ?? null,
                 actorName: speakers[0]?.name ?? null,
-                content: `进入第 ${roundIndex + 1} 小轮：${speakers.map((agent) => agent.name).join("、")} 接棒。`,
+                content: byLanguage(responseLanguage, {
+                  zh: `进入第 ${roundIndex + 1} 小轮：${speakers.map((agent) => agent.name).join("、")} 接棒。`,
+                  en: `Entering sub-round ${roundIndex + 1}: ${speakers.map((agent) => agent.name).join(", ")} handoff.`,
+                }),
                 metadata: {
                   roundIndex,
                 },
@@ -2094,7 +2577,10 @@ export class TeamalignedRuntime extends EventEmitter {
                 stage: "execution_progress",
                 actorId: speaker.id,
                 actorName: speaker.name,
-                content: `${speaker.name} 正在思考并组织回复。`,
+                content: byLanguage(responseLanguage, {
+                  zh: `${speaker.name} 正在思考并组织回复。`,
+                  en: `${speaker.name} is thinking and preparing a reply.`,
+                }),
                 metadata: {
                   mode: selectedMode,
                   roundIndex,
@@ -2117,6 +2603,7 @@ export class TeamalignedRuntime extends EventEmitter {
               workspacePath,
               conversationId: conversation.id,
               runId,
+                responseLanguage,
                 isFinalSpeaker:
                   turnMessages.length >= MAX_TEAM_TURN_MESSAGES - 1 ||
                   speaker.id === speakers.at(-1)?.id,
@@ -2126,6 +2613,7 @@ export class TeamalignedRuntime extends EventEmitter {
                 conversationId: conversation.id,
                 runId,
                 speaker,
+                responseLanguage,
                 onUpdate: (content, metadata) => {
                   this.emitTeamUpdate({
                     conversationId: conversation.id,
@@ -2214,7 +2702,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   stage: "execution_result",
                   actorId: message.speaker.id,
                   actorName: message.speaker.name,
-                  content: `${message.speaker.name} 完成了这一条回复。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${message.speaker.name} 完成了这一条回复。`,
+                    en: `${message.speaker.name} finished this reply.`,
+                  }),
                   metadata: {
                     mode: selectedMode,
                     roundIndex: message.roundIndex,
@@ -2245,7 +2736,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   stage: "execution_result",
                   actorId: message.speaker.id,
                   actorName: message.speaker.name,
-                  content: `${message.speaker.name} 完成了这一条回复。`,
+                  content: byLanguage(responseLanguage, {
+                    zh: `${message.speaker.name} 完成了这一条回复。`,
+                    en: `${message.speaker.name} finished this reply.`,
+                  }),
                   metadata: {
                     mode: selectedMode,
                     roundIndex: message.roundIndex,
@@ -2266,7 +2760,10 @@ export class TeamalignedRuntime extends EventEmitter {
                 members,
                 turnMessages: roundMessages,
                 defaultSpeakerId: turnMessages.at(-1)?.speaker.id ?? selection.speakers[0]?.id ?? null,
-                reason: "本轮发言完成",
+                reason: byLanguage(responseLanguage, {
+                  zh: "本轮发言完成",
+                  en: "Current round speaking completed",
+                }),
               });
               updatedContext = {
                 ...updatedContext,
@@ -2280,7 +2777,10 @@ export class TeamalignedRuntime extends EventEmitter {
               activeAgentId: nextIds[0] ?? handoffState.activeAgentId,
               lastSpeakerId: roundMessages.at(-1)?.speaker.id ?? handoffState.lastSpeakerId,
               nextAgentIds: nextIds,
-              reason: `${roundMessages.at(-1)?.speaker.name ?? "成员"} @ 了下一位成员`,
+              reason: byLanguage(responseLanguage, {
+                zh: `${roundMessages.at(-1)?.speaker.name ?? "成员"} @ 了下一位成员`,
+                en: `${roundMessages.at(-1)?.speaker.name ?? "A member"} @ mentioned the next member`,
+              }),
               revision: handoffState.revision + 1,
               updatedAt: Date.now(),
             };
@@ -2300,7 +2800,10 @@ export class TeamalignedRuntime extends EventEmitter {
               members,
               turnMessages,
               defaultSpeakerId: selection.speakers[0]?.id ?? null,
-              reason: "本轮群聊发言完成",
+              reason: byLanguage(responseLanguage, {
+                zh: "本轮群聊发言完成",
+                en: "Group speaking turn completed",
+              }),
             });
             if (
               nextHandoff.activeAgentId !== handoffState.activeAgentId ||
@@ -2318,7 +2821,10 @@ export class TeamalignedRuntime extends EventEmitter {
 
           if (turnMessages.length === 0) {
             const fallbackSpeaker = selection.speakers[0] ?? members[0];
-            const fallbackContent = `${fallbackSpeaker.name}：我已经收到这条消息，但还需要更多信息才能给出有价值的判断。你可以补充目标、约束或期望输出。`;
+            const fallbackContent = byLanguage(responseLanguage, {
+              zh: `${fallbackSpeaker.name}：我已经收到这条消息，但还需要更多信息才能给出有价值的判断。你可以补充目标、约束或期望输出。`,
+              en: `${fallbackSpeaker.name}: I received this message, but I need more detail to provide a useful response. Please add goals, constraints, or expected output.`,
+            });
             turnMessages.push({
               speaker: fallbackSpeaker,
               kind: "question",
@@ -2348,15 +2854,25 @@ export class TeamalignedRuntime extends EventEmitter {
           const lastMessage = turnMessages.at(-1);
           const hasMention = turnMessages.some((message) => message.mentions.includes("user"));
           const notificationBody = trimHeadline(
-            lastMessage?.content.replace(/^@你\s*/, "") || `${team.name} 中有新的回复。`,
+            lastMessage?.content.replace(/^@(你|you)\s*/i, "") ||
+              byLanguage(responseLanguage, {
+                zh: `${team.name} 中有新的回复。`,
+                en: `There is a new reply in ${team.name}.`,
+              }),
           );
 
           this.createAppNotification(
             {
               type: hasMention ? "mention" : "group_message",
               title: hasMention
-                ? `${lastMessage?.speaker.name ?? team.name} 在 ${team.name} 中 @ 了你`
-                : `${team.name} 有新消息`,
+                ? byLanguage(responseLanguage, {
+                    zh: `${lastMessage?.speaker.name ?? team.name} 在 ${team.name} 中 @ 了你`,
+                    en: `${lastMessage?.speaker.name ?? team.name} mentioned you in ${team.name}`,
+                  })
+                : byLanguage(responseLanguage, {
+                    zh: `${team.name} 有新消息`,
+                    en: `${team.name} has a new message`,
+                  }),
               body: notificationBody,
               relatedConversationId: conversation.id,
               relatedRunId: runId,
@@ -2366,7 +2882,7 @@ export class TeamalignedRuntime extends EventEmitter {
         },
       },
       {
-        label: "更新群组记忆",
+        label: byLanguage(responseLanguage, { zh: "更新群组记忆", en: "Update group memory" }),
         execute: () => {
           const activeSpeakers =
             executionPlan?.workItems.map((item) => item.owner.name) ??
@@ -2378,12 +2894,18 @@ export class TeamalignedRuntime extends EventEmitter {
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
             "shared-memory.md",
-            `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${activeSpeakers.join("、") || "无"} | 结论：${trimHeadline(finalLine)}`,
+            byLanguage(responseLanguage, {
+              zh: `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${activeSpeakers.join("、") || "无"} | 结论：${trimHeadline(finalLine)}`,
+              en: `- ${this.formatTimestamp()} | topic: ${trimHeadline(input)} | speakers: ${activeSpeakers.join(", ") || "none"} | conclusion: ${trimHeadline(finalLine)}`,
+            }),
           );
           this.addRunMessage(
             conversation.id,
             runId,
-            `共享记忆已更新：${sharedMemoryPath}`,
+            byLanguage(responseLanguage, {
+              zh: `共享记忆已更新：${sharedMemoryPath}`,
+              en: `Shared memory updated: ${sharedMemoryPath}`,
+            }),
             "system",
           );
           const currentRun = this.storage.getRun(runId);
@@ -2404,15 +2926,20 @@ export class TeamalignedRuntime extends EventEmitter {
     this.beginRun({
       runId,
       conversationId: conversation.id,
-      title: `${team.name} 群聊发言`,
+      title: byLanguage(responseLanguage, {
+        zh: `${team.name} 群聊发言`,
+        en: `${team.name} group chat reply`,
+      }),
       kind: "team_task",
       actorId: members[0]?.id ?? "system",
       steps,
+      responseLanguage,
     });
   }
 
   private async startShellCommandRun(conversation: ConversationRecord, shellCommand: string) {
     const snapshot = this.storage.getSnapshot();
+    const responseLanguage = this.resolveResponseLanguage(conversation, shellCommand, snapshot.settings.language);
     const workspacePath = this.getWorkspaceForConversation(conversation, snapshot.agents, snapshot.teams);
     const actorId =
       conversation.kind === "agent"
@@ -2423,42 +2950,52 @@ export class TeamalignedRuntime extends EventEmitter {
     const runId = `run-${nanoid(8)}`;
     const steps: RunStep[] = [
       {
-        label: "准备命令",
+        label: byLanguage(responseLanguage, { zh: "准备命令", en: "Prepare command" }),
         delayMs: 300,
         execute: () => {
           this.addRunMessage(
             conversation.id,
             runId,
-            `准备在 workspace 执行命令：${shellCommand}`,
+            byLanguage(responseLanguage, {
+              zh: `准备在 workspace 执行命令：${shellCommand}`,
+              en: `Preparing to run command in workspace: ${shellCommand}`,
+            }),
             "system",
           );
         },
       },
       {
-        label: "执行命令",
+        label: byLanguage(responseLanguage, { zh: "执行命令", en: "Run command" }),
         execute: async () => {
           const artifactPath = await this.executeShellCommand(
             runId,
             conversation.id,
             shellCommand,
             workspacePath,
+            responseLanguage,
           );
           this.addRunMessage(
             conversation.id,
             runId,
-            `命令结果已写入产物：${artifactPath}`,
+            byLanguage(responseLanguage, {
+              zh: `命令结果已写入产物：${artifactPath}`,
+              en: `Command result written to artifact: ${artifactPath}`,
+            }),
             "system",
           );
         },
       },
       {
-        label: "整理结果",
+        label: byLanguage(responseLanguage, { zh: "整理结果", en: "Finalize result" }),
         delayMs: 300,
         execute: () => {
           this.addRunMessage(
             conversation.id,
             runId,
-            "命令执行完成，结果已经回写到会话中。",
+            byLanguage(responseLanguage, {
+              zh: "命令执行完成，结果已经回写到会话中。",
+              en: "Command execution completed and result has been written back to the conversation.",
+            }),
             "system",
           );
         },
@@ -2472,6 +3009,7 @@ export class TeamalignedRuntime extends EventEmitter {
       kind: "shell_command",
       actorId,
       steps,
+      responseLanguage,
     });
   }
 
@@ -2482,6 +3020,7 @@ export class TeamalignedRuntime extends EventEmitter {
     kind: RunRecord["kind"];
     actorId: string;
     steps: RunStep[];
+    responseLanguage?: RuntimeLanguage;
   }) {
     const transcriptPaths = this.storage.getConversationTranscriptPaths(input.conversationId);
     this.storage.createRun({
@@ -2497,6 +3036,7 @@ export class TeamalignedRuntime extends EventEmitter {
         title: input.title,
         transcriptPath: transcriptPaths.globalTranscriptPath,
         workspaceTranscriptPath: transcriptPaths.workspaceTranscriptPath,
+        responseLanguage: input.responseLanguage ?? "zh",
       },
     });
     this.storage.initializeRunSteps({
@@ -2515,7 +3055,15 @@ export class TeamalignedRuntime extends EventEmitter {
     };
 
     this.activeRuns.set(input.runId, controller);
-    this.addRunMessage(input.conversationId, input.runId, `已开始任务：${input.title}`, "system");
+    this.addRunMessage(
+      input.conversationId,
+      input.runId,
+      byLanguage(input.responseLanguage ?? "zh", {
+        zh: `已开始任务：${input.title}`,
+        en: `Started task: ${input.title}`,
+      }),
+      "system",
+    );
     this.scheduleNext(controller, 240);
   }
 
@@ -2530,6 +3078,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const controller = this.activeRuns.get(runId);
     const run = this.storage.getRun(runId);
     if (!controller || !run) return;
+    const responseLanguage = this.getRunResponseLanguage(run);
 
     if (["paused", "cancelled", "completed", "failed"].includes(run.status)) {
       return;
@@ -2541,7 +3090,12 @@ export class TeamalignedRuntime extends EventEmitter {
 
     if (run.status === "pausing") {
       this.storage.updateRun(runId, { status: "paused" });
-      this.addRunMessage(run.conversationId, runId, "任务已暂停。", "system");
+      this.addRunMessage(
+        run.conversationId,
+        runId,
+        byLanguage(responseLanguage, { zh: "任务已暂停。", en: "Run paused." }),
+        "system",
+      );
       this.emitSnapshot();
       return;
     }
@@ -2549,7 +3103,12 @@ export class TeamalignedRuntime extends EventEmitter {
     const step = controller.steps[run.stepIndex];
     if (!step) {
       this.storage.updateRun(runId, { status: "completed" });
-      this.addRunMessage(run.conversationId, runId, "任务已完成。", "system");
+      this.addRunMessage(
+        run.conversationId,
+        runId,
+        byLanguage(responseLanguage, { zh: "任务已完成。", en: "Run completed." }),
+        "system",
+      );
       this.activeRuns.delete(runId);
       this.emitSnapshot();
       return;
@@ -2582,7 +3141,12 @@ export class TeamalignedRuntime extends EventEmitter {
 
       if (latest.status === "pausing") {
         this.storage.updateRun(runId, { status: "paused" });
-        this.addRunMessage(latest.conversationId, runId, "任务已暂停。", "system");
+        this.addRunMessage(
+          latest.conversationId,
+          runId,
+          byLanguage(this.getRunResponseLanguage(latest), { zh: "任务已暂停。", en: "Run paused." }),
+          "system",
+        );
         this.emitSnapshot();
         return;
       }
@@ -2606,7 +3170,10 @@ export class TeamalignedRuntime extends EventEmitter {
       this.addRunMessage(
         run.conversationId,
         runId,
-        `任务执行失败：${error instanceof Error ? error.message : String(error)}`,
+        byLanguage(responseLanguage, {
+          zh: `任务执行失败：${error instanceof Error ? error.message : String(error)}`,
+          en: `Run failed: ${error instanceof Error ? error.message : String(error)}`,
+        }),
         "system",
       );
       const notificationChannel = this.getConversationNotificationChannel(run.conversationId);
@@ -2616,10 +3183,16 @@ export class TeamalignedRuntime extends EventEmitter {
           type: "run_failed",
           title:
             conversation?.kind === "agent"
-              ? `${conversation.title} 回复失败`
+              ? byLanguage(responseLanguage, {
+                  zh: `${conversation.title} 回复失败`,
+                  en: `${conversation.title} reply failed`,
+                })
               : conversation?.kind === "team"
-                ? `${conversation.title} 协作失败`
-                : "任务执行失败",
+                ? byLanguage(responseLanguage, {
+                    zh: `${conversation.title} 协作失败`,
+                    en: `${conversation.title} collaboration failed`,
+                  })
+                : byLanguage(responseLanguage, { zh: "任务执行失败", en: "Run failed" }),
           body: error instanceof Error ? trimHeadline(error.message) : trimHeadline(String(error)),
           relatedConversationId: run.conversationId,
           relatedRunId: runId,
@@ -2639,6 +3212,7 @@ export class TeamalignedRuntime extends EventEmitter {
     conversationId: string,
     shellCommand: string,
     workspacePath: string,
+    responseLanguage: RuntimeLanguage,
   ): Promise<string> {
     await sleep(300);
     const artifactPath = this.getArtifactPath(workspacePath, `command-${runId}.md`);
@@ -2671,17 +3245,29 @@ export class TeamalignedRuntime extends EventEmitter {
       });
 
       child.on("close", (code) => {
-        const normalizedStdout = trimOutput(stdout || "命令没有输出。");
+        const normalizedStdout = trimOutput(
+          stdout ||
+            byLanguage(responseLanguage, {
+              zh: "命令没有输出。",
+              en: "Command produced no output.",
+            }),
+        );
         const normalizedStderr = trimOutput(stderr);
         this.writeTextFile(
           artifactPath,
-          `# 命令执行结果\n\n- 命令：\`${shellCommand}\`\n- 工作目录：\`${workspacePath}\`\n- 退出码：${code ?? 0}\n\n## 标准输出\n\n\`\`\`\n${normalizedStdout}\n\`\`\`\n${normalizedStderr ? `\n## 标准错误\n\n\`\`\`\n${normalizedStderr}\n\`\`\`\n` : ""}`,
+          byLanguage(responseLanguage, {
+            zh: `# 命令执行结果\n\n- 命令：\`${shellCommand}\`\n- 工作目录：\`${workspacePath}\`\n- 退出码：${code ?? 0}\n\n## 标准输出\n\n\`\`\`\n${normalizedStdout}\n\`\`\`\n${normalizedStderr ? `\n## 标准错误\n\n\`\`\`\n${normalizedStderr}\n\`\`\`\n` : ""}`,
+            en: `# Command Result\n\n- Command: \`${shellCommand}\`\n- Working Directory: \`${workspacePath}\`\n- Exit Code: ${code ?? 0}\n\n## STDOUT\n\n\`\`\`\n${normalizedStdout}\n\`\`\`\n${normalizedStderr ? `\n## STDERR\n\n\`\`\`\n${normalizedStderr}\n\`\`\`\n` : ""}`,
+          }),
         );
         this.storage.recordArtifact({
           conversationId,
           runId,
           artifactKind: "command_output",
-          title: `命令执行结果：${shellCommand}`,
+          title: byLanguage(responseLanguage, {
+            zh: `命令执行结果：${shellCommand}`,
+            en: `Command result: ${shellCommand}`,
+          }),
           path: artifactPath,
           workspacePath,
           metadata: {
@@ -2704,9 +3290,14 @@ export class TeamalignedRuntime extends EventEmitter {
           senderKind: "system",
           messageType: "run",
           visibility: "system",
-          content: `命令：${shellCommand}\n工作目录：${workspacePath}\n退出码：${code ?? 0}\n\n输出：\n${normalizedStdout}${
-            normalizedStderr ? `\n\n错误输出：\n${normalizedStderr}` : ""
-          }`,
+          content: byLanguage(responseLanguage, {
+            zh: `命令：${shellCommand}\n工作目录：${workspacePath}\n退出码：${code ?? 0}\n\n输出：\n${normalizedStdout}${
+              normalizedStderr ? `\n\n错误输出：\n${normalizedStderr}` : ""
+            }`,
+            en: `Command: ${shellCommand}\nWorking Directory: ${workspacePath}\nExit Code: ${code ?? 0}\n\nOutput:\n${normalizedStdout}${
+              normalizedStderr ? `\n\nError Output:\n${normalizedStderr}` : ""
+            }`,
+          }),
           mentions: [],
           runId,
           metadata: {
@@ -2727,7 +3318,14 @@ export class TeamalignedRuntime extends EventEmitter {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`命令退出码为 ${code ?? 1}`));
+          reject(
+            new Error(
+              byLanguage(responseLanguage, {
+                zh: `命令退出码为 ${code ?? 1}`,
+                en: `Command exited with code ${code ?? 1}`,
+              }),
+            ),
+          );
         }
       });
     });
@@ -2992,7 +3590,10 @@ export class TeamalignedRuntime extends EventEmitter {
         this.addRunMessage(
           run.conversationId,
           run.id,
-          "应用重新启动后，任务已恢复为暂停状态。",
+          byLanguage(this.getRunResponseLanguage(run), {
+            zh: "应用重新启动后，任务已恢复为暂停状态。",
+            en: "After app restart, this run has been restored as paused.",
+          }),
           "system",
         );
       }

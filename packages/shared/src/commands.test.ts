@@ -20,6 +20,15 @@ test("parseSlashCommand parses /mcp with args", () => {
   });
 });
 
+test("parseSlashCommand parses /clear without args", () => {
+  const result = parseSlashCommand(" /clear ");
+  assert.deepEqual(result, {
+    raw: "/clear",
+    name: "clear",
+    args: [],
+  });
+});
+
 test("parseSlashCommand returns null for unsupported slash", () => {
   assert.equal(parseSlashCommand("/pause"), null);
   assert.equal(parseSlashCommand("/designer"), null);
@@ -33,4 +42,5 @@ test("command suggestions include core slash commands", () => {
   const names = commandSuggestions.map((item) => item.name);
   assert.ok(names.includes("/skills"));
   assert.ok(names.includes("/mcp"));
+  assert.ok(names.includes("/clear"));
 });

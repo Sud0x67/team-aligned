@@ -3,6 +3,7 @@ import type { SlashCommand } from "./types.ts";
 const supportedCommands = new Set([
   "skills",
   "mcp",
+  "clear",
 ]);
 
 export function parseSlashCommand(input: string): SlashCommand | null {
@@ -28,4 +29,5 @@ export function parseSlashCommand(input: string): SlashCommand | null {
 export const commandSuggestions = [
   { name: "/skills", description: "查看、切换或启用当前 Agent 可用技能" },
   { name: "/mcp", description: "查看并调用当前可用的 MCP 能力" },
+  { name: "/clear", description: "清空当前会话历史记录，重置上下文" },
 ];

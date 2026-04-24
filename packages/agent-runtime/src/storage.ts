@@ -111,6 +111,16 @@ type StoredToolInvocationRecord = ToolInvocationRecord;
 
 type StoredRunStepRecord = RunStepRecord;
 
+type ClearConversationHistoryResult = {
+  removedMessages: number;
+  removedRuns: number;
+  removedAttachments: number;
+  removedArtifacts: number;
+  removedToolInvocations: number;
+  removedRunSteps: number;
+  removedNotifications: number;
+};
+
 function now() {
   return Date.now();
 }
@@ -127,6 +137,8 @@ function normalizePromptAlias(value: string) {
 const agentPalette = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#3b82f6"];
 const teamPalette = ["#7c3aed", "#0ea5e9", "#14b8a6", "#8b5cf6"];
 const teamMemberLimit = 5;
+const starterSeedVersionKey = "system.starterSeedVersion";
+const starterSeedVersion = "2026-04-starter-v1";
 
 export class AppStorage {
   readonly rootDir: string;
@@ -181,7 +193,8 @@ export class AppStorage {
       this.loadState();
       const migratedPaths = this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
-      if (migratedPaths) {
+      const seededStarter = this.ensureStarterWorkspaceIfNeeded();
+      if (migratedPaths || seededStarter) {
         this.persist();
       }
       return;
@@ -191,6 +204,7 @@ export class AppStorage {
       this.loadLegacyState();
       this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
+      this.ensureStarterWorkspaceIfNeeded();
       this.persist();
       this.backupLegacyState();
       return;
@@ -582,6 +596,97 @@ export class AppStorage {
     this.persist();
   }
 
+  clearConversationHistory(conversationId: string): ClearConversationHistoryResult {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) {
+      return {
+        removedMessages: 0,
+        removedRuns: 0,
+        removedAttachments: 0,
+        removedArtifacts: 0,
+        removedToolInvocations: 0,
+        removedRunSteps: 0,
+        removedNotifications: 0,
+      };
+    }
+
+    const runIds = new Set(
+      this.state.runs
+        .filter((run) => run.conversationId === conversationId)
+        .map((run) => run.id),
+    );
+
+    const removedMessages = this.state.messages.filter((message) => message.conversationId === conversationId).length;
+    const removedRuns = this.state.runs.filter((run) => run.conversationId === conversationId).length;
+    const removedAttachments = this.state.attachments.filter(
+      (attachment) => attachment.conversationId === conversationId || (attachment.runId ? runIds.has(attachment.runId) : false),
+    ).length;
+    const removedArtifacts = this.state.artifacts.filter(
+      (artifact) => artifact.conversationId === conversationId || (artifact.runId ? runIds.has(artifact.runId) : false),
+    ).length;
+    const removedToolInvocations = this.state.toolInvocations.filter(
+      (invocation) => invocation.conversationId === conversationId || (invocation.runId ? runIds.has(invocation.runId) : false),
+    ).length;
+    const removedRunSteps = this.state.runSteps.filter(
+      (step) => step.conversationId === conversationId || runIds.has(step.runId),
+    ).length;
+    const removedNotifications = this.state.notifications.filter(
+      (notification) =>
+        notification.relatedConversationId === conversationId ||
+        (notification.relatedRunId ? runIds.has(notification.relatedRunId) : false),
+    ).length;
+
+    this.state.messages = this.state.messages.filter((message) => message.conversationId !== conversationId);
+    this.state.runs = this.state.runs.filter((run) => run.conversationId !== conversationId);
+    this.state.attachments = this.state.attachments.filter(
+      (attachment) =>
+        attachment.conversationId !== conversationId &&
+        (!attachment.runId || !runIds.has(attachment.runId)),
+    );
+    this.state.artifacts = this.state.artifacts.filter(
+      (artifact) =>
+        artifact.conversationId !== conversationId &&
+        (!artifact.runId || !runIds.has(artifact.runId)),
+    );
+    this.state.toolInvocations = this.state.toolInvocations.filter(
+      (invocation) =>
+        invocation.conversationId !== conversationId &&
+        (!invocation.runId || !runIds.has(invocation.runId)),
+    );
+    this.state.runSteps = this.state.runSteps.filter(
+      (step) => step.conversationId !== conversationId && !runIds.has(step.runId),
+    );
+    this.state.notifications = this.state.notifications.filter(
+      (notification) =>
+        notification.relatedConversationId !== conversationId &&
+        (!notification.relatedRunId || !runIds.has(notification.relatedRunId)),
+    );
+
+    conversation.unread = 0;
+    conversation.lastMessage = "";
+    conversation.lastActivityAt = now();
+
+    const { globalTranscriptPath, workspaceTranscriptPath } = this.getConversationTranscriptPaths(conversationId);
+    if (existsSync(globalTranscriptPath)) {
+      writeFileSync(globalTranscriptPath, "", "utf8");
+    }
+    if (workspaceTranscriptPath && existsSync(workspaceTranscriptPath)) {
+      writeFileSync(workspaceTranscriptPath, "", "utf8");
+    }
+
+    this.persist();
+
+    return {
+      removedMessages,
+      removedRuns,
+      removedAttachments,
+      removedArtifacts,
+      removedToolInvocations,
+      removedRunSteps,
+      removedNotifications,
+    };
+  }
+
   listRuns(): RunRecord[] {
     return [...this.state.runs].sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -730,7 +835,7 @@ export class AppStorage {
     if (!alias) {
       throw new Error("Prompt 别名不能为空，只能包含字母、数字、中划线和下划线。");
     }
-    if (["skills", "mcp"].includes(alias)) {
+    if (["skills", "mcp", "clear"].includes(alias)) {
       throw new Error(`/${alias} 是内置命令，不能作为自定义 Prompt 别名。`);
     }
     const existingSkill = this.findSkillCatalogEntryByNameOrId(alias);
@@ -2297,58 +2402,114 @@ export class AppStorage {
       this.state.settingsEntries = configState.settingsEntries;
       this.state.providers = configState.providers;
     }
-    const timestamp = now();
+    this.seedStarterWorkspace(now());
+    this.persist();
+  }
+
+  private ensureStarterWorkspaceIfNeeded() {
+    const hasChatEntities =
+      this.state.agents.length > 0 ||
+      this.state.teams.length > 0 ||
+      this.state.conversations.length > 0 ||
+      this.state.messages.length > 0;
+
+    const seededVersion = this.state.settingsEntries[starterSeedVersionKey];
+    if (hasChatEntities) {
+      if (seededVersion === starterSeedVersion) {
+        return false;
+      }
+      this.state.settingsEntries[starterSeedVersionKey] = starterSeedVersion;
+      return true;
+    }
+
+    if (seededVersion === starterSeedVersion) {
+      return false;
+    }
+
+    this.seedStarterWorkspace(now());
+    return true;
+  }
+
+  private seedStarterWorkspace(timestamp: number) {
+    const language = this.state.settingsEntries["settings.language"] === "en" ? "en" : "zh";
 
     const agentSeeds = [
       {
         id: "agent-nova",
         name: "Nova",
-        role: "数据分析师",
+        role: language === "en" ? "Data Analyst" : "数据分析师",
         avatar: "N",
         color: agentPalette[0],
         status: "online" as const,
-        description: "擅长数据分析、指标拆解与结论总结。",
-        capabilities: ["数据清洗", "统计分析", "图表报告", "复盘总结"],
+        description:
+          language === "en"
+            ? "Great at data analysis, metric breakdown, and concise conclusions."
+            : "擅长数据分析、指标拆解与结论总结。",
+        capabilities:
+          language === "en"
+            ? ["Data cleaning", "Statistical analysis", "Reporting", "Retrospectives"]
+            : ["数据清洗", "统计分析", "图表报告", "复盘总结"],
       },
       {
         id: "agent-coder",
         name: "Coder",
-        role: "全栈开发",
+        role: language === "en" ? "Full-stack Engineer" : "全栈开发",
         avatar: "C",
         color: agentPalette[1],
         status: "online" as const,
-        description: "负责前端、后端与本地工具链实现。",
+        description:
+          language === "en"
+            ? "Builds frontend, backend, and local toolchain implementation."
+            : "负责前端、后端与本地工具链实现。",
         capabilities: ["React", "Electron", "Node.js", "TypeScript"],
       },
       {
         id: "agent-designer",
         name: "Designer",
-        role: "UI/UX 设计师",
+        role: language === "en" ? "UI/UX Designer" : "UI/UX 设计师",
         avatar: "D",
         color: agentPalette[2],
-        status: "busy" as const,
-        description: "把复杂系统整理成清晰、可落地的交互。",
-        capabilities: ["信息架构", "原型设计", "视觉系统", "交互梳理"],
+        status: "online" as const,
+        description:
+          language === "en"
+            ? "Turns complex workflows into clear and shippable interactions."
+            : "把复杂系统整理成清晰、可落地的交互。",
+        capabilities:
+          language === "en"
+            ? ["Information architecture", "Wireframing", "Visual system", "Interaction design"]
+            : ["信息架构", "原型设计", "视觉系统", "交互梳理"],
       },
       {
         id: "agent-planner",
         name: "Planner",
-        role: "项目经理",
+        role: language === "en" ? "Project Manager" : "项目经理",
         avatar: "P",
         color: agentPalette[3],
         status: "online" as const,
-        description: "擅长拆任务、排优先级和组织多人协作。",
-        capabilities: ["任务拆解", "里程碑规划", "风险提示", "协作节奏"],
+        description:
+          language === "en"
+            ? "Strong at scoping, prioritization, and multi-agent coordination."
+            : "擅长拆任务、排优先级和组织多人协作。",
+        capabilities:
+          language === "en"
+            ? ["Task breakdown", "Milestones", "Risk alerts", "Collaboration rhythm"]
+            : ["任务拆解", "里程碑规划", "风险提示", "协作节奏"],
       },
       {
         id: "agent-researcher",
         name: "Researcher",
-        role: "研究员",
+        role: language === "en" ? "Researcher" : "研究员",
         avatar: "R",
         color: agentPalette[4],
-        status: "offline" as const,
-        description: "擅长检索、归纳与形成背景信息。",
-        capabilities: ["资料检索", "趋势分析", "竞品研究", "长文提炼"],
+        status: "online" as const,
+        description:
+          language === "en"
+            ? "Good at searching, synthesizing, and turning background into insights."
+            : "擅长检索、归纳与形成背景信息。",
+        capabilities:
+          language === "en"
+            ? ["Research search", "Trend analysis", "Competitive scan", "Long-form synthesis"]
+            : ["资料检索", "趋势分析", "竞品研究", "长文提炼"],
       },
     ];
 
@@ -2359,7 +2520,6 @@ export class AppStorage {
         title: seed.name,
         summary: seed.description,
       });
-
       this.state.agents.push({
         id: seed.id,
         name: seed.name,
@@ -2380,20 +2540,32 @@ export class AppStorage {
     const teamSeeds = [
       {
         id: "team-product",
-        name: "产品开发组",
-        description: "围绕 teamaligned 的 MVP 体验快速协作。",
-        avatar: "产",
+        name: language === "en" ? "Product Squad" : "产品开发组",
+        description:
+          language === "en"
+            ? "A starter squad to quickly collaborate on TeamAligned beta tasks."
+            : "围绕 teamaligned 的 MVP 体验快速协作。",
+        avatar: language === "en" ? "P" : "产",
         avatarColor: teamPalette[0],
-        objective: "完成一个可体验的 teamaligned 桌面原型。",
+        objective:
+          language === "en"
+            ? "Ship a usable TeamAligned desktop beta experience."
+            : "完成一个可体验的 teamaligned 桌面原型。",
         members: ["agent-planner", "agent-designer", "agent-coder"],
       },
       {
         id: "team-research",
-        name: "市场研究组",
-        description: "负责背景研究、用户反馈与方案补充。",
-        avatar: "研",
+        name: language === "en" ? "Research Squad" : "市场研究组",
+        description:
+          language === "en"
+            ? "Collects context and user feedback, then feeds insights to product delivery."
+            : "负责背景研究、用户反馈与方案补充。",
+        avatar: language === "en" ? "R" : "研",
         avatarColor: teamPalette[1],
-        objective: "收集需求背景并把结论反馈给产品开发组。",
+        objective:
+          language === "en"
+            ? "Collect requirement context and feed concise insights to Product Squad."
+            : "收集需求背景并把结论反馈给产品开发组。",
         members: ["agent-nova", "agent-researcher", "agent-planner"],
       },
     ];
@@ -2426,130 +2598,139 @@ export class AppStorage {
         kind: "agent",
         targetId: "agent-nova",
         title: "Nova",
-        unread: 2,
-        lastMessage: "数据摘要已经整理好了，你要我继续出图表吗？",
+        unread: 1,
+        lastMessage:
+          language === "en"
+            ? "I’ve prepared an overview. Want me to continue with a chart?"
+            : "数据摘要已经整理好了，你要我继续出图表吗？",
         lastActivityAt: timestamp,
-        meta: { ...defaultConversationMeta },
-      },
-      {
-        id: "conv-agent-coder",
-        kind: "agent",
-        targetId: "agent-coder",
-        title: "Coder",
-        unread: 0,
-        lastMessage: "我已经把 Electron 壳和命令输入流整理好了。",
-        lastActivityAt: timestamp - 1000 * 60 * 8,
         meta: { ...defaultConversationMeta },
       },
       {
         id: "conv-team-product",
         kind: "team",
         targetId: "team-product",
-        title: "产品开发组",
-        unread: 4,
-        lastMessage: "Planner: 现在优先把单聊命令和群聊编排体验打通。",
-        lastActivityAt: timestamp - 1000 * 60 * 4,
-        meta: { ...defaultConversationMeta },
-      },
-      {
-        id: "conv-team-research",
-        kind: "team",
-        targetId: "team-research",
-        title: "市场研究组",
+        title: language === "en" ? "Product Squad" : "产品开发组",
         unread: 1,
-        lastMessage: "Researcher: 我整理了 3 条可参考的产品定位方向。",
-        lastActivityAt: timestamp - 1000 * 60 * 20,
+        lastMessage:
+          language === "en"
+            ? "Planner: Let’s align on the first beta milestone."
+            : "Planner: 现在优先把单聊命令和群聊编排体验打通。",
+        lastActivityAt: timestamp - 1000 * 60 * 4,
         meta: { ...defaultConversationMeta },
       },
     ];
 
-    const seedMessages: Array<Omit<MessageRecord, "id">> = [
-      {
-        conversationId: "conv-agent-nova",
-        senderId: "user",
-        senderName: "你",
-        senderKind: "user",
-        messageType: "user",
-        visibility: "public",
-        content: "Nova，帮我总结一下这个项目现在最重要的目标。",
-        mentions: [],
-        createdAt: timestamp - 1000 * 60 * 14,
-        runId: null,
-        metadata: null,
-      },
-      {
-        conversationId: "conv-agent-nova",
-        senderId: "agent-nova",
-        senderName: "Nova",
-        senderKind: "agent",
-        messageType: "agent",
-        visibility: "public",
-        content:
-          "当前最重要的目标是先把 teamaligned 做成一个可体验的桌面原型，优先验证单聊命令、群聊协作和本地运行时。",
-        mentions: [],
-        createdAt: timestamp - 1000 * 60 * 12,
-        runId: null,
-        metadata: null,
-      },
-      {
-        conversationId: "conv-team-product",
-        senderId: "agent-planner",
-        senderName: "Planner",
-        senderKind: "agent",
-        messageType: "agent",
-        visibility: "public",
-        content: "大家今天先集中做 MVP 的 0.1 核心交互。",
-        mentions: [],
-        createdAt: timestamp - 1000 * 60 * 18,
-        runId: null,
-        metadata: null,
-      },
-      {
-        conversationId: "conv-team-product",
-        senderId: "agent-designer",
-        senderName: "Designer",
-        senderKind: "agent",
-        messageType: "agent",
-        visibility: "public",
-        content: "@Coder 我建议把 slash command 提示做成输入框下方浮层。",
-        mentions: ["agent-coder"],
-        createdAt: timestamp - 1000 * 60 * 16,
-        runId: null,
-        metadata: null,
-      },
-      {
-        conversationId: "conv-team-product",
-        senderId: "agent-coder",
-        senderName: "Coder",
-        senderKind: "agent",
-        messageType: "agent",
-        visibility: "public",
-        content: "@Designer 收到，我会把命令建议和运行控制条一起做进去。",
-        mentions: ["agent-designer"],
-        createdAt: timestamp - 1000 * 60 * 14,
-        runId: null,
-        metadata: null,
-      },
-    ];
+    const seedMessages: Array<Omit<MessageRecord, "id">> =
+      language === "en"
+        ? [
+            {
+              conversationId: "conv-agent-nova",
+              senderId: "user",
+              senderName: "You",
+              senderKind: "user",
+              messageType: "user",
+              visibility: "public",
+              content: "Nova, what should we focus on first for this project?",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 14,
+              runId: null,
+              metadata: null,
+            },
+            {
+              conversationId: "conv-agent-nova",
+              senderId: "agent-nova",
+              senderName: "Nova",
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content:
+                "The top priority is to make TeamAligned clearly usable in single chat and group collaboration flows.",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 12,
+              runId: null,
+              metadata: null,
+            },
+            {
+              conversationId: "conv-team-product",
+              senderId: "agent-planner",
+              senderName: "Planner",
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content: "Team, let's align on the first beta milestone and split responsibilities.",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 10,
+              runId: null,
+              metadata: null,
+            },
+          ]
+        : [
+            {
+              conversationId: "conv-agent-nova",
+              senderId: "user",
+              senderName: "你",
+              senderKind: "user",
+              messageType: "user",
+              visibility: "public",
+              content: "Nova，帮我总结一下这个项目现在最重要的目标。",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 14,
+              runId: null,
+              metadata: null,
+            },
+            {
+              conversationId: "conv-agent-nova",
+              senderId: "agent-nova",
+              senderName: "Nova",
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content:
+                "当前最重要的目标是先把 teamaligned 做成一个可体验的桌面原型，优先验证单聊命令、群聊协作和本地运行时。",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 12,
+              runId: null,
+              metadata: null,
+            },
+            {
+              conversationId: "conv-team-product",
+              senderId: "agent-planner",
+              senderName: "Planner",
+              senderKind: "agent",
+              messageType: "agent",
+              visibility: "public",
+              content: "大家今天先集中做 MVP 的 0.1 核心交互。",
+              mentions: [],
+              createdAt: timestamp - 1000 * 60 * 10,
+              runId: null,
+              metadata: null,
+            },
+          ];
 
     this.state.messages = seedMessages.map((message) => ({
       ...message,
       id: nanoid(),
     }));
 
-    this.state.extensions = [...defaultExtensions];
-    this.state.skillCatalog = [...defaultSkillCatalog];
-    this.state.mcpCatalog = [...defaultMcpCatalog];
-    this.state.mcpConnections = [];
+    this.state.extensions = this.state.extensions.length > 0 ? this.state.extensions : [...defaultExtensions];
+    this.state.skillCatalog = this.state.skillCatalog.length > 0 ? this.state.skillCatalog : [...defaultSkillCatalog];
+    this.state.mcpCatalog = this.state.mcpCatalog.length > 0 ? this.state.mcpCatalog : [...defaultMcpCatalog];
+    this.state.mcpConnections = this.state.mcpConnections.length > 0 ? this.state.mcpConnections : [];
     this.state.providers = this.state.providers.length > 0 ? this.state.providers : [...defaultProviders];
     this.state.settingsEntries =
       Object.keys(this.state.settingsEntries).length > 0
         ? this.state.settingsEntries
         : this.createSettingsEntries(defaultSettings, defaultProfile);
+    this.state.settingsEntries[starterSeedVersionKey] = starterSeedVersion;
+
     this.createNotification({
       type: "system",
-      title: "欢迎来到 teamaligned",
-      body: "项目已完成初始化，你现在可以开始体验单聊命令和群聊协作。",
+      title: language === "en" ? "Welcome to TeamAligned" : "欢迎来到 teamaligned",
+      body:
+        language === "en"
+          ? "Starter Agents and a group are ready. You can start chatting right away."
+          : "已为你准备好默认 Agent 和群组，你现在可以直接开始聊天。",
       relatedConversationId: "conv-team-product",
       relatedRunId: null,
       createdAt: timestamp,
@@ -2558,8 +2739,6 @@ export class AppStorage {
     for (const message of this.state.messages) {
       this.appendTranscript(message);
     }
-
-    this.persist();
   }
 
   private createSettingsEntries(settings: AppSettings, profile: UserProfile) {

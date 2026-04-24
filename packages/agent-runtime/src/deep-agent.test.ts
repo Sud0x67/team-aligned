@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeProviderErrorMessage } from "./deep-agent.ts";
+import { normalizeProviderErrorMessage, validateProviderForSingleChat } from "./deep-agent.ts";
 
 const provider = {
   id: "qwen" as const,
@@ -67,4 +67,15 @@ test("falls back to raw error text for unknown errors", () => {
   const raw = "some custom backend error";
   const message = normalizeProviderErrorMessage(raw, provider);
   assert.equal(message, raw);
+});
+
+test("normalizes provider timeout errors in English", () => {
+  const message = normalizeProviderErrorMessage("request timed out after 120000ms", provider, "en");
+  assert.match(message, /timed out/i);
+  assert.match(message, /Base URL/);
+});
+
+test("returns English provider validation message when provider is missing", () => {
+  const issue = validateProviderForSingleChat(null, "en");
+  assert.match(issue ?? "", /No model provider is available/i);
 });
