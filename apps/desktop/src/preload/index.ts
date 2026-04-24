@@ -3,6 +3,7 @@ import type {
   AttachmentAssetRecord,
   AppSnapshot,
   ConnectMcpInput,
+  ConversationExportResult,
   CreateAgentInput,
   CreateTeamInput,
   OpenConversationEvent,
@@ -63,6 +64,8 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:save-avatar-asset", payload),
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput): Promise<AttachmentAssetRecord> =>
     ipcRenderer.invoke("teamaligned:save-attachment-asset", payload),
+  exportConversationData: (conversationId: string): Promise<ConversationExportResult> =>
+    ipcRenderer.invoke("teamaligned:export-conversation-data", conversationId),
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),

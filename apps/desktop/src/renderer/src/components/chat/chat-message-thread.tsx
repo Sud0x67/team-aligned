@@ -115,6 +115,7 @@ export function ChatMessageThread({
   run,
   showInternalMessages,
   pendingSystemMessage,
+  pendingSystemUpdates,
   pendingActor,
   showMentions,
   profile,
@@ -126,6 +127,7 @@ export function ChatMessageThread({
   run: RunRecord | null;
   showInternalMessages: boolean;
   pendingSystemMessage: string | null;
+  pendingSystemUpdates: string[];
   pendingActor: {
     name: string;
     avatarPath: string | null;
@@ -147,15 +149,22 @@ export function ChatMessageThread({
   const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const hasStreamingVisibleMessage = useMemo(() => {
-    if (!run) return false;
     return visibleMessages.some(
       (message) =>
-        message.runId === run.id &&
         message.visibility === "public" &&
         message.senderKind === "agent" &&
-        message.metadata?.streaming === true,
+        message.metadata?.streaming === true &&
+        (!run || message.runId === run.id),
     );
   }, [run, visibleMessages]);
+  const visiblePendingUpdates = useMemo(() => {
+    const compacted = pendingSystemUpdates.map((item) => item.trim()).filter((item) => item.length > 0);
+    if (!pendingSystemMessage) {
+      return compacted;
+    }
+    const normalizedPending = pendingSystemMessage.trim();
+    return compacted.filter((item, index) => !(item === normalizedPending && index === compacted.length - 1));
+  }, [pendingSystemMessage, pendingSystemUpdates]);
 
   const updateShouldStickToBottom = () => {
     const container = scrollContainerRef.current;
@@ -384,6 +393,18 @@ export function ChatMessageThread({
                       <span className="animate-pulse">{t.chat("thinking")}</span>
                     </div>
                     <p className="whitespace-pre-wrap">{pendingSystemMessage}</p>
+                    {visiblePendingUpdates.length > 0 ? (
+                      <div className="mt-3 space-y-1">
+                        {visiblePendingUpdates.map((line, index) => (
+                          <p
+                            key={`${line}-${index}`}
+                            className="text-xs leading-6 text-[var(--muted-foreground)]"
+                          >
+                            {line}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

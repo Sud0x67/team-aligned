@@ -56,6 +56,130 @@ function isLikelyHttpUrl(value: string) {
   }
 }
 
+function collectErrorTexts(error: unknown, depth = 0, bucket: string[] = []) {
+  if (depth > 4 || error == null) return bucket;
+
+  if (typeof error === "string") {
+    if (error.trim()) bucket.push(error.trim());
+    return bucket;
+  }
+
+  if (error instanceof Error) {
+    if (error.message?.trim()) {
+      bucket.push(error.message.trim());
+    }
+    const asRecord = error as unknown as Record<string, unknown>;
+    if (typeof asRecord.code === "string" && asRecord.code.trim()) {
+      bucket.push(asRecord.code.trim());
+    }
+    if (typeof asRecord.type === "string" && asRecord.type.trim()) {
+      bucket.push(asRecord.type.trim());
+    }
+    collectErrorTexts(asRecord.error, depth + 1, bucket);
+    collectErrorTexts(asRecord.cause, depth + 1, bucket);
+    return bucket;
+  }
+
+  if (typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    if (typeof record.message === "string" && record.message.trim()) {
+      bucket.push(record.message.trim());
+    }
+    if (typeof record.code === "string" && record.code.trim()) {
+      bucket.push(record.code.trim());
+    }
+    if (typeof record.type === "string" && record.type.trim()) {
+      bucket.push(record.type.trim());
+    }
+    collectErrorTexts(record.error, depth + 1, bucket);
+    collectErrorTexts(record.cause, depth + 1, bucket);
+    return bucket;
+  }
+
+  const stringified = String(error).trim();
+  if (stringified) bucket.push(stringified);
+  return bucket;
+}
+
+function toErrorText(error: unknown) {
+  const texts = collectErrorTexts(error);
+  if (texts.length === 0) return "";
+  return Array.from(new Set(texts)).join(" | ");
+}
+
+function extractTroubleshootingUrl(rawMessage: string) {
+  const matchedUrl =
+    rawMessage.match(/Troubleshooting URL:\s*(https?:\/\/\S+)/i)?.[1] ??
+    rawMessage.match(/For details,\s*see:\s*(https?:\/\/\S+)/i)?.[1] ??
+    rawMessage.match(/https?:\/\/\S+/i)?.[0] ??
+    null;
+  return matchedUrl ? matchedUrl.replace(/[)\],.]+$/, "") : null;
+}
+
+export function normalizeProviderErrorMessage(
+  error: unknown,
+  provider?: Pick<ProviderConfig, "id" | "label" | "baseUrl" | "defaultModel">,
+) {
+  const raw = toErrorText(error).trim();
+  const normalized = raw.toLowerCase();
+  const normalizedCompat = normalized.replace(/[_-]+/g, " ");
+  const providerLabel = provider?.label ?? provider?.id ?? "模型服务";
+  const baseUrlHint = provider?.baseUrl ? `（${provider.baseUrl}）` : "";
+  const troubleshootingUrl = extractTroubleshootingUrl(raw);
+  const troubleshootingHint = troubleshootingUrl ? `\n排查参考：${troubleshootingUrl}` : "";
+
+  if (
+    /(^|[\s:])401([\s:]|$)|unauthorized|invalid api key|incorrect api key|authentication|auth|api key|apikey error/i.test(
+      normalizedCompat,
+    ) ||
+    normalizedCompat.includes("incorrect api key")
+  ) {
+    return `${providerLabel} 鉴权失败。请检查 API Key 是否正确、是否过期，并确认当前账号有该模型的调用权限。${troubleshootingHint}`;
+  }
+
+  if (/(^|[\s:])403([\s:]|$)|forbidden|permission denied/i.test(normalized)) {
+    return `${providerLabel} 拒绝访问。请检查账号权限、组织策略或服务端白名单配置。`;
+  }
+
+  if (
+    /(^|[\s:])429([\s:]|$)|rate limit|too many requests|insufficient_quota|quota|billing/i.test(
+      normalized,
+    )
+  ) {
+    return `${providerLabel} 调用受限（限流或额度不足）。请稍后重试，或检查配额与计费状态。`;
+  }
+
+  if (
+    /(^|[\s:])404([\s:]|$)|model.*not found|no such model|invalid model|does not exist/i.test(
+      normalized,
+    )
+  ) {
+    return `${providerLabel} 模型不可用。请检查模型名称是否正确，并确认该模型在当前接口可访问。`;
+  }
+
+  if (/timeout|timed out|etimedout|aborted|abort/i.test(normalized)) {
+    return `连接 ${providerLabel} 超时。请检查网络和 Base URL${baseUrlHint}，然后重试。`;
+  }
+
+  if (
+    /enotfound|econnrefused|econnreset|network|fetch failed|socket hang up|getaddrinfo|certificate|self signed|ssl|tls/i.test(
+      normalized,
+    )
+  ) {
+    return `无法连接到 ${providerLabel}。请检查 Base URL${baseUrlHint}、网络连通性和证书配置。${troubleshootingHint}`;
+  }
+
+  if (
+    /(^|[\s:])5\d{2}([\s:]|$)|internal server error|bad gateway|service unavailable|gateway timeout/i.test(
+      normalized,
+    )
+  ) {
+    return `${providerLabel} 服务暂时不可用。请稍后重试。`;
+  }
+
+  return raw || "模型调用失败，请稍后重试。";
+}
+
 export function normalizeMessageContent(content: unknown): string {
   if (typeof content === "string") {
     return content.trim();
@@ -446,7 +570,12 @@ export async function testProviderConnection(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : String(error),
+      message: normalizeProviderErrorMessage(error, {
+        id: input.id,
+        label: input.label ?? input.id,
+        baseUrl: input.baseUrl,
+        defaultModel: input.defaultModel,
+      }),
       latencyMs: Date.now() - startedAt,
     };
   }

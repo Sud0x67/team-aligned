@@ -206,22 +206,39 @@ export function SettingsPage() {
 
   const handleSaveProvider = async () => {
     if (!selectedProvider || saveState === "saving") return;
-
-    const ok = await runProviderTest();
-    if (!ok) return;
+    if (providerValidationIssues.length > 0) {
+      setProviderMessage(
+        `${t.settings("providerValidationTitle")}\n${providerValidationIssues.map((issue) => `- ${issue}`).join("\n")}`,
+      );
+      setTestState("error");
+      return;
+    }
 
     setSaveState("saving");
-    await updateProvider({
-      id: selectedProvider.id,
-      label: selectedProvider.label,
-      baseUrl: selectedProvider.baseUrl,
-      apiKey: selectedProvider.apiKey,
-      defaultModel: selectedProvider.defaultModel,
-      supportsToolCalling: selectedProvider.supportsToolCalling,
-      supportsStreaming: selectedProvider.supportsStreaming,
-      isActive: true,
-    });
-    setSaveState("saved");
+    setProviderMessage(null);
+    try {
+      await updateProvider({
+        id: selectedProvider.id,
+        label: selectedProvider.label,
+        baseUrl: selectedProvider.baseUrl,
+        apiKey: selectedProvider.apiKey,
+        defaultModel: selectedProvider.defaultModel,
+        supportsToolCalling: selectedProvider.supportsToolCalling,
+        supportsStreaming: selectedProvider.supportsStreaming,
+        isActive: true,
+      });
+      setSaveState("saved");
+      setTestState("success");
+      setProviderMessage(`${t.settings("providerConnectionOk")}\n${t.settings("providerSaved")}`);
+    } catch (error) {
+      setSaveState("idle");
+      setTestState("error");
+      setProviderMessage(
+        `${t.settings("providerConnectionFailed")}\n${
+          error instanceof Error ? error.message : "保存失败，请稍后重试。"
+        }`,
+      );
+    }
   };
 
   const handleOpenNotificationSettings = async () => {

@@ -9,6 +9,7 @@ import type {
   AttachmentAssetRecord,
   AppSnapshot,
   AvatarAssetScope,
+  ConversationExportResult,
   ConnectMcpInput,
   ConversationRecord,
   McpCatalogRecord,
@@ -37,6 +38,7 @@ import type {
 import { AppStorage } from "./storage.ts";
 import {
   invokeSingleChatDeepAgent,
+  normalizeProviderErrorMessage,
   testProviderConnection as runProviderConnectionTest,
   validateProviderForSingleChat,
 } from "./deep-agent.ts";
@@ -54,16 +56,18 @@ import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
 import {
+  buildNextHandoffState,
   buildExecutionBatches,
   executeNaturalTeamWorkItem,
   MAX_AGENT_MESSAGES_PER_TURN,
   generateNaturalTeamAgentMessage,
   MAX_TEAM_SUBROUNDS,
   MAX_TEAM_TURN_MESSAGES,
+  normalizeTeamHandoffState,
   planTeamExecution,
+  resolveMentionedMembers,
   selectNaturalTeamSpeakers,
   TEAM_MEMBER_LIMIT,
-  type TeamHandoffState,
   type TeamExecutionPlan,
   type TeamExecutionWorkItem,
   type NaturalTeamAgentMessage,
@@ -109,6 +113,16 @@ function isSafeChildPath(parentPath: string, childPath: string) {
 function trimHeadline(text: string, max = 120) {
   const value = text.trim().replace(/\s+/g, " ");
   return value.length <= max ? value : `${value.slice(0, max)}...`;
+}
+
+function sanitizeExportName(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "conversation";
 }
 
 function summarizeAttachments(attachments: AttachmentAssetRecord[]) {
@@ -172,112 +186,12 @@ function getMcpConfiguredHint(server: McpCatalogRecord) {
   return `${server.name} 已加入本地连接列表。请在扩展页确认本地启动命令后，再点击“保存并检测”。`;
 }
 
-function extractMentionTokens(input: string) {
-  const tokens: string[] = [];
-  const seen = new Set<string>();
-  const pattern = /(?:^|[\s([{（【])[@＠]([^\s@＠,，。.!?！？;；:：)）\]】}]+)/g;
-  for (const match of input.matchAll(pattern)) {
-    const token = match[1]?.trim();
-    if (!token) continue;
-    const key = token.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tokens.push(token);
-  }
-  return tokens;
-}
-
-function normalizeMentionToken(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function resolveMentionedAgents(input: string, agents: AgentRecord[]) {
-  const tokens = extractMentionTokens(input);
-  const matchedAgents: AgentRecord[] = [];
-  const unresolvedTokens: string[] = [];
-  const seenAgentIds = new Set<string>();
-
-  for (const token of tokens) {
-    const normalizedToken = normalizeMentionToken(token);
-    const idWithoutPrefix = normalizedToken.replace(/^agent-/, "");
-    const match =
-      agents.find((agent) => normalizeMentionToken(agent.name) === normalizedToken) ??
-      agents.find((agent) => normalizeMentionToken(agent.id) === normalizedToken) ??
-      agents.find(
-        (agent) => normalizeMentionToken(agent.id).replace(/^agent-/, "") === idWithoutPrefix,
-      );
-    if (!match) {
-      unresolvedTokens.push(token);
-      continue;
-    }
-    if (seenAgentIds.has(match.id)) continue;
-    seenAgentIds.add(match.id);
-    matchedAgents.push(match);
-  }
-
-  return {
-    tokens,
-    matchedAgents,
-    unresolvedTokens,
-  };
-}
-
-function extractAgentMentions(input: string, agents: AgentRecord[]) {
-  return resolveMentionedAgents(input, agents).matchedAgents;
-}
-
 function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
   const members = agents.filter((agent) => team.memberIds.includes(agent.id));
   return (
     members.find((agent) => agent.role.includes("经理") || agent.name === "Planner") ??
     members[0]
   );
-}
-
-function normalizeTeamHandoffState(
-  context: TeamContext,
-  members: AgentRecord[],
-): TeamHandoffState {
-  const memberIds = new Set(members.map((member) => member.id));
-  const raw = context.handoff;
-  const activeAgentId =
-    raw?.activeAgentId && memberIds.has(raw.activeAgentId) ? raw.activeAgentId : null;
-  const lastSpeakerId =
-    raw?.lastSpeakerId && memberIds.has(raw.lastSpeakerId) ? raw.lastSpeakerId : null;
-  const nextAgentIds = (raw?.nextAgentIds ?? []).filter((id) => memberIds.has(id)).slice(0, TEAM_MEMBER_LIMIT);
-
-  return {
-    activeAgentId,
-    lastSpeakerId,
-    nextAgentIds,
-    reason: raw?.reason?.trim() || "等待接棒",
-    revision: typeof raw?.revision === "number" ? raw.revision : 0,
-    updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : Date.now(),
-  };
-}
-
-function buildNextHandoffState(input: {
-  current: TeamHandoffState;
-  members: AgentRecord[];
-  turnMessages: NaturalTeamAgentMessage[];
-  defaultSpeakerId?: string | null;
-  reason: string;
-}) {
-  const memberIds = new Set(input.members.map((member) => member.id));
-  const latest = input.turnMessages.at(-1) ?? null;
-  const nextAgentIds =
-    latest?.mentions.filter((id) => memberIds.has(id) && id !== latest.speaker.id).slice(0, TEAM_MEMBER_LIMIT) ?? [];
-  const activeAgentId = nextAgentIds[0] ?? latest?.speaker.id ?? input.defaultSpeakerId ?? null;
-  const lastSpeakerId = latest?.speaker.id ?? input.current.lastSpeakerId;
-
-  return {
-    activeAgentId,
-    lastSpeakerId: lastSpeakerId && memberIds.has(lastSpeakerId) ? lastSpeakerId : null,
-    nextAgentIds,
-    reason: input.reason,
-    revision: input.current.revision + 1,
-    updatedAt: Date.now(),
-  } satisfies TeamHandoffState;
 }
 
 export class TeamalignedRuntime extends EventEmitter {
@@ -371,8 +285,8 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const slashDirectives = this.resolveSlashDirectives(conversation, payload.input);
 
-    const mentionResolution = resolveMentionedAgents(payload.input, snapshot.agents);
-    const mentionedAgentIds = mentionResolution.matchedAgents.map((agent) => agent.id);
+    const mentionResolution = resolveMentionedMembers(payload.input, snapshot.agents);
+    const mentionedAgentIds = mentionResolution.matchedIds;
 
     this.storage.addMessage({
       conversationId: payload.conversationId,
@@ -408,7 +322,7 @@ export class TeamalignedRuntime extends EventEmitter {
       const team = snapshot.teams.find((item) => item.id === conversation.targetId);
       const memberIds = new Set(team?.memberIds ?? []);
       const explicitMentionIds = mentionedAgentIds.filter((id) => memberIds.has(id));
-      const outOfTeamMentions = mentionResolution.matchedAgents
+      const outOfTeamMentions = mentionResolution.matchedMembers
         .filter((agent) => !memberIds.has(agent.id))
         .map((agent) => `@${agent.name}`);
       const unresolvedMentions = mentionResolution.unresolvedTokens.map((token) => `@${token}`);
@@ -482,6 +396,7 @@ export class TeamalignedRuntime extends EventEmitter {
       if (controller?.timer) clearTimeout(controller.timer);
       if (controller?.childProcess) controller.childProcess.kill("SIGTERM");
       this.activeRuns.delete(latest.id);
+      this.finalizeStreamingMessagesForRun(payload.conversationId, latest.id, "cancelled");
       this.storage.updateRun(latest.id, { status: "cancelled" });
       this.storage.cancelPendingRunSteps(latest.id);
       this.addRunMessage(payload.conversationId, latest.id, "任务已取消。", "system");
@@ -787,6 +702,31 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async updateProvider(payload: UpdateProviderInput) {
+    const existing = this.storage.listProviders().find((provider) => provider.id === payload.id) ?? null;
+    if (!existing) {
+      throw new Error(`未找到 provider：${payload.id}`);
+    }
+
+    const mergedProvider: ProviderConfig = {
+      ...existing,
+      ...payload,
+      id: payload.id,
+    };
+    if (mergedProvider.isActive) {
+      const testResult = await runProviderConnectionTest({
+        id: mergedProvider.id,
+        label: mergedProvider.label,
+        baseUrl: mergedProvider.baseUrl,
+        apiKey: mergedProvider.apiKey,
+        defaultModel: mergedProvider.defaultModel,
+        supportsToolCalling: mergedProvider.supportsToolCalling,
+        supportsStreaming: mergedProvider.supportsStreaming,
+      });
+      if (!testResult.ok) {
+        throw new Error(testResult.message);
+      }
+    }
+
     this.storage.updateProvider(payload);
     this.emitSnapshot();
     return this.getSnapshot();
@@ -806,6 +746,90 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async saveAttachmentAsset(input: SaveAttachmentAssetInput) {
     return this.storage.saveAttachmentAsset(input);
+  }
+
+  async exportConversationData(conversationId: string): Promise<ConversationExportResult> {
+    const snapshot = this.storage.getSnapshot();
+    const conversation = snapshot.conversations.find((item) => item.id === conversationId);
+    if (!conversation) {
+      throw new Error(`未找到会话：${conversationId}`);
+    }
+
+    const messages = snapshot.messages[conversationId] ?? [];
+    const runs = snapshot.runs
+      .filter((run) => run.conversationId === conversationId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const runIdSet = new Set(runs.map((run) => run.id));
+    const runSteps = snapshot.runSteps
+      .filter((step) => step.conversationId === conversationId || runIdSet.has(step.runId))
+      .sort((a, b) =>
+        a.runId === b.runId ? a.stepIndex - b.stepIndex : a.runId.localeCompare(b.runId, "en"),
+      );
+    const artifacts = snapshot.artifacts
+      .filter(
+        (artifact) =>
+          artifact.conversationId === conversationId ||
+          (artifact.runId !== null && runIdSet.has(artifact.runId)),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const attachments = snapshot.attachments
+      .filter((attachment) => attachment.conversationId === conversationId || (attachment.runId && runIdSet.has(attachment.runId)))
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const toolInvocations = snapshot.toolInvocations
+      .filter(
+        (invocation) =>
+          invocation.conversationId === conversationId ||
+          (invocation.runId !== null && runIdSet.has(invocation.runId)),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    const exportedAt = Date.now();
+    const exportDir = join(this.storage.rootDir, "exports", conversationId);
+    mkdirSync(exportDir, { recursive: true });
+    const timestamp = new Date(exportedAt).toISOString().replace(/[:.]/g, "-");
+    const title = sanitizeExportName(conversation.title);
+    const filePath = join(exportDir, `${title}-${timestamp}.json`);
+
+    const targetWorkspacePath =
+      conversation.kind === "agent"
+        ? snapshot.agents.find((agent) => agent.id === conversation.targetId)?.workspacePath ?? null
+        : snapshot.teams.find((team) => team.id === conversation.targetId)?.workspacePath ?? null;
+
+    const transcriptPaths = this.storage.getConversationTranscriptPaths(conversationId);
+    const exportPayload = {
+      schemaVersion: 1,
+      exportedAt,
+      rootDir: this.storage.rootDir,
+      conversation,
+      workspacePath: targetWorkspacePath,
+      transcriptPaths,
+      messageCount: messages.length,
+      runCount: runs.length,
+      runStepCount: runSteps.length,
+      artifactCount: artifacts.length,
+      attachmentCount: attachments.length,
+      toolInvocationCount: toolInvocations.length,
+      messages,
+      runs,
+      runSteps,
+      artifacts,
+      attachments,
+      toolInvocations,
+    };
+
+    writeFileSync(filePath, JSON.stringify(exportPayload, null, 2), "utf8");
+
+    return {
+      conversationId,
+      filePath,
+      exportedAt,
+      messageCount: messages.length,
+      runCount: runs.length,
+      runStepCount: runSteps.length,
+      artifactCount: artifacts.length,
+      attachmentCount: attachments.length,
+      toolInvocationCount: toolInvocations.length,
+    };
   }
 
   private createToolInvocationObserver(conversationId: string, runId: string) {
@@ -853,6 +877,7 @@ export class TeamalignedRuntime extends EventEmitter {
   }) {
     const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
     let announcedContextLookup = false;
+    const announcedToolStarts = new Set<string>();
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
       await baseObserver(event);
 
@@ -885,22 +910,11 @@ export class TeamalignedRuntime extends EventEmitter {
         if (!content) {
           return;
         }
-        this.storage.addMessage({
-          conversationId: input.conversationId,
-          senderId: input.speaker.id,
-          senderName: input.speaker.name,
-          senderKind: "agent",
-          messageType: "agent",
-          visibility: "public",
-          content,
-          mentions: [],
-          runId: input.runId,
-          metadata: {
-            toolProgress: true,
-            toolName,
-          },
-          createdAt: Date.now(),
-        });
+        const dedupeKey = `${toolName}:${sourceName}:${isLocalTool ? "local" : "remote"}`;
+        if (announcedToolStarts.has(dedupeKey) && toolName !== "run_workspace_command") {
+          return;
+        }
+        announcedToolStarts.add(dedupeKey);
         input.onUpdate?.(
           isLocalTool
             ? `${input.speaker.name} 正在执行 ${toolName}`
@@ -934,23 +948,6 @@ export class TeamalignedRuntime extends EventEmitter {
         if (!content) {
           return;
         }
-        this.storage.addMessage({
-          conversationId: input.conversationId,
-          senderId: input.speaker.id,
-          senderName: input.speaker.name,
-          senderKind: "agent",
-          messageType: "agent",
-          visibility: "public",
-          content,
-          mentions: [],
-          runId: input.runId,
-          metadata: {
-            toolProgress: true,
-            toolName,
-            completed: true,
-          },
-          createdAt: Date.now(),
-        });
         input.onUpdate?.(
           isLocalTool
             ? `${input.speaker.name} 已完成 ${toolName}`
@@ -966,25 +963,6 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       if (event.phase === "error") {
-        this.storage.addMessage({
-          conversationId: input.conversationId,
-          senderId: input.speaker.id,
-          senderName: input.speaker.name,
-          senderKind: "agent",
-          messageType: "notification",
-          visibility: "public",
-          content: isLocalTool
-            ? `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`
-            : `${input.speaker.name}：我在 ${sourceName} 的 ${toolName} 这一步遇到了问题：${event.error}`,
-          mentions: ["user"],
-          runId: input.runId,
-          metadata: {
-            toolProgress: true,
-            toolName,
-            failed: true,
-          },
-          createdAt: Date.now(),
-        });
         input.onUpdate?.(
           isLocalTool
             ? `${input.speaker.name} 在 ${toolName} 失败：${event.error}`
@@ -1359,67 +1337,79 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: "调用真实模型",
         execute: async () => {
-          const response = await invokeSingleChatDeepAgent({
-            sessions: this.singleChatSessions,
-            conversationId: conversation.id,
-            provider: provider!,
-            agent,
-            profile: snapshot.profile,
-            activeSkill: activeSkillLabel,
-            activeSkillDefinition,
-            mcpServers: availableMcpServers,
-            mcpConnections: availableMcpConnections,
-            workspacePath,
-            history: this.storage.listMessages(conversation.id),
-            latestInput: input,
-            attachments,
-            onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
-            additionalTools: runtimeTools.tools,
-            runtimeToolSummary: runtimeTools.summary,
-            onTextStream: async (aggregatedText) => {
-              const currentRun = this.storage.getRun(runId);
-              if (!currentRun || currentRun.status === "cancelled") return;
+          let response;
+          try {
+            response = await invokeSingleChatDeepAgent({
+              sessions: this.singleChatSessions,
+              conversationId: conversation.id,
+              provider: provider!,
+              agent,
+              profile: snapshot.profile,
+              activeSkill: activeSkillLabel,
+              activeSkillDefinition,
+              mcpServers: availableMcpServers,
+              mcpConnections: availableMcpConnections,
+              workspacePath,
+              history: this.storage.listMessages(conversation.id),
+              latestInput: input,
+              attachments,
+              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              additionalTools: runtimeTools.tools,
+              runtimeToolSummary: runtimeTools.summary,
+              onTextStream: async (aggregatedText) => {
+                const currentRun = this.storage.getRun(runId);
+                if (!currentRun || currentRun.status === "cancelled") return;
 
-              const existingMessageId = currentRun.metadata?.streamMessageId;
-              const baseMetadata = {
-                skill: activeSkillRecord?.id ?? activeSkill,
-                skillLabel: activeSkillLabel,
-                streaming: true,
-              };
+                const existingMessageId = currentRun.metadata?.streamMessageId;
+                const baseMetadata = {
+                  skill: activeSkillRecord?.id ?? activeSkill,
+                  skillLabel: activeSkillLabel,
+                  streaming: true,
+                };
 
-              if (typeof existingMessageId === "string") {
-                this.storage.updateMessage(existingMessageId, {
-                  content: aggregatedText,
-                  metadata: baseMetadata,
-                });
-              } else {
-                const message = this.storage.addMessage(
-                  {
-                    conversationId: conversation.id,
-                    senderId: agent.id,
-                    senderName: agent.name,
-                    senderKind: "agent",
-                    messageType: "agent",
-                    visibility: "public",
+                if (typeof existingMessageId === "string") {
+                  this.storage.updateMessage(existingMessageId, {
                     content: aggregatedText,
-                    mentions: ["user"],
-                    runId,
                     metadata: baseMetadata,
-                    createdAt: Date.now(),
-                  },
-                  { skipTranscript: true },
-                );
-                this.storage.updateRun(runId, {
-                  metadata: {
-                    ...(currentRun.metadata ?? {}),
-                    streamMessageId: message.id,
-                  },
-                });
-              }
+                  });
+                } else {
+                  const message = this.storage.addMessage(
+                    {
+                      conversationId: conversation.id,
+                      senderId: agent.id,
+                      senderName: agent.name,
+                      senderKind: "agent",
+                      messageType: "agent",
+                      visibility: "public",
+                      content: aggregatedText,
+                      mentions: ["user"],
+                      runId,
+                      metadata: baseMetadata,
+                      createdAt: Date.now(),
+                    },
+                    { skipTranscript: true },
+                  );
+                  this.storage.updateRun(runId, {
+                    metadata: {
+                      ...(currentRun.metadata ?? {}),
+                      streamMessageId: message.id,
+                    },
+                  });
+                }
 
-              this.emitSnapshot();
-            },
-          });
+                this.emitSnapshot();
+              },
+            });
+          } catch (error) {
+            throw new Error(
+              normalizeProviderErrorMessage(error, {
+                id: provider!.id,
+                label: provider!.label,
+                baseUrl: provider!.baseUrl,
+                defaultModel: provider!.defaultModel,
+              }),
+            );
+          }
 
           if (this.storage.getRun(runId)?.status === "cancelled") {
             return;
@@ -1548,8 +1538,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const explicitMentions =
       inputMentionIds.length > 0
         ? inputMentionIds.filter((id) => memberIds.has(id)).slice(0, TEAM_MEMBER_LIMIT)
-        : extractAgentMentions(input, members)
-            .map((agent) => agent.id)
+        : resolveMentionedMembers(input, members).matchedIds
             .filter((id) => memberIds.has(id))
             .slice(0, TEAM_MEMBER_LIMIT);
     const provider = this.resolveActiveProvider(snapshot);
@@ -2607,6 +2596,7 @@ export class TeamalignedRuntime extends EventEmitter {
         errorText: error instanceof Error ? error.message : String(error),
       });
       this.storage.cancelPendingRunSteps(runId);
+      this.finalizeStreamingMessagesForRun(run.conversationId, runId, "failed");
       this.storage.updateRun(runId, {
         status: "failed",
         metadata: {
@@ -2870,6 +2860,31 @@ export class TeamalignedRuntime extends EventEmitter {
       actorName: input.actorName ?? null,
       ...(input.metadata ?? {}),
     });
+  }
+
+  private finalizeStreamingMessagesForRun(
+    conversationId: string,
+    runId: string,
+    reason: "failed" | "cancelled",
+  ) {
+    const messages = this.storage
+      .listMessages(conversationId)
+      .filter(
+        (message) =>
+          message.runId === runId &&
+          message.visibility === "public" &&
+          message.senderKind === "agent" &&
+          message.metadata?.streaming === true,
+      );
+    for (const message of messages) {
+      this.storage.updateMessage(message.id, {
+        metadata: {
+          ...(message.metadata ?? {}),
+          streaming: false,
+          interrupted: reason,
+        },
+      });
+    }
   }
 
   private getArtifactDir(workspacePath: string) {

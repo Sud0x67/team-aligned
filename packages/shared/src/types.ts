@@ -477,6 +477,18 @@ export interface SaveAttachmentAssetInput {
   fileName: string;
 }
 
+export interface ConversationExportResult {
+  conversationId: string;
+  filePath: string;
+  exportedAt: number;
+  messageCount: number;
+  runCount: number;
+  runStepCount: number;
+  artifactCount: number;
+  attachmentCount: number;
+  toolInvocationCount: number;
+}
+
 export interface TeamalignedApi {
   bootstrap: () => Promise<AppSnapshot>;
   sendInput: (payload: SendInputPayload) => Promise<AppSnapshot>;
@@ -505,6 +517,7 @@ export interface TeamalignedApi {
   ) => Promise<ProviderConnectionTestResult>;
   saveAvatarAsset: (payload: SaveAvatarAssetInput) => Promise<string>;
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
+  exportConversationData: (conversationId: string) => Promise<ConversationExportResult>;
   markNotificationsRead: () => Promise<AppSnapshot>;
   markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
   openNotificationSettings: () => Promise<boolean>;

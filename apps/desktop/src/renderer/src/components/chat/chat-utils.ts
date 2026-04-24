@@ -10,7 +10,7 @@ export function getLatestActiveRun(runs: RunRecord[], conversationId: string) {
     .filter(
       (run) =>
         run.conversationId === conversationId &&
-        !["completed", "failed", "cancelled"].includes(run.status),
+        ["queued", "running", "pausing", "resuming"].includes(run.status),
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
 }

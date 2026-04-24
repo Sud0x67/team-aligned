@@ -3,6 +3,7 @@ import { commandSuggestions } from "@shared";
 import type {
   AppSnapshot,
   ConnectMcpInput,
+  ConversationExportResult,
   CreateAgentInput,
   CreateTeamInput,
   ProviderConnectionTestInput,
@@ -46,6 +47,7 @@ type AppStore = AppSnapshot & {
   updateProfile: (payload: UpdateProfileInput) => Promise<void>;
   updateProvider: (payload: UpdateProviderInput) => Promise<void>;
   testProviderConnection: (payload: ProviderConnectionTestInput) => Promise<ProviderConnectionTestResult>;
+  exportConversationData: (conversationId: string) => Promise<ConversationExportResult>;
   markNotificationsRead: () => Promise<void>;
   markConversationRead: (conversationId: string) => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
@@ -168,6 +170,7 @@ export const useAppStore = create<AppStore>((set) => {
     updateProvider: async (payload) =>
       runSnapshotAction(() => window.teamaligned.updateProvider(payload)),
     testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
+    exportConversationData: (conversationId) => window.teamaligned.exportConversationData(conversationId),
     markNotificationsRead: async () => {
       set({ notifications: [] });
       await runSnapshotAction(() => window.teamaligned.markNotificationsRead());

@@ -1,10 +1,12 @@
 import {
+  Check,
   BarChart3,
   Box,
   ChevronRight,
   FolderOpen,
   Hammer,
   Info,
+  LoaderCircle,
 } from "lucide-react";
 import type {
   ConversationKind,
@@ -71,6 +73,8 @@ export function ChatConversationSidebar({
   run,
   toolInvocations,
   onOpenWorkspace,
+  onExportConversation,
+  exportState,
 }: {
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
@@ -82,6 +86,11 @@ export function ChatConversationSidebar({
   run: RunRecord | null;
   toolInvocations: ToolInvocationRecord[];
   onOpenWorkspace: (workspacePath: string) => void;
+  onExportConversation: () => Promise<void>;
+  exportState: {
+    status: "idle" | "exporting" | "success" | "error";
+    message: string | null;
+  };
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -150,18 +159,51 @@ export function ChatConversationSidebar({
               </p>
             </div>
             {workspacePath ? (
-              <button
-                type="button"
-                onClick={() => onOpenWorkspace(workspacePath)}
-                className="shrink-0 rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] font-medium text-[var(--foreground)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] hover:text-[var(--primary)]"
-              >
-                {t.chat("openInFinder")}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenWorkspace(workspacePath)}
+                  className="shrink-0 rounded-full bg-[var(--muted)] px-2.5 py-1 text-[11px] font-medium text-[var(--foreground)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] hover:text-[var(--primary)]"
+                >
+                  {t.chat("openInFinder")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onExportConversation()}
+                  disabled={exportState.status === "exporting"}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-muted)] px-2.5 py-1 text-[11px] font-medium text-[var(--foreground)] transition hover:border-[color-mix(in_srgb,var(--primary)_22%,transparent)] hover:text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {exportState.status === "exporting" ? (
+                    <>
+                      <LoaderCircle className="h-3 w-3 animate-spin" />
+                      {t.chat("exportingConversation")}
+                    </>
+                  ) : (
+                    t.chat("exportConversation")
+                  )}
+                </button>
+              </div>
             ) : null}
           </div>
           <p className="break-all text-xs leading-5 text-[var(--muted-foreground)]">
             {workspacePath ? trimMiddle(workspacePath, 58) : t.chat("noWorkspace")}
           </p>
+          {exportState.message ? (
+            <p
+              className={`mt-2 flex items-start gap-1 text-xs leading-5 ${
+                exportState.status === "error"
+                  ? "text-rose-600"
+                  : "text-[var(--muted-foreground)]"
+              }`}
+            >
+              {exportState.status === "success" ? (
+                <Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
+              ) : null}
+              <span className="break-all">
+                {trimMiddle(exportState.message, 96)}
+              </span>
+            </p>
+          ) : null}
         </section>
 
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">

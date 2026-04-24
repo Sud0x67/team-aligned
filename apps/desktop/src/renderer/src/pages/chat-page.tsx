@@ -28,6 +28,7 @@ export function ChatPage() {
     sendInput,
     controlRun,
     markConversationRead,
+    exportConversationData,
     openWorkspace,
     settings,
   } = useAppStore();
@@ -39,6 +40,10 @@ export function ChatPage() {
   const [search, setSearch] = useState("");
   const [internalVisible, setInternalVisible] = useState<Record<string, boolean>>({});
   const [conversationInfoExpanded, setConversationInfoExpanded] = useState(false);
+  const [conversationExportState, setConversationExportState] = useState<{
+    status: "idle" | "exporting" | "success" | "error";
+    message: string | null;
+  }>({ status: "idle", message: null });
 
   useEffect(() => {
     if (!requestedConversationId) return;
@@ -81,8 +86,22 @@ export function ChatPage() {
     void markConversationRead(activeConversation.id);
   }, [activeConversation, markConversationRead]);
 
+  useEffect(() => {
+    setConversationExportState({ status: "idle", message: null });
+  }, [activeConversationId]);
+
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
   const isConversationBusy = Boolean(activeRun);
+  const hasStreamingMessage = useMemo(() => {
+    if (!activeRun) return false;
+    return activeMessages.some(
+      (message) =>
+        message.visibility === "public" &&
+        message.senderKind === "agent" &&
+        message.metadata?.streaming === true &&
+        (message.runId === activeRun.id || message.createdAt >= activeRun.createdAt),
+    );
+  }, [activeMessages, activeRun]);
   const latestConversationRun = useMemo(() => {
     if (!activeConversation) return null;
     return [...runs]
@@ -102,6 +121,7 @@ export function ChatPage() {
 
   const pendingSystemMessage = useMemo(() => {
     if (!activeRun) return null;
+    if (hasStreamingMessage) return null;
 
     const runMessages = activeMessages.filter((message) => message.runId === activeRun.id);
     const latestSystem = [...runMessages]
@@ -139,12 +159,61 @@ export function ChatPage() {
 
     const latestSystemStage =
       typeof latestSystem.metadata?.stage === "string" ? latestSystem.metadata.stage : null;
-    if (latestSystemStage === "execution_waiting" && latestSystem.createdAt >= latestVisibleAgent.createdAt) {
+    const shouldKeepShowing = latestSystemStage
+      ? [
+          "handoff",
+          "selection",
+          "execution",
+          "execution_waiting",
+          "execution_batch",
+          "execution_progress",
+          "tool_start",
+          "tool_success",
+          "tool_error",
+        ].includes(latestSystemStage)
+      : true;
+    if (shouldKeepShowing && latestSystem.createdAt >= latestVisibleAgent.createdAt) {
       return latestSystem.content;
     }
 
     return null;
-  }, [activeMessages, activeRun, t]);
+  }, [activeMessages, activeRun, hasStreamingMessage, t]);
+
+  const pendingSystemUpdates = useMemo(() => {
+    if (!activeRun || activeConversation?.kind !== "team") {
+      return [];
+    }
+
+    const isRunActive = !["completed", "failed", "cancelled"].includes(activeRun.status);
+    if (!isRunActive) {
+      return [];
+    }
+
+    const updates = activeMessages
+      .filter(
+        (message) =>
+          message.runId === activeRun.id &&
+          message.visibility === "system" &&
+          message.metadata?.teamUpdate === true,
+      )
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map((message) => message.content.trim())
+      .filter((content) => content.length > 0);
+
+    const deduped: string[] = [];
+    for (const content of updates) {
+      if (deduped.at(-1) === content) continue;
+      deduped.push(content);
+    }
+
+    const tail = deduped.slice(-4);
+    if (!pendingSystemMessage) {
+      return tail;
+    }
+
+    const normalizedPending = pendingSystemMessage.trim();
+    return tail.filter((item, index) => !(item === normalizedPending && index === tail.length - 1));
+  }, [activeConversation?.kind, activeMessages, activeRun, pendingSystemMessage]);
 
   const conversationTokenUsage = useMemo(() => {
     if (!activeConversation) {
@@ -311,6 +380,26 @@ export function ChatPage() {
     await controlRun({ conversationId: activeConversation.id, action: "cancel" });
   };
 
+  const handleExportConversation = async () => {
+    if (!activeConversation || conversationExportState.status === "exporting") return;
+    setConversationExportState({ status: "exporting", message: null });
+    try {
+      const result = await exportConversationData(activeConversation.id);
+      setConversationExportState({
+        status: "success",
+        message: `${t.chat("conversationExported")} ${result.filePath}`,
+      });
+    } catch (error) {
+      setConversationExportState({
+        status: "error",
+        message:
+          error instanceof Error && error.message.trim().length > 0
+            ? `${t.chat("conversationExportFailed")} ${error.message}`
+            : t.chat("conversationExportFailed"),
+      });
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0 bg-[var(--background)]">
       <aside className="w-[300px] shrink-0 border-r border-[var(--border)] bg-[var(--card)]">
@@ -400,6 +489,7 @@ export function ChatPage() {
                 run={activeRun}
                 showInternalMessages={showInternal}
                 pendingSystemMessage={pendingSystemMessage}
+                pendingSystemUpdates={pendingSystemUpdates}
                 pendingActor={pendingActor}
                 showMentions={activeConversation.kind === "team"}
                 profile={profile}
@@ -446,6 +536,8 @@ export function ChatPage() {
           run={detailRun}
           toolInvocations={conversationToolInvocations}
           onOpenWorkspace={(workspacePath) => void openWorkspace(workspacePath)}
+          onExportConversation={handleExportConversation}
+          exportState={conversationExportState}
         />
       ) : null}
     </div>

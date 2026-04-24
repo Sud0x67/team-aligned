@@ -14,6 +14,7 @@ import type {
 import {
   createProviderModel,
   extractAgentText,
+  normalizeProviderErrorMessage,
   normalizeMessageContent,
 } from "./deep-agent.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
@@ -70,6 +71,13 @@ export type TeamExecutionPlan = {
   nextPhase: string;
   decision: string;
   workItems: TeamExecutionWorkItem[];
+};
+
+export type MentionResolution<T extends { id: string; name: string }> = {
+  tokens: string[];
+  matchedMembers: T[];
+  matchedIds: string[];
+  unresolvedTokens: string[];
 };
 
 const executionPlanSchema = z.object({
@@ -246,7 +254,7 @@ function applyHandoffPreference(input: {
 function extractMentionTokens(input: string) {
   const tokens: string[] = [];
   const seen = new Set<string>();
-  const pattern = /(?:^|[\s([{（【])[@＠]([^\s@＠,，。.!?！？;；:：)）\]】}]+)/g;
+  const pattern = /(?:^|[\s([{（【,，。.!?！？;；:：])[@＠]([^\s@＠,，。.!?！？;；:：)）\]】}]+)/g;
   for (const match of input.matchAll(pattern)) {
     const token = match[1]?.trim();
     if (!token) continue;
@@ -262,9 +270,25 @@ function normalizeMentionToken(value: string) {
   return value.trim().toLowerCase();
 }
 
-function resolveMentionedMembers(content: string, members: AgentRecord[]) {
+function isUserMentionToken(token: string, profile: Pick<UserProfile, "name">) {
+  const normalized = normalizeMentionToken(token);
+  const profileName = normalizeMentionToken(profile.name || "");
+  return (
+    normalized === "user" ||
+    normalized === "你" ||
+    normalized === "用户" ||
+    (profileName.length > 0 && normalized === profileName)
+  );
+}
+
+export function resolveMentionedMembers<T extends { id: string; name: string }>(
+  content: string,
+  members: T[],
+): MentionResolution<T> {
   const tokens = extractMentionTokens(content);
+  const matchedMembers: T[] = [];
   const matchedIds: string[] = [];
+  const unresolvedTokens: string[] = [];
   const matchedSet = new Set<string>();
 
   for (const token of tokens) {
@@ -276,18 +300,85 @@ function resolveMentionedMembers(content: string, members: AgentRecord[]) {
       members.find(
         (member) => normalizeMentionToken(member.id).replace(/^agent-/, "") === idWithoutPrefix,
       );
-    if (!match || matchedSet.has(match.id)) {
+    if (!match) {
+      unresolvedTokens.push(token);
+      continue;
+    }
+    if (matchedSet.has(match.id)) {
       continue;
     }
     matchedSet.add(match.id);
+    matchedMembers.push(match);
     matchedIds.push(match.id);
   }
 
-  return matchedIds;
+  return {
+    tokens,
+    matchedMembers,
+    matchedIds,
+    unresolvedTokens,
+  } satisfies MentionResolution<T>;
 }
 
 function extractMentionedAgentIds(content: string, members: AgentRecord[]) {
-  return resolveMentionedMembers(content, members);
+  return resolveMentionedMembers(content, members).matchedIds;
+}
+
+export function resolveTeamMessageMentions(
+  content: string,
+  members: AgentRecord[],
+  profile: Pick<UserProfile, "name">,
+) {
+  const agentMentionIds = extractMentionedAgentIds(content, members);
+  const hasUserMention = extractMentionTokens(content).some((token) => isUserMentionToken(token, profile));
+  return Array.from(new Set([...agentMentionIds, ...(hasUserMention ? (["user"] as const) : [])]));
+}
+
+export function normalizeTeamHandoffState(context: TeamContext, members: AgentRecord[]): TeamHandoffState {
+  const memberIds = new Set(members.map((member) => member.id));
+  const raw = context.handoff;
+  const activeAgentId =
+    raw?.activeAgentId && memberIds.has(raw.activeAgentId) ? raw.activeAgentId : null;
+  const lastSpeakerId =
+    raw?.lastSpeakerId && memberIds.has(raw.lastSpeakerId) ? raw.lastSpeakerId : null;
+  const nextAgentIds = (raw?.nextAgentIds ?? [])
+    .filter((id) => memberIds.has(id))
+    .slice(0, TEAM_MEMBER_LIMIT);
+
+  return {
+    activeAgentId,
+    lastSpeakerId,
+    nextAgentIds,
+    reason: raw?.reason?.trim() || "等待接棒",
+    revision: typeof raw?.revision === "number" ? raw.revision : 0,
+    updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : Date.now(),
+  };
+}
+
+export function buildNextHandoffState(input: {
+  current: TeamHandoffState;
+  members: AgentRecord[];
+  turnMessages: NaturalTeamAgentMessage[];
+  defaultSpeakerId?: string | null;
+  reason: string;
+}) {
+  const memberIds = new Set(input.members.map((member) => member.id));
+  const latest = input.turnMessages.at(-1) ?? null;
+  const nextAgentIds =
+    latest?.mentions
+      .filter((id) => memberIds.has(id) && id !== latest.speaker.id)
+      .slice(0, TEAM_MEMBER_LIMIT) ?? [];
+  const activeAgentId = nextAgentIds[0] ?? latest?.speaker.id ?? input.defaultSpeakerId ?? null;
+  const lastSpeakerId = latest?.speaker.id ?? input.current.lastSpeakerId;
+
+  return {
+    activeAgentId,
+    lastSpeakerId: lastSpeakerId && memberIds.has(lastSpeakerId) ? lastSpeakerId : null,
+    nextAgentIds,
+    reason: input.reason,
+    revision: input.current.revision + 1,
+    updatedAt: Date.now(),
+  } satisfies TeamHandoffState;
 }
 
 function normalizeTargetPath(value: string) {
@@ -842,16 +933,22 @@ export async function executeNaturalTeamWorkItem(input: {
     });
     return result;
   } catch (error) {
+    const normalizedError = normalizeProviderErrorMessage(error, {
+      id: input.provider.id,
+      label: input.provider.label,
+      baseUrl: input.provider.baseUrl,
+      defaultModel: input.provider.defaultModel,
+    });
     await input.onUpdate?.({
       phase: "failed",
       owner: input.workItem.owner,
       summary: input.workItem.summary,
       content:
-        error instanceof Error
-          ? `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到问题：${error.message}`
+        normalizedError
+          ? `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到问题：${normalizedError}`
           : `${input.workItem.owner.name}：我处理 ${input.workItem.summary} 时遇到未知问题。`,
     });
-    throw error;
+    throw new Error(normalizedError);
   }
 }
 
@@ -940,11 +1037,9 @@ export async function generateNaturalTeamAgentMessage(input: {
   }
 
   const memberIds = new Set(input.members.map((agent) => agent.id));
-  const mentionIds = Array.from(
-    new Set([
-      ...extractMentionedAgentIds(content, input.members),
-    ]),
-  ).filter((id) => id !== input.speaker.id);
+  const mentionIds = resolveTeamMessageMentions(content, input.members, input.profile).filter(
+    (id) => id !== input.speaker.id,
+  );
 
   return {
     speaker: input.speaker,

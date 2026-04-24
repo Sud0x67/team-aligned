@@ -1,5 +1,5 @@
 import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,45 +23,52 @@ import type {
   UpdateSettingsInput,
   UpdateTeamMcpsInput,
 } from "@shared";
+import { evaluateNotificationDispatch, type RuntimeNotificationChannel } from "./notification-policy.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
+const isNotificationDebug = isDev || process.env.TA_NOTIFY_DEBUG === "1";
+const notificationDebugLogPath = join(homedir(), ".teamaligned", "logs", "notification-dispatch.log");
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
 const activeSystemNotifications = new Set<Notification>();
 
-type RuntimeNotificationChannel = "agent_message" | "mention" | "group_message" | null;
+function appendNotificationDebug(event: string, payload: Record<string, unknown>) {
+  if (!isNotificationDebug) return;
+  const line = `${new Date().toISOString()} ${event} ${JSON.stringify(payload)}\n`;
+  try {
+    mkdirSync(dirname(notificationDebugLogPath), { recursive: true });
+    appendFileSync(notificationDebugLogPath, line, "utf8");
+  } catch {
+    // Keep notification flow resilient even when debug file is unavailable.
+  }
+}
 
 function canDispatchSystemNotification(channel: RuntimeNotificationChannel, notification: NotificationRecord) {
-  if (!channel || !runtime) return false;
-  if (!Notification.isSupported()) return false;
-  if (!notification.relatedConversationId) return false;
+  if (!runtime) return false;
 
   const snapshot = runtime.getSnapshot();
-  const { settings } = snapshot;
   const window = mainWindow;
   const windowVisible = window
     ? !window.isDestroyed() && window.isVisible() && !window.isMinimized() && window.isFocused()
     : false;
-
-  if (windowVisible) {
-    return false;
-  }
-
-  if (channel === "agent_message") {
-    return settings.notifyAgentComplete;
-  }
-
-  if (channel === "mention") {
-    return settings.notifyMention;
-  }
-
-  if (channel === "group_message") {
-    return settings.notifyGroup;
-  }
-
-  return false;
+  const decision = evaluateNotificationDispatch({
+    channel,
+    notification,
+    settings: snapshot.settings,
+    isNotificationSupported: Notification.isSupported(),
+    windowVisible,
+  });
+  const dispatchPayload = {
+    channel,
+    decision: decision.reason,
+    notificationId: notification.id,
+    conversationId: notification.relatedConversationId,
+  };
+  appendNotificationDebug("notification:dispatch", dispatchPayload);
+  if (isNotificationDebug) console.info("[notification:dispatch]", dispatchPayload);
+  return decision.allowed;
 }
 
 function dispatchSystemNotification(input: {
@@ -89,12 +96,18 @@ function dispatchSystemNotification(input: {
   };
 
   systemNotification.on("show", () => {
+    const showPayload = { notificationId: input.notification.id, conversationId };
+    appendNotificationDebug("notification:show", showPayload);
+    if (isNotificationDebug) console.info("[notification:show]", showPayload);
     if (process.platform === "darwin") {
       app.dock?.bounce("informational");
     }
   });
 
   systemNotification.on("click", async () => {
+    const clickPayload = { notificationId: input.notification.id, conversationId };
+    appendNotificationDebug("notification:click", clickPayload);
+    if (isNotificationDebug) console.info("[notification:click]", clickPayload);
     if (!mainWindow || mainWindow.isDestroyed()) {
       await createWindow();
     }
@@ -120,7 +133,12 @@ function dispatchSystemNotification(input: {
   });
 
   systemNotification.on("close", cleanup);
-  systemNotification.on("failed", cleanup);
+  systemNotification.on("failed", (_event, error) => {
+    const failPayload = { notificationId: input.notification.id, conversationId, error };
+    appendNotificationDebug("notification:failed", failPayload);
+    if (isNotificationDebug) console.warn("[notification:failed]", failPayload);
+    cleanup();
+  });
 
   systemNotification.show();
 }
@@ -375,6 +393,9 @@ app.whenReady().then(async () => {
     "teamaligned:save-attachment-asset",
     async (_event, payload: SaveAttachmentAssetInput) => runtime?.saveAttachmentAsset(payload),
   );
+  ipcMain.handle("teamaligned:export-conversation-data", async (_event, conversationId: string) =>
+    runtime?.exportConversationData(conversationId),
+  );
   ipcMain.handle("teamaligned:mark-notifications-read", async () => runtime?.markNotificationsRead());
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
     runtime?.markConversationRead(conversationId),
@@ -382,8 +403,19 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:open-notification-settings", async () => {
     try {
       if (process.platform === "darwin") {
-        await shell.openExternal("x-apple.systempreferences:com.apple.preference.notifications");
-        return true;
+        const macNotificationUris = [
+          "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+          "x-apple.systempreferences:com.apple.preference.notifications",
+        ];
+        for (const uri of macNotificationUris) {
+          try {
+            await shell.openExternal(uri);
+            return true;
+          } catch {
+            continue;
+          }
+        }
+        return false;
       }
 
       if (process.platform === "win32") {

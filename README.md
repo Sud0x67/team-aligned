@@ -39,12 +39,16 @@
 - [产品定位](./docs/product.md)
 - [系统架构](./docs/architecture.md)
 - [Beta 计划](./docs/beta-plan.md)
+- [Beta 发布执行计划](./docs/beta-release-execution-plan.md)
+- [Beta 导出与备份](./docs/beta-backup-and-export.md)
+- [Beta 发布 Checklist](./docs/beta-release-checklist.md)
 - [维护指南](./docs/maintenance-guidelines.md)
 - [运行时与存储](./docs/runtime-and-storage.md)
 - [界面与体验](./docs/ui-and-experience.md)
 - [聊天交互与编排规范](./docs/chat-interaction-and-orchestration.md)
 - [群组运行时设计](./docs/group-runtime-design.md)
 - [群聊执行模式](./docs/group-execution-mode.md)
+- [第 3 期验收清单（通知与 Provider）](./docs/phase-3-notification-provider-acceptance.md)
 - [MCP Registry 设计](./docs/mcp-registry-design.md)
 - [原型对齐说明](./docs/prototype-spec.md)
 - [MVP 计划](./docs/mvp-plan.md)
@@ -91,7 +95,7 @@
 - 当前版本已经接入本地 SQLite 持久化，目录内仍保留 JSONL transcript 与 Markdown 产物，方便审计和直接查看。
 - 当前桌面端本地数据目录统一使用 `~/.teamaligned`；如果旧版本数据还在 `~/teamaligned` 或 Electron `userData` 目录中，启动时会自动补齐迁移。
 - 持久层当前采用三层：`settings.json` 保存用户配置，`app.db` 保存结构化运行状态，`JSONL / Markdown / artifacts` 保存可审计内容。
-- 当前聊天页已刻意做成更简洁的版本：左侧只保留搜索与会话列表，中间保留轻量标题、消息流和输入区，不保留常驻右侧上下文面板。
+- 当前聊天页保持“主线程优先”，右侧会话信息面板默认收起，按需展开查看 token、workspace 和最近工具调用。
 - 仪表盘当前已从主导航移除，避免分散 beta 阶段的核心注意力；后续如需保留，会以重构后的辅助页重新评估。
 - 当前版本已经在单聊场景中接入 DeepAgents + LangChain + LangGraph，并支持通过设置页配置真实 Qwen / OpenAI 模型。
 - `stdio npx` MCP 与 `HTTP + headers` MCP 已接通；OAuth 型 MCP 暂不支持。
@@ -117,6 +121,8 @@ npm run dev
 ```bash
 npm run typecheck
 npm run lint
+npm run test:smoke
+npm run beta:check
 npm run build
 npm run db:generate
 npm run db:migrate
