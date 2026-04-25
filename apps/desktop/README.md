@@ -1,24 +1,25 @@
 # apps/desktop
 
-这个目录已经承载当前可运行的 Electron 桌面端 MVP。
+[中文说明](./README.zh-CN.md)
 
-当前包含：
+This directory contains the runnable Electron desktop MVP.
 
-- Electron 主进程
-- preload 桥接层
+Included modules:
+
+- Electron main process
+- preload bridge
 - React renderer
 - Tailwind UI
-- 聊天、管理、扩展、设置页面
-- Electron 打包配置
-- 单聊与群聊主界面
-- run 详情、附件预览、命令结果卡片
-- 扩展中心、管理页、设置页
+- Chat, Manage, Extensions, and Settings pages
+- Electron packaging configuration
+- Direct chat and group chat main views
+- Run details, attachment preview, and command-result cards
 
-当前桌面端已经接入真实本地运行时，UI 侧负责：
+The desktop app is connected to the real local runtime. The UI layer is responsible for:
 
-- 页面路由与状态同步
-- IPC 驱动的本地数据读写
-- 聊天输入、`@` 选择器、`/` 自动补全
-- 模型配置、MCP 配置与健康检查
-- run / artifact / attachment / tool invocation 展示
-- 通知中心与系统通知入口
+- Routing and snapshot state sync
+- IPC-based local data read/write
+- Chat composer, `@` mention selector, and `/` autocomplete
+- Provider and MCP configuration + health checks
+- Run/artifact/attachment/tool-invocation visualization
+- In-app notification center and system notification entry

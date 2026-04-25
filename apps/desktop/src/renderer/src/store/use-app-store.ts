@@ -101,7 +101,7 @@ const emptySnapshot: AppSnapshot = {
   },
 };
 
-export const useAppStore = create<AppStore>((set) => {
+export const useAppStore = create<AppStore>((set, get) => {
   const applySnapshot = (snapshot: AppSnapshot) =>
     set({ ...snapshot, bootstrapped: true, loading: false });
 
@@ -155,7 +155,11 @@ export const useAppStore = create<AppStore>((set) => {
       runLoadingSnapshotAction(() => window.teamaligned.installSkill(skillId)),
     removeSkill: async (skillId) => {
       if (typeof window.teamaligned.removeSkill !== "function") {
-        throw new Error("当前窗口还没有加载新版 preload，请重启应用后再移除 Skill。");
+        throw new Error(
+          get().settings.language === "en"
+            ? "This window is still using an older preload build. Please restart the app and remove the Skill again."
+            : "当前窗口还没有加载新版 preload，请重启应用后再移除 Skill。",
+        );
       }
       await runLoadingSnapshotAction(() => window.teamaligned.removeSkill(skillId));
     },

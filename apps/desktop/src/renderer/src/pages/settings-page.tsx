@@ -18,11 +18,6 @@ import { createTranslator } from "../i18n";
 import { PageShell } from "../components/pages/page-shell";
 import { SectionCard } from "../components/pages/section-card";
 
-const providerDisplayLabels = {
-  qwen: "百炼 (DashScope)",
-  openai: "OpenAI",
-} as const;
-
 function ChoiceCard({
   selected,
   icon,
@@ -98,6 +93,8 @@ function ToggleSwitch({
 export function SettingsPage() {
   const { settings, providers, updateSettings, updateProvider, testProviderConnection } = useAppStore();
   const t = createTranslator(settings.language);
+  const getProviderDisplayLabel = (providerId: string) =>
+    providerId === "qwen" ? t.settings("providerQwenDisplay") : "OpenAI";
 
   const [providerForms, setProviderForms] = useState(providers);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -157,20 +154,20 @@ export function SettingsPage() {
 
   const providerValidationIssues = selectedProvider
     ? [
-        !selectedProvider.baseUrl.trim() ? "请填写 Base URL。" : null,
+        !selectedProvider.baseUrl.trim() ? t.settings("validationBaseUrlRequired") : null,
         selectedProvider.baseUrl.trim() &&
         !/^https?:\/\//i.test(selectedProvider.baseUrl.trim())
-          ? "Base URL 格式无效，请填写完整的 http(s) 地址。"
+          ? t.settings("validationBaseUrlInvalid")
           : null,
-        !selectedProvider.defaultModel.trim() ? "请填写模型名称。" : null,
+        !selectedProvider.defaultModel.trim() ? t.settings("validationModelRequired") : null,
         !selectedProvider.apiKey.trim() ||
         selectedProvider.apiKey === "sk-qwen-demo-key" ||
         selectedProvider.apiKey === "sk-openai-demo-key"
           ? selectedProvider?.id === "qwen"
-            ? "请填写真实的百炼 API Key。"
-            : "请填写真实的 OpenAI API Key。"
+            ? t.settings("validationApiKeyRequiredQwen")
+            : t.settings("validationApiKeyRequiredOpenAI")
           : null,
-        !selectedProvider.supportsToolCalling ? "当前 provider 未开启工具调用，DeepAgents 无法正常工作。" : null,
+        !selectedProvider.supportsToolCalling ? t.settings("validationToolCallingRequired") : null,
       ].filter(Boolean) as string[]
     : [];
 
@@ -235,7 +232,7 @@ export function SettingsPage() {
       setTestState("error");
       setProviderMessage(
         `${t.settings("providerConnectionFailed")}\n${
-          error instanceof Error ? error.message : "保存失败，请稍后重试。"
+          error instanceof Error ? error.message : t.settings("saveFailedFallback")
         }`,
       );
     }
@@ -343,7 +340,7 @@ export function SettingsPage() {
                       >
                         {providerForms.map((provider) => (
                           <option key={provider.id} value={provider.id}>
-                            {providerDisplayLabels[provider.id]}
+                            {getProviderDisplayLabel(provider.id)}
                           </option>
                         ))}
                       </select>

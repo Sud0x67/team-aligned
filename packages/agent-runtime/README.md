@@ -1,26 +1,28 @@
 # packages/agent-runtime
 
-这个目录已经包含当前 MVP 使用的本地 Agent runtime。
+[中文说明](./README.zh-CN.md)
 
-当前已实现：
+This package contains the local Agent runtime used by the MVP.
 
-- 会话 snapshot 组装
-- `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
-- run 启动、取消与状态同步
-- 单 Agent run 与 Team 群组 run 编排
-- 群聊上下文同步与内部消息
-- DeepAgents / LangChain / LangGraph 单聊调用链
-- Skills registry、安装、激活与脚本执行
-- 自定义 Prompt Alias 的保存、展开与本轮注入
-- MCP registry、配置、健康检查与 tool discovery
-- 本地文件、搜索、命令工具层
-- 本地文件持久化与 SQLite / Drizzle
-- 通知、workspace、种子数据初始化
+Implemented:
 
-当前仍待继续补强的方向：
+- Conversation snapshot assembly
+- `/skills`, `/mcp`, `/<skill-id>`, `/<prompt-alias>`
+- Run start/cancel and status synchronization
+- Direct-agent runs and team-group run orchestration
+- Team-context sync and internal messages
+- DeepAgents/LangChain/LangGraph direct-chat execution chain
+- Skill registry sync, install, activation, and script execution
+- Custom prompt alias persistence, expansion, and per-turn injection
+- MCP registry sync, configuration, health checks, and tool discovery
+- Local file/search/command tool layer
+- Local persistence with SQLite + Drizzle
+- Notifications, workspace handling, and starter seeding
 
-- 聊天与 run 反馈的进一步统一
-- MCP tool 级白名单
-- OAuth 型 MCP
-- 更强的 failure recovery / checkpoint
-- 导出、全文搜索与测试体系
+Current strengthening directions:
+
+- Better unification between chat feedback and run feedback
+- MCP tool-level whitelist
+- OAuth-based MCP support
+- Stronger failure recovery/checkpoint strategy
+- Export, full-text search, and broader testing

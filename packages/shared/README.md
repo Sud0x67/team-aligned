@@ -1,12 +1,14 @@
 # packages/shared
 
-这个目录承载当前仓库中的共享代码与跨层协议。
+[中文说明](./README.zh-CN.md)
 
-当前主要承载：
+This package provides shared code and cross-layer contracts for the repository.
 
-- 领域模型
-- 配置 schema
-- IPC 协议
-- 存储实体定义
-- slash command 解析
-- 默认种子数据
+Main responsibilities:
+
+- Domain models
+- Configuration schemas
+- IPC contracts
+- Storage entity definitions
+- Slash command parsing
+- Default seed data

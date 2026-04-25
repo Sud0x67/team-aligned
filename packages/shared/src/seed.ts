@@ -1,4 +1,5 @@
 import type {
+  AppLanguage,
   AppSettings,
   ConversationMeta,
   ExtensionRecord,
@@ -12,7 +13,7 @@ import { createTeamAlignedAssistantSkillRecord } from "./builtin.ts";
 
 export const defaultProfile: UserProfile = {
   name: "Alex Chen",
-  bio: "专注于把 Agent 协作产品做成真正能用的本地桌面工具。",
+  bio: "",
   avatarPath: null,
 };
 
@@ -74,6 +75,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "TeamAligned",
     recommendedTools: ["terminal", "logs", "filesystem", "tests"],
     metadata: {
+      descriptionZh: "系统化排查白屏、报错、回归和构建失败，快速定位根因并收敛到最小修复。",
+      descriptionEn:
+        "Systematically debug white screens, errors, regressions, and build failures to find root causes and converge on minimal fixes quickly.",
       category: "debugging",
       tags: ["debugging", "incident", "regression", "verification"],
       sources: [
@@ -99,6 +103,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "TeamAligned",
     recommendedTools: ["filesystem", "ripgrep", "terminal"],
     metadata: {
+      descriptionZh: "快速理解一个代码库的结构、入口、关键模块和演进路径，帮助新人高效进入上下文。",
+      descriptionEn:
+        "Quickly understand a codebase structure, entry points, key modules, and evolution path to ramp up efficiently.",
       category: "engineering",
       tags: ["codebase", "architecture", "onboarding", "engineering"],
       sources: [
@@ -124,6 +131,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "TeamAligned",
     recommendedTools: ["web-search", "filesystem", "notes"],
     metadata: {
+      descriptionZh: "围绕一个主题快速收集信息，区分事实与判断，并输出可用于决策的简报。",
+      descriptionEn:
+        "Rapidly collect information around one topic, separate facts from judgment, and produce a decision-ready brief.",
       category: "research",
       tags: ["research", "brief", "summary", "competitive-analysis"],
       sources: [
@@ -149,6 +159,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "TeamAligned",
     recommendedTools: ["filesystem", "terminal", "todo"],
     metadata: {
+      descriptionZh: "把模糊需求拆成可执行计划，明确目标、约束、阶段、风险和下一步动作。",
+      descriptionEn:
+        "Break ambiguous requirements into executable plans with clear goals, constraints, phases, risks, and next actions.",
       category: "planning",
       tags: ["planning", "execution", "roadmap", "breakdown"],
       sources: [
@@ -174,6 +187,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "TeamAligned",
     recommendedTools: ["figma", "screenshot", "filesystem"],
     metadata: {
+      descriptionZh: "围绕可读性、一致性、间距、层级和状态反馈，提出高质量 UI 打磨建议并推动落地。",
+      descriptionEn:
+        "Improve UI readability, consistency, spacing, hierarchy, and state feedback with practical refinement guidance.",
       category: "design",
       tags: ["ui", "ux", "design", "polish", "figma"],
       sources: [
@@ -199,6 +215,9 @@ export const defaultSkillCatalog: SkillCatalogRecord[] = [
     author: "Sud0x67",
     recommendedTools: ["python3", "filesystem", "figma", "screenshot"],
     metadata: {
+      descriptionZh: "带可搜索设计知识库的高级 UI/UX Skill，覆盖风格、配色、字体、UX 规则、图表类型和多技术栈实现建议。",
+      descriptionEn:
+        "Advanced UI/UX skill with a searchable design knowledge base covering style, color, typography, UX rules, chart choices, and implementation guidance across stacks.",
       category: "design",
       tags: ["ui", "ux", "design-system", "figma", "frontend", "tailwind", "research"],
       sources: ["https://github.com/Sud0x67/team-aligned-skills"],
@@ -241,6 +260,9 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
     docsUrl: "https://github.com/upstash/context7",
     homepage: "https://context7.com",
     metadata: {
+      descriptionZh: "通过 MCP 检索最新官方文档和库参考资料，适合研发和研究场景。",
+      descriptionEn:
+        "Use MCP to retrieve up-to-date official docs and library references for engineering and research workflows.",
       tags: ["documentation", "research", "search"],
       sources: ["https://github.com/upstash/context7"],
     },
@@ -268,6 +290,9 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
     docsUrl: "https://github.com/modelcontextprotocol/servers",
     homepage: "https://modelcontextprotocol.io",
     metadata: {
+      descriptionZh: "通过 MCP 暴露本地文件系统读写能力，适合代码、文档和工作区浏览。",
+      descriptionEn:
+        "Expose local filesystem read/write capabilities through MCP for code, documentation, and workspace navigation.",
       tags: ["filesystem", "workspace", "local"],
       sources: ["https://github.com/modelcontextprotocol/servers"],
     },
@@ -304,6 +329,9 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
       "https://docs.github.com/en/copilot/how-tos/context/model-context-protocol/using-the-github-mcp-server",
     homepage: "https://github.com",
     metadata: {
+      descriptionZh: "访问仓库、Issue 和 Pull Request，适合代码协作和版本管理任务。",
+      descriptionEn:
+        "Access repositories, issues, and pull requests for code collaboration and version control workflows.",
       tags: ["github", "git", "code", "collaboration"],
       sources: [
         "https://docs.github.com/en/copilot/how-tos/context/model-context-protocol/using-the-github-mcp-server",
@@ -341,6 +369,9 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
     docsUrl: "https://github.com/makenotion/notion-mcp-server",
     homepage: "https://www.notion.so",
     metadata: {
+      descriptionZh: "访问 Notion 页面和数据库，适合知识库同步、内容整理和任务协作。",
+      descriptionEn:
+        "Access Notion pages and databases for knowledge sync, content organization, and task collaboration.",
       tags: ["notion", "knowledge-base", "documents"],
       sources: ["https://github.com/makenotion/notion-mcp-server"],
     },
@@ -374,6 +405,9 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
     docsUrl: "https://github.com/microsoft/playwright-mcp",
     homepage: "https://playwright.dev",
     metadata: {
+      descriptionZh: "通过 MCP 控制浏览器完成访问、点击、输入和截图，适合 UI 验证和网页任务。",
+      descriptionEn:
+        "Control the browser through MCP for navigation, clicks, typing, and screenshots in UI verification and web tasks.",
       tags: ["browser", "playwright", "automation", "testing"],
       sources: ["https://github.com/microsoft/playwright-mcp"],
     },
@@ -382,28 +416,37 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
 
 export const defaultConnectedMcpIds = ["mcp-filesystem", "mcp-playwright"];
 
-export const defaultTeamContext = (): TeamContext => ({
-  phase: "执行中",
-  constraints: [
-    "保持聊天优先，不做成复杂后台",
-    "优先实现可体验的 MVP 版本",
-  ],
-  activeTasks: [
-    "对齐 Figma 原型交互",
-    "实现单聊命令式交互",
-    "跑通群聊中的 Agent 协作",
-  ],
-  recentDecisions: [
-    "默认首页为对话页",
-    "Qwen 通过 DashScope OpenAI-compatible 接口接入",
-  ],
+export const defaultTeamContext = (language: AppLanguage = "zh"): TeamContext => ({
+  phase: language === "en" ? "executing" : "执行中",
+  constraints:
+    language === "en"
+      ? ["Keep chat-first experience, avoid heavyweight control surfaces", "Prioritize a usable MVP"]
+      : ["保持聊天优先，不做成复杂后台", "优先实现可体验的 MVP 版本"],
+  activeTasks:
+    language === "en"
+      ? [
+          "Align interaction details with the Figma prototype",
+          "Deliver command-style direct-chat interaction",
+          "Stabilize multi-Agent collaboration in team chat",
+        ]
+      : ["对齐 Figma 原型交互", "实现单聊命令式交互", "跑通群聊中的 Agent 协作"],
+  recentDecisions:
+    language === "en"
+      ? [
+          "Set chat as the default home page",
+          "Use DashScope OpenAI-compatible endpoint for Qwen",
+        ]
+      : ["默认首页为对话页", "Qwen 通过 DashScope OpenAI-compatible 接口接入"],
   pinnedArtifacts: ["docs/mvp-plan.md", "docs/roadmap.md"],
-  workspaceSummary: "当前工作目录为 team-aligned，聚焦 Electron 桌面原型。",
+  workspaceSummary:
+    language === "en"
+      ? "Current workspace is team-aligned, focused on the Electron desktop prototype."
+      : "当前工作目录为 team-aligned，聚焦 Electron 桌面原型。",
   handoff: {
     activeAgentId: null,
     lastSpeakerId: null,
     nextAgentIds: [],
-    reason: "初始状态",
+    reason: language === "en" ? "Initial state" : "初始状态",
     revision: 0,
     updatedAt: Date.now(),
   },

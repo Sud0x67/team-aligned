@@ -321,6 +321,18 @@ export class AppStorage {
     this.persist();
   }
 
+  private getLanguage(): AppSettings["language"] {
+    const raw = this.state?.settingsEntries?.["settings.language"];
+    return raw === "en" ? "en" : "zh";
+  }
+
+  private byLanguage(
+    input: { zh: string; en: string },
+    language: AppSettings["language"] = this.getLanguage(),
+  ) {
+    return language === "en" ? input.en : input.zh;
+  }
+
   listProviders(): ProviderConfig[] {
     return [...this.state.providers];
   }
@@ -393,7 +405,10 @@ export class AppStorage {
       targetId: agent.id,
       title: agent.name,
       unread: 0,
-      lastMessage: "刚创建的 Agent，开始和它对话吧。",
+      lastMessage: this.byLanguage({
+        zh: "刚创建的 Agent，开始和它对话吧。",
+        en: "Agent created. Start chatting with it.",
+      }),
       lastActivityAt: now(),
       meta: { ...defaultConversationMeta },
     });
@@ -428,7 +443,7 @@ export class AppStorage {
       avatarColor: teamPalette[this.state.teams.length % teamPalette.length],
       workspacePath,
       memberIds,
-      context: defaultTeamContext(),
+      context: defaultTeamContext(this.getLanguage()),
     };
 
     this.state.teams.push(team);
@@ -438,7 +453,10 @@ export class AppStorage {
       targetId: team.id,
       title: team.name,
       unread: 0,
-      lastMessage: "群组已创建，现在可以开始团队协作。",
+      lastMessage: this.byLanguage({
+        zh: "群组已创建，现在可以开始团队协作。",
+        en: "Group created. Team collaboration can start now.",
+      }),
       lastActivityAt: now(),
       meta: { ...defaultConversationMeta },
     });
@@ -448,7 +466,12 @@ export class AppStorage {
 
   deleteAgent(agentId: string) {
     if (isTeamAlignedAssistantAgentId(agentId)) {
-      throw new Error("TeamAligned 助手是系统内置 Agent，不能删除。");
+      throw new Error(
+        this.byLanguage({
+          zh: "TeamAligned 助手是系统内置 Agent，不能删除。",
+          en: "TeamAligned assistant is built in and cannot be deleted.",
+        }),
+      );
     }
 
     const agent = this.getAgent(agentId);
@@ -465,7 +488,12 @@ export class AppStorage {
         !["completed", "failed", "cancelled"].includes(run.status),
     );
     if (hasActiveRun) {
-      throw new Error("当前 Agent 或所在群组还有运行中的任务，请先取消后再删除。");
+      throw new Error(
+        this.byLanguage({
+          zh: "当前 Agent 或所在群组还有运行中的任务，请先取消后再删除。",
+          en: "This Agent or one of its groups still has a running task. Cancel it before deleting.",
+        }),
+      );
     }
 
     this.clearConversationHistory(conversationId);
@@ -501,7 +529,12 @@ export class AppStorage {
         !["completed", "failed", "cancelled"].includes(run.status),
     );
     if (hasActiveRun) {
-      throw new Error("当前群组还有运行中的任务，请先取消后再删除。");
+      throw new Error(
+        this.byLanguage({
+          zh: "当前群组还有运行中的任务，请先取消后再删除。",
+          en: "This group still has a running task. Cancel it before deleting.",
+        }),
+      );
     }
 
     this.clearConversationHistory(conversationId);
@@ -521,7 +554,12 @@ export class AppStorage {
         !["completed", "failed", "cancelled"].includes(run.status),
     );
     if (hasActiveRun) {
-      throw new Error("当前会话还有运行中的任务，请先取消后再删除。");
+      throw new Error(
+        this.byLanguage({
+          zh: "当前会话还有运行中的任务，请先取消后再删除。",
+          en: "This conversation still has a running task. Cancel it before deleting.",
+        }),
+      );
     }
 
     this.clearConversationHistory(conversationId);
@@ -555,7 +593,12 @@ export class AppStorage {
 
     const target = input.kind === "agent" ? this.getAgent(input.targetId) : this.getTeam(input.targetId);
     if (!target) {
-      throw new Error(input.kind === "agent" ? "未找到对应 Agent。" : "未找到对应群组。");
+      throw new Error(
+        this.byLanguage({
+          zh: input.kind === "agent" ? "未找到对应 Agent。" : "未找到对应群组。",
+          en: input.kind === "agent" ? "Agent not found." : "Group not found.",
+        }),
+      );
     }
 
     const language = this.getSettings().language;
@@ -575,9 +618,13 @@ export class AppStorage {
           : target.name,
       unread: 0,
       lastMessage:
-        language === "en"
-          ? "New conversation. Start chatting when you are ready."
-          : "新的会话，准备好就开始对话吧。",
+        this.byLanguage(
+          {
+            zh: "新的会话，准备好就开始对话吧。",
+            en: "New conversation. Start chatting when you are ready.",
+          },
+          language,
+        ),
       lastActivityAt: now(),
       meta:
         input.kind === "agent" && isTeamAlignedAssistantAgentId(target.id)
@@ -594,7 +641,12 @@ export class AppStorage {
 
   updateAgent(input: UpdateAgentInput) {
     if (isTeamAlignedAssistantAgentId(input.agentId)) {
-      throw new Error("TeamAligned 助手是系统内置 Agent，不能编辑。");
+      throw new Error(
+        this.byLanguage({
+          zh: "TeamAligned 助手是系统内置 Agent，不能编辑。",
+          en: "TeamAligned assistant is built in and cannot be edited.",
+        }),
+      );
     }
 
     const agent = this.getAgent(input.agentId);
@@ -885,19 +937,38 @@ export class AppStorage {
             activeAgentId: null,
             lastSpeakerId: null,
             nextAgentIds: [],
-            reason: "会话已通过 /clear 重置",
+            reason: this.byLanguage(
+              {
+                zh: "会话已通过 /clear 重置",
+                en: "Conversation reset via /clear",
+              },
+              this.getLanguage(),
+            ),
             revision: (team.context.handoff?.revision ?? 0) + 1,
             updatedAt: now(),
           },
         };
+        const language = this.getLanguage();
         writeFileSync(
           layout.memoryFilePath,
-          `# ${team.name} 记忆\n\n- 类型：团队\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+          this.byLanguage(
+            {
+              zh: `# ${team.name} 记忆\n\n- 类型：团队\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+              en: `# ${team.name} Memory\n\n- Type: Team\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear\n`,
+            },
+            language,
+          ),
           "utf8",
         );
         writeFileSync(
           layout.sharedMemoryPath,
-          `# ${team.name} 共享记忆\n\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+          this.byLanguage(
+            {
+              zh: `# ${team.name} 共享记忆\n\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+              en: `# ${team.name} Shared Memory\n\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear\n`,
+            },
+            language,
+          ),
           "utf8",
         );
       }
@@ -1068,22 +1139,55 @@ export class AppStorage {
   }
 
   savePromptAlias(input: SavePromptAliasInput) {
+    const language = this.getLanguage();
     const alias = normalizePromptAlias(input.alias);
     if (!alias) {
-      throw new Error("Prompt 别名不能为空，只能包含字母、数字、中划线和下划线。");
+      throw new Error(
+        this.byLanguage(
+          {
+            zh: "Prompt 别名不能为空，只能包含字母、数字、中划线和下划线。",
+            en: "Prompt alias cannot be empty and may only contain letters, numbers, hyphens, and underscores.",
+          },
+          language,
+        ),
+      );
     }
     if (["skills", "mcp", "clear"].includes(alias)) {
-      throw new Error(`/${alias} 是内置命令，不能作为自定义 Prompt 别名。`);
+      throw new Error(
+        this.byLanguage(
+          {
+            zh: `/${alias} 是内置命令，不能作为自定义 Prompt 别名。`,
+            en: `/${alias} is a built-in command and cannot be used as a custom prompt alias.`,
+          },
+          language,
+        ),
+      );
     }
     const existingSkill = this.findSkillCatalogEntryByNameOrId(alias);
     if (existingSkill) {
-      throw new Error(`/${alias} 已经被 Skill 使用，请换一个别名。`);
+      throw new Error(
+        this.byLanguage(
+          {
+            zh: `/${alias} 已经被 Skill 使用，请换一个别名。`,
+            en: `/${alias} is already used by a Skill. Please choose another alias.`,
+          },
+          language,
+        ),
+      );
     }
     const duplicated = this.state.promptAliases.find(
       (item) => item.alias === alias && item.id !== input.id,
     );
     if (duplicated) {
-      throw new Error(`/${alias} 已经存在，请换一个别名。`);
+      throw new Error(
+        this.byLanguage(
+          {
+            zh: `/${alias} 已经存在，请换一个别名。`,
+            en: `/${alias} already exists. Please choose another alias.`,
+          },
+          language,
+        ),
+      );
     }
 
     const timestamp = now();
@@ -1102,7 +1206,15 @@ export class AppStorage {
     };
 
     if (!record.prompt) {
-      throw new Error("Prompt 内容不能为空。");
+      throw new Error(
+        this.byLanguage(
+          {
+            zh: "Prompt 内容不能为空。",
+            en: "Prompt content cannot be empty.",
+          },
+          language,
+        ),
+      );
     }
 
     if (existing) {
@@ -1341,10 +1453,21 @@ export class AppStorage {
     if (!extension) return;
     extension.installed = !extension.installed;
     extension.enabled = extension.installed;
+    const language = this.getLanguage();
     this.createNotification({
       type: "extension",
-      title: extension.installed ? "扩展已安装" : "扩展已移除",
-      body: `${extension.name} ${extension.installed ? "已安装并启用" : "已从当前应用中移除"}`,
+      title: extension.installed
+        ? this.byLanguage({ zh: "扩展已安装", en: "Extension installed" }, language)
+        : this.byLanguage({ zh: "扩展已移除", en: "Extension removed" }, language),
+      body: extension.installed
+        ? this.byLanguage(
+            { zh: `${extension.name} 已安装并启用`, en: `${extension.name} was installed and enabled.` },
+            language,
+          )
+        : this.byLanguage(
+            { zh: `${extension.name} 已从当前应用中移除`, en: `${extension.name} was removed from this app.` },
+            language,
+          ),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -1867,6 +1990,10 @@ export class AppStorage {
         settingsEntries,
         providers: this.readProviders(),
       });
+    const language =
+      (configState.settingsEntries["settings.language"] as AppSettings["language"]) === "en"
+        ? "en"
+        : "zh";
 
     this.state = {
       settingsEntries: configState.settingsEntries,
@@ -1882,7 +2009,7 @@ export class AppStorage {
                 .map((skill) => skill.id),
         mcpWhitelist: Array.isArray(agent.mcpWhitelist) ? agent.mcpWhitelist : defaultConnectedMcpIds,
       })),
-      teams: this.readTeams(),
+      teams: this.readTeams(language),
       conversations: this.readConversations(),
       messages: this.readMessages(),
       runs: this.readRuns(),
@@ -2012,7 +2139,7 @@ export class AppStorage {
     });
   }
 
-  private readTeams() {
+  private readTeams(language: AppSettings["language"]) {
     const rows = this.db
       .prepare(
         `SELECT id, name, workspace_path, avatar_path, payload
@@ -2036,7 +2163,7 @@ export class AppStorage {
         }
       >(row.payload);
       const { context: storedContext, ...teamPayload } = payload;
-      const context = { ...(storedContext ?? defaultTeamContext()) };
+      const context = { ...(storedContext ?? defaultTeamContext(language)) };
       delete (teamPayload as { objective?: unknown }).objective;
       delete (teamPayload as { mcpWhitelist?: unknown }).mcpWhitelist;
       delete (context as { objective?: unknown }).objective;
@@ -2048,7 +2175,7 @@ export class AppStorage {
         avatarPath: row.avatar_path,
         memberIds: Array.from(new Set(payload.memberIds)).slice(0, teamMemberLimit),
         context: {
-          ...defaultTeamContext(),
+          ...defaultTeamContext(language),
           ...context,
         },
       } satisfies TeamRecord;
@@ -2314,7 +2441,10 @@ export class AppStorage {
       return;
     }
     throw new Error(
-      `检测到不兼容数据库 schema：${tableName} 缺少字段 ${missing.join(", ")}。请备份并删除 ~/.teamaligned/app.db 后重启应用。`,
+      this.byLanguage({
+        zh: `检测到不兼容数据库 schema：${tableName} 缺少字段 ${missing.join(", ")}。请备份并删除 ~/.teamaligned/app.db 后重启应用。`,
+        en: `Detected incompatible database schema: ${tableName} is missing columns ${missing.join(", ")}. Back up and remove ~/.teamaligned/app.db, then restart the app.`,
+      }),
     );
   }
 
@@ -2420,17 +2550,31 @@ export class AppStorage {
     mkdirSync(sessionsPath, { recursive: true });
 
     if (!existsSync(memoryFilePath)) {
+      const language = this.getLanguage();
       writeFileSync(
         memoryFilePath,
-        `# ${options.title} 记忆\n\n- 类型：${options.type === "agent" ? "Agent" : "团队"}\n- 说明：${options.summary}\n- 最近更新：初始化完成\n`,
+        this.byLanguage(
+          {
+            zh: `# ${options.title} 记忆\n\n- 类型：${options.type === "agent" ? "Agent" : "团队"}\n- 说明：${options.summary}\n- 最近更新：初始化完成\n`,
+            en: `# ${options.title} Memory\n\n- Type: ${options.type === "agent" ? "Agent" : "Team"}\n- Summary: ${options.summary}\n- Last update: initialized\n`,
+          },
+          language,
+        ),
         "utf8",
       );
     }
 
     if (options.type === "team" && !existsSync(sharedMemoryPath)) {
+      const language = this.getLanguage();
       writeFileSync(
         sharedMemoryPath,
-        `# ${options.title} 共享记忆\n\n- 说明：${options.summary}\n- 最近更新：初始化完成\n`,
+        this.byLanguage(
+          {
+            zh: `# ${options.title} 共享记忆\n\n- 说明：${options.summary}\n- 最近更新：初始化完成\n`,
+            en: `# ${options.title} Shared Memory\n\n- Summary: ${options.summary}\n- Last update: initialized\n`,
+          },
+          language,
+        ),
         "utf8",
       );
     }
@@ -2449,7 +2593,12 @@ export class AppStorage {
   saveAvatarAsset(input: { scope: "profile" | "agents" | "teams"; dataUrl: string; fileNameHint?: string }) {
     const parsed = input.dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
     if (!parsed) {
-      throw new Error("头像格式无效，当前仅支持 data URL 图片。");
+      throw new Error(
+        this.byLanguage({
+          zh: "头像格式无效，当前仅支持 data URL 图片。",
+          en: "Invalid avatar format. Only data URL images are supported.",
+        }),
+      );
     }
 
     const [, mimeType, base64Payload] = parsed;
@@ -2485,7 +2634,12 @@ export class AppStorage {
   saveAttachmentAsset(input: { conversationId: string; dataUrl: string; fileName: string }): AttachmentAssetRecord {
     const parsed = input.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!parsed) {
-      throw new Error("附件格式无效，当前仅支持 data URL 文件。");
+      throw new Error(
+        this.byLanguage({
+          zh: "附件格式无效，当前仅支持 data URL 文件。",
+          en: "Invalid attachment format. Only data URL files are supported.",
+        }),
+      );
     }
 
     const [, mimeType, base64Payload] = parsed;
@@ -2570,7 +2724,12 @@ export class AppStorage {
   private getConversationAttachmentsPath(conversationId: string) {
     const layout = this.getConversationWorkspaceLayout(conversationId);
     if (!layout) {
-      throw new Error(`未找到会话 ${conversationId} 对应的 workspace。`);
+      throw new Error(
+        this.byLanguage({
+          zh: `未找到会话 ${conversationId} 对应的 workspace。`,
+          en: `Workspace for conversation ${conversationId} was not found.`,
+        }),
+      );
     }
     return layout.attachmentsPath;
   }
@@ -3092,7 +3251,7 @@ export class AppStorage {
         avatarColor: seed.avatarColor,
         workspacePath,
         memberIds: [...seed.members],
-        context: defaultTeamContext(),
+        context: defaultTeamContext(language),
       });
     }
 

@@ -38,6 +38,8 @@ const translations = {
     },
     startup: {
       preloadMissing: "未检测到 preload API。请检查 Electron preload 是否成功加载。",
+      preloadOutdated:
+        "当前窗口还没有加载新版 preload，请重启应用后再继续操作。",
       startupFailed: "启动失败",
       startupFailedDesc: "桌面应用已经打开，但本地运行时没有正确连上，所以页面没有继续渲染。",
       bootingTitle: "正在启动本地运行时",
@@ -196,6 +198,11 @@ const translations = {
       deleteFailedPrefix: "删除失败：",
       deleteFailedFallback: "未知错误",
       systemBuiltin: "系统内置",
+      assistantBuiltinCannotEdit: "TeamAligned 助手是系统内置 Agent，不能编辑。",
+      assistantBuiltinCannotDelete: "TeamAligned 助手是系统内置 Agent，不能删除。",
+      commandResultViewFull: "查看完整结果",
+      you: "你",
+      conversationFallbackTitle: "对话",
     },
     manage: {
       title: "管理",
@@ -274,6 +281,8 @@ const translations = {
       saveSkills: "保存 Skills",
       saveMcps: "保存 MCP",
       systemBuiltin: "系统内置",
+      assistantBuiltinCannotDelete: "TeamAligned 助手是系统内置 Agent，不能删除。",
+      workspacePickerTitle: "选择工作目录",
     },
     extensions: {
       title: "扩展",
@@ -352,6 +361,16 @@ const translations = {
       promptVariables: "支持 {{input}}、{{conversationTitle}}、{{agentName}}、{{workspacePath}}、$ARGUMENTS",
       promptAliasHint: "自定义 Prompt 可以通过 /别名 在聊天中快速调用。",
       noPrompts: "还没有自定义 Prompt",
+      invalidHeadersObject: "请求头必须是 JSON 对象。",
+      defaultPromptTemplate: "请根据下面的用户输入完成任务：\n\n{{input}}",
+      deletePromptConfirm: "确定删除 /{{alias}} 吗？",
+      emptyList: "暂无",
+      httpHeadersJsonHint:
+        "如果远端 MCP 需要 Bearer Token 或自定义请求头，可以在这里直接填写 JSON 对象。",
+      remoteMcpReadyHint:
+        "远端 MCP 已支持真实 URL 握手和工具发现。部分托管服务可能还会限制允许接入的客户端，若检测失败，请检查服务本身的鉴权或接入限制。",
+      close: "关闭",
+      mcpDirectoryPickerTitle: "选择 MCP 工作目录",
     },
     dashboard: {
       title: "仪表盘",
@@ -435,6 +454,14 @@ const translations = {
       saveProfile: "保存个人资料",
       languageZh: "简体中文",
       languageEn: "English",
+      providerQwenDisplay: "百炼 (DashScope)",
+      validationBaseUrlRequired: "请填写 Base URL。",
+      validationBaseUrlInvalid: "Base URL 格式无效，请填写完整的 http(s) 地址。",
+      validationModelRequired: "请填写模型名称。",
+      validationApiKeyRequiredQwen: "请填写真实的百炼 API Key。",
+      validationApiKeyRequiredOpenAI: "请填写真实的 OpenAI API Key。",
+      validationToolCallingRequired: "当前 provider 未开启工具调用，DeepAgents 无法正常工作。",
+      saveFailedFallback: "保存失败，请稍后重试。",
     },
     profile: {
       title: "个人信息",
@@ -449,6 +476,7 @@ const translations = {
     commands: {
       "/skills": "查看、切换或启用当前 Agent 可用技能",
       "/mcp": "查看并调用当前可用的 MCP 能力",
+      "/clear": "清空当前会话历史记录，重置上下文",
     },
   },
   en: {
@@ -488,6 +516,8 @@ const translations = {
     },
     startup: {
       preloadMissing: "Preload API is missing. Please check whether Electron preload loaded successfully.",
+      preloadOutdated:
+        "This window is still using an older preload build. Please restart the app and try again.",
       startupFailed: "Startup failed",
       startupFailedDesc:
         "The desktop window opened, but the local runtime did not connect correctly, so the interface could not continue rendering.",
@@ -650,6 +680,11 @@ const translations = {
       deleteFailedPrefix: "Delete failed: ",
       deleteFailedFallback: "Unknown error",
       systemBuiltin: "Built-in",
+      assistantBuiltinCannotEdit: "TeamAligned assistant is built in and cannot be edited.",
+      assistantBuiltinCannotDelete: "TeamAligned assistant is built in and cannot be deleted.",
+      commandResultViewFull: "View full output",
+      you: "You",
+      conversationFallbackTitle: "Conversation",
     },
     manage: {
       title: "Manage",
@@ -730,6 +765,8 @@ const translations = {
       saveSkills: "Save Skills",
       saveMcps: "Save MCP",
       systemBuiltin: "Built-in",
+      assistantBuiltinCannotDelete: "TeamAligned assistant is built in and cannot be deleted.",
+      workspacePickerTitle: "Select workspace directory",
     },
     extensions: {
       title: "Extensions",
@@ -808,6 +845,16 @@ const translations = {
       promptVariables: "Supports {{input}}, {{conversationTitle}}, {{agentName}}, {{workspacePath}}, $ARGUMENTS",
       promptAliasHint: "Custom prompts can be invoked in chat with /alias.",
       noPrompts: "No custom prompts yet",
+      invalidHeadersObject: "Request headers must be a JSON object.",
+      defaultPromptTemplate: "Complete the task based on the user input below:\n\n{{input}}",
+      deletePromptConfirm: "Delete /{{alias}}?",
+      emptyList: "None",
+      httpHeadersJsonHint:
+        "If the remote MCP needs a bearer token or custom request headers, provide them here as a JSON object.",
+      remoteMcpReadyHint:
+        "Remote MCP now supports real URL handshakes and tool discovery. Some hosted services may still restrict which clients are allowed to connect, so check the service auth and client restrictions if health checks fail.",
+      close: "Close",
+      mcpDirectoryPickerTitle: "Select MCP working directory",
     },
     dashboard: {
       title: "Dashboard",
@@ -892,6 +939,15 @@ const translations = {
       saveProfile: "Save profile",
       languageZh: "Simplified Chinese",
       languageEn: "English",
+      providerQwenDisplay: "DashScope",
+      validationBaseUrlRequired: "Please enter the Base URL.",
+      validationBaseUrlInvalid: "Base URL must be a complete http(s) URL.",
+      validationModelRequired: "Please enter a model name.",
+      validationApiKeyRequiredQwen: "Please enter a real DashScope API Key.",
+      validationApiKeyRequiredOpenAI: "Please enter a real OpenAI API Key.",
+      validationToolCallingRequired:
+        "Tool calling is disabled for this provider. DeepAgents cannot work correctly.",
+      saveFailedFallback: "Save failed. Please try again later.",
     },
     profile: {
       title: "Profile",
@@ -906,6 +962,7 @@ const translations = {
     commands: {
       "/skills": "View, switch, or enable the skills available to the current Agent",
       "/mcp": "View and call the currently available MCP capabilities",
+      "/clear": "Clear current conversation history and reset context",
     },
   },
 } as const;

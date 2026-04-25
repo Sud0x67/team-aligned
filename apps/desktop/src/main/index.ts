@@ -364,13 +364,13 @@ app.whenReady().then(async () => {
       return false;
     }
   });
-  ipcMain.handle("teamaligned:select-directory", async () => {
+  ipcMain.handle("teamaligned:select-directory", async (_event, payload?: { title?: string }) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return null;
     }
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openDirectory", "createDirectory"],
-      title: "选择 MCP 工作目录",
+      title: payload?.title?.trim() || "Select directory",
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });

@@ -52,6 +52,20 @@ function matchesSearch(query: string, values: Array<string | null | undefined>) 
   return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
 }
 
+function resolveLocalizedDescription(
+  input: { description: string; metadata: Record<string, unknown> | null },
+  language: "zh" | "en",
+) {
+  const metadata = input.metadata;
+  if (metadata && typeof metadata === "object") {
+    const zh = typeof metadata.descriptionZh === "string" ? metadata.descriptionZh : null;
+    const en = typeof metadata.descriptionEn === "string" ? metadata.descriptionEn : null;
+    if (language === "en" && en) return en;
+    if (language === "zh" && zh) return zh;
+  }
+  return input.description;
+}
+
 export function ManagePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -310,11 +324,7 @@ export function ManagePage() {
 
   const submitDeleteAgent = async (agent: AgentRecord) => {
     if (isTeamAlignedAssistantAgentId(agent.id)) {
-      window.alert(
-        settings.language === "en"
-          ? "TeamAligned assistant is built in and cannot be deleted."
-          : "TeamAligned 助手是系统内置 Agent，不能删除。",
-      );
+      window.alert(t.manage("assistantBuiltinCannotDelete"));
       return;
     }
     const confirmed = window.confirm(
@@ -550,6 +560,7 @@ export function ManagePage() {
           capabilities: t.manage("capabilities"),
           workspacePath: t.manage("workspacePath"),
           browseDirectory: t.extensions("browseDirectory"),
+          workspacePickerTitle: t.manage("workspacePickerTitle"),
           cancel: t.manage("cancel"),
           create: t.manage("create"),
         }}
@@ -579,6 +590,7 @@ export function ManagePage() {
           chooseMembers: t.manage("chooseMembers"),
           workspacePath: t.manage("workspacePath"),
           browseDirectory: t.extensions("browseDirectory"),
+          workspacePickerTitle: t.manage("workspacePickerTitle"),
           cancel: t.manage("cancel"),
           create: t.manage("create"),
         }}
@@ -602,7 +614,7 @@ export function ManagePage() {
         items={installedSkills.map((skill) => ({
           id: skill.id,
           name: settings.language === "zh" ? skill.displayName || skill.name : skill.name,
-          description: skill.description,
+          description: resolveLocalizedDescription(skill, settings.language),
         }))}
         selectedIds={selectedSkillIds}
         emptyLabel={t.manage("noSkillsInstalled")}
@@ -627,7 +639,7 @@ export function ManagePage() {
         items={connectedMcps.map((server) => ({
           id: server.id,
           name: server.name,
-          description: server.description,
+          description: resolveLocalizedDescription(server, settings.language),
         }))}
         selectedIds={selectedMcpIds}
         emptyLabel={t.manage("noMcpsConnected")}

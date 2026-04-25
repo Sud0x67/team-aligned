@@ -1,8 +1,11 @@
-import type { AppSnapshot, ConversationKind, MessageRecord, RunRecord } from "@shared";
+import type { AppLanguage, AppSnapshot, ConversationKind, MessageRecord, RunRecord } from "@shared";
 import type { TeamContext } from "@shared";
 
-export function getConversationKindLabel(kind: ConversationKind) {
-  return kind === "agent" ? "单聊" : "群聊";
+export function getConversationKindLabel(kind: ConversationKind, language: AppLanguage = "en") {
+  if (kind === "agent") {
+    return language === "en" ? "Direct chat" : "单聊";
+  }
+  return language === "en" ? "Team chat" : "群聊";
 }
 
 export function getLatestActiveRun(runs: RunRecord[], conversationId: string) {
@@ -35,6 +38,10 @@ export function getConversationVisibleMessages(
   });
 }
 
-export function buildActiveConversationLabel(snapshot: AppSnapshot) {
-  return snapshot.conversations.length > 0 ? snapshot.conversations[0].title : "对话";
+export function buildActiveConversationLabel(snapshot: AppSnapshot, language: AppLanguage = "en") {
+  return snapshot.conversations.length > 0
+    ? snapshot.conversations[0].title
+    : language === "en"
+      ? "Conversation"
+      : "对话";
 }

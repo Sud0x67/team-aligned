@@ -497,6 +497,10 @@ export interface ConversationExportResult {
   toolInvocationCount: number;
 }
 
+export interface SelectDirectoryInput {
+  title?: string;
+}
+
 export interface TeamalignedApi {
   bootstrap: () => Promise<AppSnapshot>;
   sendInput: (payload: SendInputPayload) => Promise<AppSnapshot>;
@@ -533,7 +537,7 @@ export interface TeamalignedApi {
   markNotificationsRead: () => Promise<AppSnapshot>;
   markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
   openNotificationSettings: () => Promise<boolean>;
-  selectDirectory: () => Promise<string | null>;
+  selectDirectory: (payload?: SelectDirectoryInput) => Promise<string | null>;
   openWorkspace: (path: string) => Promise<void>;
   subscribeOpenConversation: (listener: (payload: OpenConversationEvent) => void) => () => void;
   subscribe: (listener: (snapshot: AppSnapshot) => void) => () => void;

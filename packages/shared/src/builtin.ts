@@ -129,6 +129,10 @@ export function createTeamAlignedAssistantSkillRecord(): SkillCatalogRecord {
     author: "TeamAligned",
     recommendedTools: ["filesystem", "ripgrep", "terminal", "mcp", "skills"],
     metadata: {
+      descriptionZh:
+        "内置应用助手 Skill，用于回答 TeamAligned 使用、配置、群聊、Skills、MCP、Provider、通知与工作区相关问题。",
+      descriptionEn:
+        "Built-in application assistant skill for TeamAligned usage, configuration, group chat, Skills, MCP, Provider, notifications, and workspace guidance.",
       category: "productivity",
       tags: [
         "teamaligned",

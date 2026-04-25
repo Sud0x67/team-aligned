@@ -35,16 +35,18 @@ function isImageAttachment(attachment: AttachmentAssetRecord) {
 function buildAvatarProps(
   message: MessageRecord,
   input: {
+    language: "zh" | "en";
     profile: UserProfile;
     agentMap: Map<string, AgentRecord>;
     teamMap: Map<string, TeamRecord>;
   },
 ) {
   if (message.senderKind === "user") {
+    const youLabel = input.language === "en" ? "You" : "你";
     return {
       src: input.profile.avatarPath,
-      fallback: input.profile.name.slice(0, 1) || "你",
-      alt: input.profile.name || "你",
+      fallback: input.profile.name.slice(0, 1) || youLabel,
+      alt: input.profile.name || youLabel,
       style: { backgroundColor: "var(--primary)" },
       textClassName: "text-xs font-semibold text-white",
     };
@@ -88,13 +90,14 @@ function buildAvatarProps(
 function resolveMentionLabel(
   mention: string,
   input: {
+    language: "zh" | "en";
     profile: UserProfile;
     agentMap: Map<string, AgentRecord>;
     teamMap: Map<string, TeamRecord>;
   },
 ) {
   if (mention === "user") {
-    return input.profile.name || "你";
+    return input.profile.name || (input.language === "en" ? "You" : "你");
   }
 
   const agent = input.agentMap.get(mention);
@@ -214,7 +217,7 @@ export function ChatMessageThread({
             const isCommandCard = message.metadata?.cardType === "command_result";
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
-            const avatar = buildAvatarProps(message, { profile, agentMap, teamMap });
+            const avatar = buildAvatarProps(message, { language, profile, agentMap, teamMap });
 
             return (
               <div
@@ -279,7 +282,7 @@ export function ChatMessageThread({
                             rel="noreferrer"
                             className="mt-2 inline-flex text-xs font-medium text-[var(--primary)] hover:underline"
                           >
-                            查看完整结果
+                            {t.chat("commandResultViewFull")}
                           </a>
                         ) : null}
                       </div>
@@ -341,7 +344,7 @@ export function ChatMessageThread({
                           key={mention}
                           className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]"
                         >
-                          @{resolveMentionLabel(mention, { profile, agentMap, teamMap })}
+                          @{resolveMentionLabel(mention, { language, profile, agentMap, teamMap })}
                         </span>
                       ))}
                     </div>

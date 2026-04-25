@@ -17,6 +17,7 @@ import type {
   TeamalignedApi,
   ProviderConnectionTestInput,
   ProviderConnectionTestResult,
+  SelectDirectoryInput,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
@@ -77,7 +78,8 @@ const api: TeamalignedApi = {
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),
   openNotificationSettings: () => ipcRenderer.invoke("teamaligned:open-notification-settings"),
-  selectDirectory: () => ipcRenderer.invoke("teamaligned:select-directory"),
+  selectDirectory: (payload?: SelectDirectoryInput) =>
+    ipcRenderer.invoke("teamaligned:select-directory", payload),
   openWorkspace: (path: string) => ipcRenderer.invoke("teamaligned:open-workspace", path),
   subscribeOpenConversation: (listener: (payload: OpenConversationEvent) => void) => {
     const wrapped = (_event: unknown, payload: OpenConversationEvent) => listener(payload);

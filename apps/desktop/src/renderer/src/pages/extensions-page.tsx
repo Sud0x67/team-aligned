@@ -39,14 +39,14 @@ function serializeHeaders(headers: Record<string, string> | undefined) {
   return JSON.stringify(headers, null, 2);
 }
 
-function parseHeaders(text: string) {
+function parseHeaders(text: string, invalidObjectMessage: string) {
   if (!text.trim()) {
     return {};
   }
 
   const parsed = JSON.parse(text) as Record<string, unknown>;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("请求头必须是 JSON 对象。");
+    throw new Error(invalidObjectMessage);
   }
 
   return Object.fromEntries(
@@ -80,6 +80,20 @@ function matchesSearch(query: string, values: Array<string | null | undefined>) 
   if (!normalizedQuery) return true;
 
   return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
+}
+
+function resolveLocalizedDescription(
+  input: { description: string; metadata: Record<string, unknown> | null },
+  language: "zh" | "en",
+) {
+  const metadata = input.metadata;
+  if (metadata && typeof metadata === "object") {
+    const zh = typeof metadata.descriptionZh === "string" ? metadata.descriptionZh : null;
+    const en = typeof metadata.descriptionEn === "string" ? metadata.descriptionEn : null;
+    if (language === "en" && en) return en;
+    if (language === "zh" && zh) return zh;
+  }
+  return input.description;
 }
 
 export function ExtensionsPage() {
@@ -137,6 +151,8 @@ export function ExtensionsPage() {
           skill.name,
           skill.displayName,
           skill.description,
+          String(skill.metadata?.descriptionZh ?? ""),
+          String(skill.metadata?.descriptionEn ?? ""),
           String(skill.metadata?.category ?? ""),
           skill.version,
         ]),
@@ -150,6 +166,8 @@ export function ExtensionsPage() {
           server.id,
           server.name,
           server.description,
+          String(server.metadata?.descriptionZh ?? ""),
+          String(server.metadata?.descriptionEn ?? ""),
           server.transport,
           server.authType,
           server.riskLevel,
@@ -172,6 +190,8 @@ export function ExtensionsPage() {
     [promptAliases, searchQueries.prompts],
   );
   const currentCatalogSync = catalogSync?.tab === tab ? catalogSync.status : null;
+  const listSeparator = settings.language === "zh" ? "、" : ", ";
+  const emptyListLabel = t.extensions("emptyList");
   const searchPlaceholder =
     tab === "skills"
       ? t.extensions("searchSkillsPlaceholder")
@@ -269,7 +289,7 @@ export function ExtensionsPage() {
       name: prompt?.name ?? "",
       alias: prompt?.alias ?? "",
       description: prompt?.description ?? "",
-      prompt: prompt?.prompt ?? "请根据下面的用户输入完成任务：\n\n{{input}}",
+      prompt: prompt?.prompt ?? t.extensions("defaultPromptTemplate"),
       enabled: prompt?.enabled ?? true,
     });
     setPromptFormError(null);
@@ -293,14 +313,16 @@ export function ExtensionsPage() {
   };
 
   const deletePromptAlias = async (prompt: PromptAliasRecord) => {
-    if (!window.confirm(settings.language === "zh" ? `确定删除 /${prompt.alias} 吗？` : `Delete /${prompt.alias}?`)) {
+    if (!window.confirm(t.extensions("deletePromptConfirm").replace("{{alias}}", prompt.alias))) {
       return;
     }
     await removePromptAlias(prompt.id);
   };
 
   const selectMcpWorkingDirectory = async () => {
-    const directory = await window.teamaligned.selectDirectory();
+    const directory = await window.teamaligned.selectDirectory({
+      title: t.extensions("mcpDirectoryPickerTitle"),
+    });
     if (!directory) return;
     setMcpForm((current) => ({ ...(current as ConnectMcpInput), cwd: directory }));
   };
@@ -313,7 +335,7 @@ export function ExtensionsPage() {
         ...mcpForm,
         headers:
           editingMcp.transport === "http" && editingMcp.authFields.length === 0
-            ? parseHeaders(customHeadersText)
+            ? parseHeaders(customHeadersText, t.extensions("invalidHeadersObject"))
             : mcpForm.headers,
       };
       setMcpFormError(null);
@@ -435,6 +457,7 @@ export function ExtensionsPage() {
               const title = settings.language === "zh" ? item.displayName || item.name : item.name;
               const subtitle =
                 settings.language === "zh" && item.name !== item.displayName ? item.name : null;
+              const localizedDescription = resolveLocalizedDescription(item, settings.language);
               const installed = item.installed;
               const isBuiltin = isSystemBuiltinSkill(item);
               const Icon = getExtensionIcon(item.name, installed);
@@ -512,7 +535,7 @@ export function ExtensionsPage() {
                     </div>
 
                     <p className="pr-8 text-[13px] leading-relaxed text-[var(--muted-foreground)]">
-                      {item.description}
+                      {localizedDescription}
                     </p>
                     <p className="text-[12px] text-[var(--muted-foreground)]">
                       {item.metadata?.category ? `${String(item.metadata.category)} · ` : ""}v{item.version}
@@ -536,6 +559,7 @@ export function ExtensionsPage() {
                     : "bg-emerald-500/10 text-emerald-500";
               const discoveredToolNames =
                 connection?.discoveredTools.map((toolItem) => toolItem.name) ?? item.declaredTools;
+              const localizedDescription = resolveLocalizedDescription(item, settings.language);
 
               return (
                 <div
@@ -615,12 +639,18 @@ export function ExtensionsPage() {
                     </div>
 
                     <p className="pr-8 text-[13px] leading-relaxed text-[var(--muted-foreground)]">
-                      {item.description}
+                      {localizedDescription}
                     </p>
 
                     <div className="space-y-1 text-[12px] text-[var(--muted-foreground)]">
-                      <p>{t.extensions("mcpCapabilities")}: {item.capabilities.join("、") || "暂无"}</p>
-                      <p>{t.extensions("mcpTools")}: {discoveredToolNames.join("、") || "暂无"}</p>
+                      <p>
+                        {t.extensions("mcpCapabilities")}:{" "}
+                        {item.capabilities.join(listSeparator) || emptyListLabel}
+                      </p>
+                      <p>
+                        {t.extensions("mcpTools")}:{" "}
+                        {discoveredToolNames.join(listSeparator) || emptyListLabel}
+                      </p>
                       {connection?.lastError ? <p className="text-red-500">{connection.lastError}</p> : null}
                     </div>
                   </div>
@@ -813,9 +843,7 @@ export function ExtensionsPage() {
                         {t.extensions("requestHeaders")}
                       </p>
                       <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                        {settings.language === "zh"
-                          ? "如果远端 MCP 需要 Bearer Token 或自定义请求头，可以在这里直接填写 JSON 对象。"
-                          : "If the remote MCP needs a bearer token or custom request headers, provide them here as a JSON object."}
+                        {t.extensions("httpHeadersJsonHint")}
                       </p>
                     </div>
                     <textarea
@@ -886,9 +914,7 @@ export function ExtensionsPage() {
 
                 {editingMcp.transport === "http" ? (
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                    {settings.language === "zh"
-                      ? "远端 MCP 已支持真实 URL 握手和工具发现。部分托管服务可能还会限制允许接入的客户端，若检测失败，请检查服务本身的鉴权或接入限制。"
-                      : "Remote MCP now supports real URL handshakes and tool discovery. Some hosted services may still restrict which clients are allowed to connect, so check the service's auth and client restrictions if health checks fail."}
+                    {t.extensions("remoteMcpReadyHint")}
                   </div>
                 ) : null}
 
@@ -922,7 +948,7 @@ export function ExtensionsPage() {
                   onClick={closeMcpEditor}
                   className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-[14px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
                 >
-                  {settings.language === "zh" ? "关闭" : "Close"}
+                  {t.extensions("close")}
                 </button>
                 <button
                   onClick={() => checkMcpHealth(editingMcp.id)}

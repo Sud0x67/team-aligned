@@ -269,8 +269,22 @@ export function ChatPage() {
     return settings.language === "zh" ? skill.displayName || skill.name : skill.name;
   }, [activeConversation?.meta.activeSkill, settings.language, skillCatalog]);
 
+  const localizedCommandSuggestions = useMemo(
+    () =>
+      commandSuggestions.map((item) => ({
+        ...item,
+        description:
+          item.name === "/skills"
+            ? t.command("/skills")
+            : item.name === "/mcp"
+              ? t.command("/mcp")
+              : t.command("/clear"),
+      })),
+    [commandSuggestions, t],
+  );
+
   const availableSlashSuggestions = useMemo(() => {
-    if (!activeConversation) return commandSuggestions;
+    if (!activeConversation) return localizedCommandSuggestions;
     const installedSkills = skillCatalog.filter((skill) => skill.installed);
     const availableSkills =
       activeConversation.kind === "agent"
@@ -298,8 +312,8 @@ export function ChatPage() {
         kind: "prompt" as const,
       }));
 
-    return [...commandSuggestions, ...skillSuggestions, ...promptSuggestions];
-  }, [activeConversation, agents, commandSuggestions, promptAliases, settings.language, skillCatalog]);
+    return [...localizedCommandSuggestions, ...skillSuggestions, ...promptSuggestions];
+  }, [activeConversation, agents, localizedCommandSuggestions, promptAliases, settings.language, skillCatalog]);
 
   const pinnedMcpLabel = useMemo(() => {
     const pinnedMcpId = activeConversation?.meta.pinnedMcp;
@@ -388,11 +402,7 @@ export function ChatPage() {
 
   const handleEditConversationTarget = (conversation: ConversationRecord) => {
     if (conversation.kind === "agent" && isTeamAlignedAssistantAgentId(conversation.targetId)) {
-      window.alert(
-        settings.language === "en"
-          ? "TeamAligned assistant is built in and cannot be edited."
-          : "TeamAligned 助手是系统内置 Agent，不能编辑。",
-      );
+      window.alert(t.chat("assistantBuiltinCannotEdit"));
       return;
     }
     navigate("/manage", {
@@ -424,11 +434,7 @@ export function ChatPage() {
 
   const handleDeleteConversationTarget = async (conversation: ConversationRecord) => {
     if (conversation.kind === "agent" && isTeamAlignedAssistantAgentId(conversation.targetId)) {
-      window.alert(
-        settings.language === "en"
-          ? "TeamAligned assistant is built in and cannot be deleted."
-          : "TeamAligned 助手是系统内置 Agent，不能删除。",
-      );
+      window.alert(t.chat("assistantBuiltinCannotDelete"));
       return;
     }
     const confirmMessage =

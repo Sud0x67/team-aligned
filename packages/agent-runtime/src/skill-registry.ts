@@ -73,13 +73,13 @@ function toCatalogLocation(source: string, branch: string) {
   }
 
   if (!isGitHubRepoUrl(source)) {
-    throw new Error(`当前仅支持 GitHub repo URL 或本地目录作为 Skill registry：${source}`);
+    throw new Error(`Only GitHub repo URLs or local directories are supported as Skill registries: ${source}`);
   }
 
   const normalized = source.replace(/\.git$/i, "").replace(/\/+$/g, "");
   const [, owner, repo] = normalized.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)$/i) ?? [];
   if (!owner || !repo) {
-    throw new Error(`无法解析 GitHub Skill registry 地址：${source}`);
+    throw new Error(`Cannot parse GitHub Skill registry URL: ${source}`);
   }
 
   return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/catalog/skills.json`;
@@ -129,7 +129,7 @@ export async function fetchSkillCatalog() {
 
   const response = await fetch(catalogLocation);
   if (!response.ok) {
-    throw new Error(`拉取 Skill catalog 失败：${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch Skill catalog: ${response.status} ${response.statusText}`);
   }
 
   return mapRemoteCatalog((await response.json()) as RemoteSkillCatalog, source, branch);

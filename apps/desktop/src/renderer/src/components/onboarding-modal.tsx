@@ -6,10 +6,6 @@ import { useAppStore } from "../store/use-app-store";
 import { AvatarPicker } from "./avatar-picker";
 
 const demoApiKeys = new Set(["sk-qwen-demo-key", "sk-openai-demo-key"]);
-const providerDisplayLabels: Record<ProviderConfig["id"], string> = {
-  qwen: "百炼 (DashScope)",
-  openai: "OpenAI",
-};
 
 function needsProfileSetup(profile: UserProfile) {
   return !profile.name.trim() || profile.name.trim() === "Alex Chen";
@@ -38,6 +34,8 @@ export function OnboardingModal() {
     testProviderConnection,
   } = useAppStore();
   const t = createTranslator(settings.language);
+  const getProviderDisplayLabel = (providerId: ProviderConfig["id"]) =>
+    providerId === "qwen" ? t.settings("providerQwenDisplay") : "OpenAI";
   const [draftProfile, setDraftProfile] = useState(profile);
   const [providerForms, setProviderForms] = useState(providers);
   const [selectedProviderId, setSelectedProviderId] = useState<ProviderConfig["id"]>(
@@ -293,7 +291,7 @@ export function OnboardingModal() {
                   >
                     {providerForms.map((provider) => (
                       <option key={provider.id} value={provider.id}>
-                        {providerDisplayLabels[provider.id]}
+                        {getProviderDisplayLabel(provider.id)}
                       </option>
                     ))}
                   </select>

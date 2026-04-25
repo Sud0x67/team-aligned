@@ -53,12 +53,17 @@ function ModalShell({
   );
 }
 
-async function pickWorkspaceDirectory(onSelect: (directory: string) => void) {
+async function pickWorkspaceDirectory(
+  onSelect: (directory: string) => void,
+  options?: { title?: string },
+) {
   if (typeof window.teamaligned.selectDirectory !== "function") {
     return;
   }
 
-  const directory = await window.teamaligned.selectDirectory();
+  const directory = await window.teamaligned.selectDirectory({
+    title: options?.title,
+  });
   if (directory) {
     onSelect(directory);
   }
@@ -143,7 +148,10 @@ export function AgentFormModal({
             <button
               type="button"
               onClick={() =>
-                void pickWorkspaceDirectory((workspacePath) => onChange({ ...form, workspacePath }))
+                void pickWorkspaceDirectory(
+                  (workspacePath) => onChange({ ...form, workspacePath }),
+                  { title: labels.workspacePickerTitle },
+                )
               }
               className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm transition hover:opacity-90"
             >
@@ -281,7 +289,10 @@ export function TeamFormModal({
             <button
               type="button"
               onClick={() =>
-                void pickWorkspaceDirectory((workspacePath) => onChange({ ...form, workspacePath }))
+                void pickWorkspaceDirectory(
+                  (workspacePath) => onChange({ ...form, workspacePath }),
+                  { title: labels.workspacePickerTitle },
+                )
               }
               className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm transition hover:opacity-90"
             >
