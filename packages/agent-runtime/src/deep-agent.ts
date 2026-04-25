@@ -464,7 +464,7 @@ function buildSystemPrompt(input: {
       activeMcpServers.length > 0
         ? `当前可用 MCP 服务：${mcpServerNames}。如需外部能力，请优先通过已注入的 MCP tools 调用。`
         : "当前没有可用 MCP 服务。",
-      `当前用户资料：姓名 ${profile.name}，角色 ${profile.role || "未设置"}，团队 ${profile.team || "未设置"}。`,
+      `当前用户资料：姓名 ${profile.name}，简介 ${profile.bio || "未设置"}。`,
       "请优先使用与用户相同的语言回复。",
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
       runtimeToolSummary,
@@ -483,7 +483,7 @@ function buildSystemPrompt(input: {
       activeMcpServers.length > 0
         ? `Available MCP servers: ${mcpServerNames}. When external capabilities are needed, prefer injected MCP tools.`
         : "No MCP server is currently available.",
-      `Current user profile: name ${profile.name}, role ${profile.role || "not set"}, team ${profile.team || "not set"}.`,
+      `Current user profile: name ${profile.name}, bio ${profile.bio || "not set"}.`,
       "Reply in the same language the user is currently using.",
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
       runtimeToolSummary,
@@ -546,8 +546,6 @@ function createSignature(input: {
     },
     profile: {
       name: profile.name,
-      role: profile.role,
-      team: profile.team,
       bio: profile.bio,
     },
     activeSkill,

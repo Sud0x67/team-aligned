@@ -239,7 +239,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="hidden text-left md:block">
                 <p className="text-sm font-medium">{profile.name}</p>
-                <p className="text-xs text-white/70">{profile.role || t.common("unsetRole")}</p>
+                <p className="max-w-32 truncate text-xs text-white/70">
+                  {profile.bio || t.settings("personalProfile")}
+                </p>
               </div>
             </button>
           </div>

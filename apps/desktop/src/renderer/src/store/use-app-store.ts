@@ -62,9 +62,6 @@ type AppStore = AppSnapshot & {
 const emptySnapshot: AppSnapshot = {
   profile: {
     name: "",
-    role: "",
-    team: "",
-    email: "",
     bio: "",
     avatarPath: null,
   },

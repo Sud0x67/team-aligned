@@ -197,9 +197,6 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
   };
   const profile: UserProfile = {
     name: "User",
-    role: "PM",
-    team: "TeamAligned",
-    email: "user@example.com",
     bio: "",
     avatarPath: null,
   };

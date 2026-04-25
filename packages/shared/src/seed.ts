@@ -11,9 +11,6 @@ import type {
 
 export const defaultProfile: UserProfile = {
   name: "Alex Chen",
-  role: "产品经理",
-  team: "AI 平台组",
-  email: "alex.chen@teamaligned.local",
   bio: "专注于把 Agent 协作产品做成真正能用的本地桌面工具。",
   avatarPath: null,
 };

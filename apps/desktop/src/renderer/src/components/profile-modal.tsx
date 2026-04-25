@@ -25,7 +25,7 @@ export function ProfileModal({
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[28px] border border-[var(--border)] bg-[var(--card)] shadow-soft">
+      <div className="w-full max-w-lg rounded-[28px] border border-[var(--border)] bg-[var(--card)] shadow-soft">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
           <div>
             <h2 className="text-lg font-semibold">{t.profile("title")}</h2>
@@ -39,8 +39,8 @@ export function ProfileModal({
           </button>
         </div>
 
-        <div className="grid gap-4 px-6 py-5 md:grid-cols-2">
-          <div className="md:col-span-2">
+        <div className="space-y-4 px-6 py-5">
+          <div>
             <AvatarPicker
               label={t.profile("avatar")}
               value={draft.avatarPath}
@@ -53,7 +53,7 @@ export function ProfileModal({
               onChange={(avatarPath) => setDraft((current) => ({ ...current, avatarPath }))}
             />
           </div>
-          <label className="space-y-2 md:col-span-1">
+          <label className="space-y-2">
             <span className="text-sm text-[var(--muted-text)]">{t.profile("name")}</span>
             <input
               value={draft.name}
@@ -61,31 +61,7 @@ export function ProfileModal({
               className="input"
             />
           </label>
-          <label className="space-y-2 md:col-span-1">
-            <span className="text-sm text-[var(--muted-text)]">{t.profile("role")}</span>
-            <input
-              value={draft.role}
-              onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value }))}
-              className="input"
-            />
-          </label>
-          <label className="space-y-2 md:col-span-1">
-            <span className="text-sm text-[var(--muted-text)]">{t.profile("team")}</span>
-            <input
-              value={draft.team}
-              onChange={(event) => setDraft((current) => ({ ...current, team: event.target.value }))}
-              className="input"
-            />
-          </label>
-          <label className="space-y-2 md:col-span-1">
-            <span className="text-sm text-[var(--muted-text)]">{t.profile("email")}</span>
-            <input
-              value={draft.email}
-              onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}
-              className="input"
-            />
-          </label>
-          <label className="space-y-2 md:col-span-2">
+          <label className="space-y-2">
             <span className="text-sm text-[var(--muted-text)]">{t.profile("bio")}</span>
             <textarea
               value={draft.bio}
@@ -102,7 +78,11 @@ export function ProfileModal({
           <button
             className="button-primary"
             onClick={() => {
-              void updateProfile(draft);
+              void updateProfile({
+                avatarPath: draft.avatarPath,
+                name: draft.name,
+                bio: draft.bio,
+              });
               onClose();
             }}
           >

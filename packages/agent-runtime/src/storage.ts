@@ -236,9 +236,6 @@ export class AppStorage {
   getProfile(): UserProfile {
     return {
       name: this.state.settingsEntries["profile.name"] ?? defaultProfile.name,
-      role: this.state.settingsEntries["profile.role"] ?? defaultProfile.role,
-      team: this.state.settingsEntries["profile.team"] ?? defaultProfile.team,
-      email: this.state.settingsEntries["profile.email"] ?? defaultProfile.email,
       bio: this.state.settingsEntries["profile.bio"] ?? defaultProfile.bio,
       avatarPath:
         this.state.settingsEntries["profile.avatarPath"] === undefined
@@ -252,11 +249,11 @@ export class AppStorage {
   setProfile(input: UpdateProfileInput) {
     const merged = { ...this.getProfile(), ...input };
     this.state.settingsEntries["profile.name"] = merged.name;
-    this.state.settingsEntries["profile.role"] = merged.role;
-    this.state.settingsEntries["profile.team"] = merged.team;
-    this.state.settingsEntries["profile.email"] = merged.email;
     this.state.settingsEntries["profile.bio"] = merged.bio;
     this.state.settingsEntries["profile.avatarPath"] = merged.avatarPath ?? "null";
+    delete this.state.settingsEntries["profile.role"];
+    delete this.state.settingsEntries["profile.team"];
+    delete this.state.settingsEntries["profile.email"];
     this.persist();
   }
 
@@ -2800,9 +2797,6 @@ export class AppStorage {
       "settings.notifyGroup": String(settings.notifyGroup),
       "settings.activeProviderId": settings.activeProviderId,
       "profile.name": profile.name,
-      "profile.role": profile.role,
-      "profile.team": profile.team,
-      "profile.email": profile.email,
       "profile.bio": profile.bio,
       "profile.avatarPath": profile.avatarPath ?? "null",
     };
@@ -2847,9 +2841,6 @@ export class AppStorage {
       };
       const profile: UserProfile = {
         name: payload.profile?.name ?? defaultProfile.name,
-        role: payload.profile?.role ?? defaultProfile.role,
-        team: payload.profile?.team ?? defaultProfile.team,
-        email: payload.profile?.email ?? defaultProfile.email,
         bio: payload.profile?.bio ?? defaultProfile.bio,
         avatarPath:
           payload.profile?.avatarPath === undefined ? defaultProfile.avatarPath : payload.profile.avatarPath,

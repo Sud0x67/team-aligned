@@ -93,9 +93,6 @@ export interface RunStepRecord {
 
 export interface UserProfile {
   name: string;
-  role: string;
-  team: string;
-  email: string;
   bio: string;
   avatarPath: string | null;
 }
