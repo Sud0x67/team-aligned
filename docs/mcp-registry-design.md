@@ -81,7 +81,7 @@ team-aligned-mcps/
 - `stdio npx` MCP 的真实健康检查和 tools/list
 - `HTTP + headers` MCP 的真实 URL 握手、超时控制和 tools/list
 - “连接并启用 / 添加并配置 / 移除连接” 的本地状态流
-- Agent / Team 级 MCP 白名单
+- Agent 级 MCP 白名单
 - `/mcp`
 - `/mcp use <slug>`
 - `/mcp tools <slug>`

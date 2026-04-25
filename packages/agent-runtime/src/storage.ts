@@ -30,6 +30,7 @@ import type {
   CreateAgentInput,
   CreateTeamInput,
   DashboardStats,
+  EnsureConversationInput,
   ExtensionRecord,
   McpCatalogRecord,
   McpConnectionRecord,
@@ -46,6 +47,7 @@ import type {
   ToolInvocationRecord,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
+  UpdateTeamInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
@@ -388,7 +390,7 @@ export class AppStorage {
     this.ensureWorkspaceLayout(workspacePath, {
       type: "team",
       title: input.name,
-      summary: input.objective,
+      summary: input.description,
     });
 
     const team: TeamRecord = {
@@ -398,13 +400,9 @@ export class AppStorage {
       avatar: input.name.slice(0, 1),
       avatarPath: input.avatarPath ?? null,
       avatarColor: teamPalette[this.state.teams.length % teamPalette.length],
-      objective: input.objective,
       workspacePath,
       memberIds,
-      mcpWhitelist: this.listMcpConnections()
-        .filter((connection) => connection.enabled && connection.status === "connected")
-        .map((connection) => connection.serverId),
-      context: defaultTeamContext(input.objective),
+      context: defaultTeamContext(),
     };
 
     this.state.teams.push(team);
@@ -427,13 +425,17 @@ export class AppStorage {
     if (!agent) return false;
 
     const conversationId = `conv-${agent.id}`;
+    const teamConversationIds = this.state.teams
+      .filter((team) => team.memberIds.includes(agent.id))
+      .map((team) => `conv-${team.id}`);
+    const blockedConversationIds = new Set([conversationId, ...teamConversationIds]);
     const hasActiveRun = this.state.runs.some(
       (run) =>
-        run.conversationId === conversationId &&
+        blockedConversationIds.has(run.conversationId) &&
         !["completed", "failed", "cancelled"].includes(run.status),
     );
     if (hasActiveRun) {
-      throw new Error("当前 Agent 还有运行中的任务，请先取消后再删除。");
+      throw new Error("当前 Agent 或所在群组还有运行中的任务，请先取消后再删除。");
     }
 
     this.clearConversationHistory(conversationId);
@@ -479,6 +481,55 @@ export class AppStorage {
     return true;
   }
 
+  deleteConversation(conversationId: string) {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) return false;
+
+    const hasActiveRun = this.state.runs.some(
+      (run) =>
+        run.conversationId === conversationId &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error("当前会话还有运行中的任务，请先取消后再删除。");
+    }
+
+    this.clearConversationHistory(conversationId);
+    this.state.conversations = this.state.conversations.filter((item) => item.id !== conversationId);
+    this.persist();
+    return true;
+  }
+
+  ensureConversation(input: EnsureConversationInput): ConversationRecord {
+    const existing = this.state.conversations.find(
+      (conversation) => conversation.kind === input.kind && conversation.targetId === input.targetId,
+    );
+    if (existing) return existing;
+
+    const target = input.kind === "agent" ? this.getAgent(input.targetId) : this.getTeam(input.targetId);
+    if (!target) {
+      throw new Error(input.kind === "agent" ? "未找到对应 Agent。" : "未找到对应群组。");
+    }
+
+    const language = this.getSettings().language;
+    const conversation: ConversationRecord = {
+      id: `conv-${target.id}`,
+      kind: input.kind,
+      targetId: target.id,
+      title: target.name,
+      unread: 0,
+      lastMessage:
+        language === "en"
+          ? "New conversation. Start chatting when you are ready."
+          : "新的会话，准备好就开始对话吧。",
+      lastActivityAt: now(),
+      meta: { ...defaultConversationMeta },
+    };
+    this.state.conversations.push(conversation);
+    this.persist();
+    return conversation;
+  }
+
   updateAgent(input: UpdateAgentInput) {
     const agent = this.getAgent(input.agentId);
     if (!agent) return;
@@ -501,6 +552,50 @@ export class AppStorage {
     const conversation = this.getConversation(`conv-${agent.id}`);
     if (conversation) {
       conversation.title = agent.name;
+      conversation.lastActivityAt = now();
+    }
+
+    this.persist();
+  }
+
+  updateTeam(input: UpdateTeamInput) {
+    const team = this.getTeam(input.teamId);
+    if (!team) return;
+
+    const nextWorkspacePath = input.workspacePath || team.workspacePath;
+    this.ensureWorkspaceLayout(nextWorkspacePath, {
+      type: "team",
+      title: input.name,
+      summary: input.description,
+    });
+
+    team.name = input.name;
+    team.description = input.description;
+    team.memberIds = Array.from(new Set(input.memberIds)).slice(0, teamMemberLimit);
+    team.workspacePath = nextWorkspacePath;
+    team.avatarPath = input.avatarPath ?? null;
+    team.avatar = input.name.slice(0, 1) || "G";
+    team.context = {
+      ...team.context,
+      handoff: team.context.handoff
+        ? {
+            ...team.context.handoff,
+            activeAgentId: team.memberIds.includes(team.context.handoff.activeAgentId ?? "")
+              ? team.context.handoff.activeAgentId
+              : null,
+            lastSpeakerId: team.memberIds.includes(team.context.handoff.lastSpeakerId ?? "")
+              ? team.context.handoff.lastSpeakerId
+              : null,
+            nextAgentIds: team.context.handoff.nextAgentIds.filter((agentId) => team.memberIds.includes(agentId)),
+            revision: team.context.handoff.revision + 1,
+            updatedAt: now(),
+          }
+        : team.context.handoff,
+    };
+
+    const conversation = this.getConversation(`conv-${team.id}`);
+    if (conversation) {
+      conversation.title = team.name;
       conversation.lastActivityAt = now();
     }
 
@@ -1059,9 +1154,6 @@ export class AppStorage {
     for (const agent of this.state.agents) {
       agent.mcpWhitelist = agent.mcpWhitelist.filter((serverId) => validIds.has(serverId));
     }
-    for (const team of this.state.teams) {
-      team.mcpWhitelist = team.mcpWhitelist.filter((serverId) => validIds.has(serverId));
-    }
     this.state.mcpConnections = this.state.mcpConnections.filter((item) => validIds.has(item.serverId));
     this.persist();
   }
@@ -1088,11 +1180,6 @@ export class AppStorage {
           agent.mcpWhitelist.push(connection.serverId);
         }
       }
-      for (const team of this.state.teams) {
-        if (!team.mcpWhitelist.includes(connection.serverId)) {
-          team.mcpWhitelist.push(connection.serverId);
-        }
-      }
     }
     this.persist();
   }
@@ -1106,13 +1193,6 @@ export class AppStorage {
     const agent = this.getAgent(input.agentId);
     if (!agent) return;
     agent.mcpWhitelist = Array.from(new Set(input.serverIds));
-    this.persist();
-  }
-
-  updateTeamMcpWhitelist(input: { teamId: string; serverIds: string[] }) {
-    const team = this.getTeam(input.teamId);
-    if (!team) return;
-    team.mcpWhitelist = Array.from(new Set(input.serverIds));
     this.persist();
   }
 
@@ -1175,7 +1255,6 @@ export class AppStorage {
       CREATE TABLE IF NOT EXISTS teams (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        objective TEXT NOT NULL,
         workspace_path TEXT NOT NULL,
         avatar_path TEXT,
         payload TEXT NOT NULL
@@ -1311,6 +1390,7 @@ export class AppStorage {
         payload TEXT NOT NULL
       );
     `);
+    this.dropTeamObjectiveColumnIfPresent();
     this.assertStructuredSchema();
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_providers_active ON providers(is_active);
@@ -1381,7 +1461,7 @@ export class AppStorage {
       "INSERT INTO agents (id, name, role, status, workspace_path, avatar_path, model_id, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     );
     const insertTeam = this.db.prepare(
-      "INSERT INTO teams (id, name, objective, workspace_path, avatar_path, payload) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO teams (id, name, workspace_path, avatar_path, payload) VALUES (?, ?, ?, ?, ?)",
     );
     const insertConversation = this.db.prepare(
       "INSERT INTO conversations (id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1470,7 +1550,6 @@ export class AppStorage {
         insertTeam.run(
           team.id,
           team.name,
-          team.objective,
           team.workspacePath,
           sqliteNullable(team.avatarPath),
           JSON.stringify(team),
@@ -1659,10 +1738,7 @@ export class AppStorage {
           : defaultSkillCatalog.map((skill) => skill.id),
         mcpWhitelist: Array.isArray(agent.mcpWhitelist) ? agent.mcpWhitelist : defaultConnectedMcpIds,
       })),
-      teams: this.readTeams().map((team) => ({
-        ...team,
-        mcpWhitelist: Array.isArray(team.mcpWhitelist) ? team.mcpWhitelist : defaultConnectedMcpIds,
-      })),
+      teams: this.readTeams(),
       conversations: this.readConversations(),
       messages: this.readMessages(),
       runs: this.readRuns(),
@@ -1795,29 +1871,42 @@ export class AppStorage {
   private readTeams() {
     const rows = this.db
       .prepare(
-        `SELECT id, name, objective, workspace_path, avatar_path, payload
+        `SELECT id, name, workspace_path, avatar_path, payload
          FROM teams
          ORDER BY name COLLATE NOCASE ASC`,
       )
       .all() as Array<{
       id: string;
       name: string;
-      objective: string;
       workspace_path: string;
       avatar_path: string | null;
       payload: string;
     }>;
 
     return rows.map((row) => {
-      const payload = this.parseStoredPayload<TeamRecord>(row.payload);
+      const payload = this.parseStoredPayload<
+        TeamRecord & {
+          objective?: unknown;
+          mcpWhitelist?: unknown;
+          context?: TeamContext & { objective?: unknown };
+        }
+      >(row.payload);
+      const { context: storedContext, ...teamPayload } = payload;
+      const context = { ...(storedContext ?? defaultTeamContext()) };
+      delete (teamPayload as { objective?: unknown }).objective;
+      delete (teamPayload as { mcpWhitelist?: unknown }).mcpWhitelist;
+      delete (context as { objective?: unknown }).objective;
       return {
-        ...payload,
+        ...teamPayload,
         id: row.id,
         name: row.name,
-        objective: row.objective,
         workspacePath: row.workspace_path,
         avatarPath: row.avatar_path,
         memberIds: Array.from(new Set(payload.memberIds)).slice(0, teamMemberLimit),
+        context: {
+          ...defaultTeamContext(),
+          ...context,
+        },
       } satisfies TeamRecord;
     });
   }
@@ -2000,7 +2089,7 @@ export class AppStorage {
       "avatar_path",
       "model_id",
     ]);
-    this.assertTableColumns("teams", ["name", "objective", "workspace_path", "avatar_path"]);
+    this.assertTableColumns("teams", ["name", "workspace_path", "avatar_path"]);
     this.assertTableColumns("conversations", [
       "kind",
       "target_id",
@@ -2046,9 +2135,36 @@ export class AppStorage {
     ]);
   }
 
+  private dropTeamObjectiveColumnIfPresent() {
+    const columns = this.getTableColumnNames("teams");
+    if (!columns.has("objective")) {
+      return;
+    }
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec(`
+        CREATE TABLE teams_next (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          workspace_path TEXT NOT NULL,
+          avatar_path TEXT,
+          payload TEXT NOT NULL
+        );
+        INSERT INTO teams_next (id, name, workspace_path, avatar_path, payload)
+        SELECT id, name, workspace_path, avatar_path, payload FROM teams;
+        DROP TABLE teams;
+        ALTER TABLE teams_next RENAME TO teams;
+      `);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   private assertTableColumns(tableName: string, requiredColumns: string[]) {
-    const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-    const existingColumns = new Set(rows.map((row) => row.name));
+    const existingColumns = this.getTableColumnNames(tableName);
     const missing = requiredColumns.filter((column) => !existingColumns.has(column));
     if (missing.length === 0) {
       return;
@@ -2056,6 +2172,11 @@ export class AppStorage {
     throw new Error(
       `检测到不兼容数据库 schema：${tableName} 缺少字段 ${missing.join(", ")}。请备份并删除 ~/.teamaligned/app.db 后重启应用。`,
     );
+  }
+
+  private getTableColumnNames(tableName: string) {
+    const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    return new Set(rows.map((row) => row.name));
   }
 
   private extractAttachmentsFromMessage(message: MessageRecord): AttachmentAssetRecord[] {
@@ -2132,7 +2253,7 @@ export class AppStorage {
       this.createWorkspaceLayout(team.workspacePath, {
         type: "team",
         title: team.name,
-        summary: team.objective,
+        summary: team.description,
       });
     }
   }
@@ -2165,7 +2286,7 @@ export class AppStorage {
     if (options.type === "team" && !existsSync(sharedMemoryPath)) {
       writeFileSync(
         sharedMemoryPath,
-        `# ${options.title} 共享记忆\n\n- 目标：${options.summary}\n- 最近更新：初始化完成\n`,
+        `# ${options.title} 共享记忆\n\n- 说明：${options.summary}\n- 最近更新：初始化完成\n`,
         "utf8",
       );
     }
@@ -2329,7 +2450,7 @@ export class AppStorage {
     return this.ensureWorkspaceLayout(team.workspacePath, {
       type: "team",
       title: team.name,
-      summary: team.objective,
+      summary: team.description,
     });
   }
 
@@ -2486,10 +2607,6 @@ export class AppStorage {
             : "围绕 teamaligned 的 MVP 体验快速协作。",
         avatar: language === "en" ? "P" : "产",
         avatarColor: teamPalette[0],
-        objective:
-          language === "en"
-            ? "Ship a usable TeamAligned desktop beta experience."
-            : "完成一个可体验的 teamaligned 桌面原型。",
         members: ["agent-planner", "agent-designer", "agent-coder"],
       },
       {
@@ -2501,10 +2618,6 @@ export class AppStorage {
             : "负责背景研究、用户反馈与方案补充。",
         avatar: language === "en" ? "R" : "研",
         avatarColor: teamPalette[1],
-        objective:
-          language === "en"
-            ? "Collect requirement context and feed concise insights to Product Squad."
-            : "收集需求背景并把结论反馈给产品开发组。",
         members: ["agent-nova", "agent-researcher", "agent-planner"],
       },
     ];
@@ -2514,7 +2627,7 @@ export class AppStorage {
       this.ensureWorkspaceLayout(workspacePath, {
         type: "team",
         title: seed.name,
-        summary: seed.objective,
+        summary: seed.description,
       });
       this.state.teams.push({
         id: seed.id,
@@ -2523,11 +2636,9 @@ export class AppStorage {
         avatar: seed.avatar,
         avatarPath: null,
         avatarColor: seed.avatarColor,
-        objective: seed.objective,
         workspacePath,
         memberIds: [...seed.members],
-        mcpWhitelist: [...defaultConnectedMcpIds],
-        context: defaultTeamContext(seed.objective),
+        context: defaultTeamContext(),
       });
     }
 

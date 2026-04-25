@@ -6,6 +6,8 @@ import type {
   ConversationExportResult,
   CreateAgentInput,
   CreateTeamInput,
+  EnsureConversationInput,
+  EnsureConversationResult,
   OpenConversationEvent,
   RunControlPayload,
   SaveAttachmentAssetInput,
@@ -18,10 +20,10 @@ import type {
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
+  UpdateTeamInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
-  UpdateTeamMcpsInput,
 } from "@shared";
 
 const api: TeamalignedApi = {
@@ -32,7 +34,12 @@ const api: TeamalignedApi = {
   createTeam: (payload: CreateTeamInput) => ipcRenderer.invoke("teamaligned:create-team", payload),
   deleteAgent: (agentId: string) => ipcRenderer.invoke("teamaligned:delete-agent", agentId),
   deleteTeam: (teamId: string) => ipcRenderer.invoke("teamaligned:delete-team", teamId),
+  deleteConversation: (conversationId: string) =>
+    ipcRenderer.invoke("teamaligned:delete-conversation", conversationId),
+  ensureConversation: (payload: EnsureConversationInput): Promise<EnsureConversationResult> =>
+    ipcRenderer.invoke("teamaligned:ensure-conversation", payload),
   updateAgent: (payload: UpdateAgentInput) => ipcRenderer.invoke("teamaligned:update-agent", payload),
+  updateTeam: (payload: UpdateTeamInput) => ipcRenderer.invoke("teamaligned:update-team", payload),
   refreshSkillCatalog: () => ipcRenderer.invoke("teamaligned:refresh-skill-catalog"),
   installSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:install-skill", skillId),
   removeSkill: (skillId: string) => ipcRenderer.invoke("teamaligned:remove-skill", skillId),
@@ -50,8 +57,6 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:update-agent-skills", payload),
   updateAgentMcps: (payload: UpdateAgentMcpsInput) =>
     ipcRenderer.invoke("teamaligned:update-agent-mcps", payload),
-  updateTeamMcps: (payload: UpdateTeamMcpsInput) =>
-    ipcRenderer.invoke("teamaligned:update-team-mcps", payload),
   updateSettings: (payload: UpdateSettingsInput) =>
     ipcRenderer.invoke("teamaligned:update-settings", payload),
   updateProfile: (payload: UpdateProfileInput) =>

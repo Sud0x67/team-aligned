@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Plus,
   Search,
   Users,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { AgentRecord, TeamRecord } from "@shared";
 import { createTranslator } from "../i18n";
 import { useAppStore } from "../store/use-app-store";
@@ -19,6 +19,10 @@ import {
 } from "../components/manage/manage-modals";
 
 type ActiveTab = "agents" | "groups";
+type ManageLocationState = {
+  editKind?: "agent" | "team";
+  targetId?: string;
+};
 
 const defaultAgentForm: AgentFormState = {
   name: "",
@@ -32,7 +36,6 @@ const defaultAgentForm: AgentFormState = {
 const defaultTeamForm: TeamFormState = {
   name: "",
   description: "",
-  objective: "",
   memberIds: [] as string[],
   workspacePath: "",
   avatarPath: null as string | null,
@@ -40,6 +43,7 @@ const defaultTeamForm: TeamFormState = {
 
 export function ManagePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     agents,
     teams,
@@ -53,11 +57,12 @@ export function ManagePage() {
     createTeam,
     deleteAgent,
     deleteTeam,
+    ensureConversation,
     updateAgent,
+    updateTeam,
     openWorkspace,
     updateAgentSkills,
     updateAgentMcps,
-    updateTeamMcps,
   } = useAppStore();
   const t = createTranslator(settings.language);
 
@@ -66,10 +71,10 @@ export function ManagePage() {
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null);
+  const [editingTeam, setEditingTeam] = useState<TeamRecord | null>(null);
   const [editingAgentSkills, setEditingAgentSkills] = useState<AgentRecord | null>(null);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [editingAgentMcps, setEditingAgentMcps] = useState<AgentRecord | null>(null);
-  const [editingTeamMcps, setEditingTeamMcps] = useState<TeamRecord | null>(null);
   const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([]);
   const [agentForm, setAgentForm] = useState(defaultAgentForm);
   const [teamForm, setTeamForm] = useState(defaultTeamForm);
@@ -114,12 +119,13 @@ export function ManagePage() {
     return mcpCatalog.filter((server) => connectedIds.has(server.id));
   }, [mcpCatalog, mcpConnections]);
 
-  const openConversation = (input: { kind: "agent" | "team"; targetId: string }) => {
+  const openConversation = async (input: { kind: "agent" | "team"; targetId: string }) => {
     const conversation = conversations.find(
       (item) => item.kind === input.kind && item.targetId === input.targetId,
     );
+    const conversationId = conversation?.id ?? (await ensureConversation(input));
     navigate("/", {
-      state: conversation ? { conversationId: conversation.id } : undefined,
+      state: { conversationId },
     });
   };
 
@@ -172,17 +178,64 @@ export function ManagePage() {
 
   const submitTeam = async () => {
     if (!teamForm.name.trim() || teamForm.memberIds.length === 0) return;
-    await createTeam({
+    const payload = {
       name: teamForm.name.trim(),
       description: teamForm.description.trim() || t.chat("noDescriptionYet"),
-      objective: teamForm.objective.trim() || t.chat("objectiveNotSet"),
       memberIds: teamForm.memberIds,
       workspacePath: teamForm.workspacePath.trim() || undefined,
       avatarPath: teamForm.avatarPath,
-    });
+    };
+
+    if (editingTeam) {
+      await updateTeam({
+        teamId: editingTeam.id,
+        ...payload,
+      });
+    } else {
+      await createTeam(payload);
+    }
+
+    setEditingTeam(null);
     setTeamForm(defaultTeamForm);
     setShowTeamForm(false);
   };
+
+  const openCreateTeamForm = () => {
+    setEditingTeam(null);
+    setTeamForm(defaultTeamForm);
+    setShowTeamForm(true);
+  };
+
+  const openEditTeamForm = (team: TeamRecord) => {
+    setEditingTeam(team);
+    setTeamForm({
+      name: team.name,
+      description: team.description,
+      memberIds: team.memberIds,
+      workspacePath: team.workspacePath,
+      avatarPath: team.avatarPath,
+    });
+    setShowTeamForm(true);
+  };
+
+  useEffect(() => {
+    const state = (location.state as ManageLocationState | null) ?? null;
+    if (!state?.editKind || !state.targetId) return;
+
+    if (state.editKind === "agent") {
+      const agent = agents.find((item) => item.id === state.targetId);
+      if (!agent) return;
+      setActiveTab("agents");
+      openEditAgentForm(agent);
+    } else {
+      const team = teams.find((item) => item.id === state.targetId);
+      if (!team) return;
+      setActiveTab("groups");
+      openEditTeamForm(team);
+    }
+
+    navigate("/manage", { replace: true, state: null });
+  }, [agents, location.state, navigate, teams]);
 
   const openSkillEditor = (agent: AgentRecord) => {
     setEditingAgentSkills(agent);
@@ -208,13 +261,6 @@ export function ManagePage() {
     );
   };
 
-  const openTeamMcpEditor = (team: TeamRecord) => {
-    setEditingTeamMcps(team);
-    setSelectedMcpIds(
-      team.mcpWhitelist.filter((serverId) => connectedMcps.some((server) => server.id === serverId)),
-    );
-  };
-
   const submitAgentMcps = async () => {
     if (!editingAgentMcps) return;
     await updateAgentMcps({
@@ -222,16 +268,6 @@ export function ManagePage() {
       serverIds: selectedMcpIds,
     });
     setEditingAgentMcps(null);
-    setSelectedMcpIds([]);
-  };
-
-  const submitTeamMcps = async () => {
-    if (!editingTeamMcps) return;
-    await updateTeamMcps({
-      teamId: editingTeamMcps.id,
-      serverIds: selectedMcpIds,
-    });
-    setEditingTeamMcps(null);
     setSelectedMcpIds([]);
   };
 
@@ -267,8 +303,9 @@ export function ManagePage() {
     if (!confirmed) return;
     try {
       await deleteTeam(team.id);
-      if (editingTeamMcps?.id === team.id) {
-        setEditingTeamMcps(null);
+      if (editingTeam?.id === team.id) {
+        setEditingTeam(null);
+        setShowTeamForm(false);
       }
     } catch (error) {
       window.alert(
@@ -403,7 +440,7 @@ export function ManagePage() {
                 </p>
               </div>
               <button
-                onClick={() => setShowTeamForm(true)}
+                onClick={openCreateTeamForm}
                 className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
               >
                 <Plus className="h-4 w-4" />
@@ -414,27 +451,18 @@ export function ManagePage() {
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {visibleTeams.map((team) => {
                 const members = agents.filter((agent) => team.memberIds.includes(agent.id));
-                const whitelistedMcps = connectedMcps.filter((server) => team.mcpWhitelist.includes(server.id));
                 return (
                   <TeamCard
                     key={team.id}
                     team={team}
                     members={members}
-                    whitelistedMcps={whitelistedMcps}
                     labels={{
                       members: t.common("members"),
-                      mcpWhitelist: t.manage("mcpWhitelist"),
-                      configureMcps:
-                        connectedMcps.length > 0 ? t.manage("configureMcps") : t.manage("openExtensions"),
-                      noAgentMcps:
-                        connectedMcps.length > 0 ? t.manage("noAgentMcps") : t.manage("noMcpsConnected"),
-                      manageAction: t.manage("manageAction"),
+                      editAction: t.manage("editTeam"),
                       startConversationAction: t.manage("startConversationAction"),
                       deleteAction: t.manage("deleteAction"),
                     }}
-                    onConfigureMcps={() =>
-                      connectedMcps.length > 0 ? openTeamMcpEditor(team) : navigate("/extensions")
-                    }
+                    onEdit={() => openEditTeamForm(team)}
                     onOpenWorkspace={() => openWorkspace(team.workspacePath)}
                     onOpenConversation={() => openConversation({ kind: "team", targetId: team.id })}
                     onDelete={() => void submitDeleteTeam(team)}
@@ -479,6 +507,8 @@ export function ManagePage() {
         open={showTeamForm}
         form={teamForm}
         agents={agents}
+        title={editingTeam ? t.manage("editTeam") : t.manage("createNewGroup")}
+        submitLabel={editingTeam ? t.manage("saveTeam") : t.manage("create")}
         labels={{
           createNewGroup: t.manage("createNewGroup"),
           avatar: t.manage("avatar"),
@@ -487,7 +517,6 @@ export function ManagePage() {
           removeAvatar: t.common("removeAvatar"),
           teamName: t.manage("teamName"),
           descriptionField: t.manage("descriptionField"),
-          teamObjective: t.manage("teamObjective"),
           chooseMembers: t.manage("chooseMembers"),
           workspacePath: t.manage("workspacePath"),
           browseDirectory: t.extensions("browseDirectory"),
@@ -496,6 +525,7 @@ export function ManagePage() {
         }}
         onChange={setTeamForm}
         onClose={() => {
+          setEditingTeam(null);
           setShowTeamForm(false);
           setTeamForm(defaultTeamForm);
         }}
@@ -552,30 +582,6 @@ export function ManagePage() {
         onSubmit={() => void submitAgentMcps()}
       />
 
-      <SelectionModal
-        open={Boolean(editingTeamMcps)}
-        title={
-          editingTeamMcps
-            ? `${editingTeamMcps.name} · ${t.manage("mcpWhitelist")}`
-            : t.manage("mcpWhitelist")
-        }
-        subtitle={t.manage("configureMcps")}
-        items={connectedMcps.map((server) => ({
-          id: server.id,
-          name: server.name,
-          description: server.description,
-        }))}
-        selectedIds={selectedMcpIds}
-        emptyLabel={t.manage("noMcpsConnected")}
-        cancelLabel={t.manage("cancel")}
-        confirmLabel={t.manage("saveMcps")}
-        onToggle={toggleSelectedId}
-        onClose={() => {
-          setEditingTeamMcps(null);
-          setSelectedMcpIds([]);
-        }}
-        onSubmit={() => void submitTeamMcps()}
-      />
     </div>
   );
 }

@@ -97,6 +97,65 @@ test("schema creates structured columns directly without runtime column patching
   }
 });
 
+test("init removes stale group objective schema and payload fields", () => {
+  const root = createTempRoot();
+  const dbPath = join(root, "app.db");
+  try {
+    const db = new DatabaseSync(dbPath);
+    const workspacePath = join(root, "workspaces", "teams", "team-legacy");
+    const payload = {
+      id: "team-legacy",
+      name: "Legacy Team",
+      description: "Legacy description",
+      avatar: "L",
+      avatarPath: null,
+      avatarColor: "#7c3aed",
+      objective: "Legacy fixed goal",
+      workspacePath,
+      memberIds: [],
+      mcpWhitelist: [],
+      context: {
+        objective: "Legacy fixed goal",
+        phase: "执行中",
+        constraints: [],
+        activeTasks: [],
+        recentDecisions: [],
+        pinnedArtifacts: [],
+        workspaceSummary: "",
+      },
+    };
+    db.exec(`
+      CREATE TABLE teams (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        avatar_path TEXT,
+        payload TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      "INSERT INTO teams (id, name, objective, workspace_path, avatar_path, payload) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(payload.id, payload.name, payload.objective, workspacePath, null, JSON.stringify(payload));
+    db.close();
+
+    const storage = new AppStorage(root);
+    storage.init();
+
+    const dbAfter = new DatabaseSync(dbPath);
+    const columns = dbAfter.prepare("PRAGMA table_info(teams)").all() as Array<{ name: string }>;
+    dbAfter.close();
+
+    const snapshot = storage.getSnapshot();
+    const team = snapshot.teams.find((item) => item.id === "team-legacy");
+    assert.equal(columns.some((column) => column.name === "objective"), false);
+    assert.equal(JSON.stringify(team).includes("Legacy fixed goal"), false);
+    assert.equal(JSON.stringify(team).includes("mcpWhitelist"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("constructor throws clear error for incompatible legacy sqlite schema", () => {
   const root = createTempRoot();
   const dbPath = join(root, "app.db");
@@ -298,6 +357,55 @@ test("deleteTeam removes group conversation data", () => {
     assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-team-product"), false);
     assert.equal((snapshot.messages["conv-team-product"] ?? []).length, 0);
     assert.equal(snapshot.runs.some((run) => run.conversationId === "conv-team-product"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleteConversation removes chat history without deleting its target", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    const removed = storage.deleteConversation("conv-agent-nova");
+    assert.equal(removed, true);
+
+    let snapshot = storage.getSnapshot();
+    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-nova"), true);
+    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-agent-nova"), false);
+    assert.equal((snapshot.messages["conv-agent-nova"] ?? []).length, 0);
+
+    const conversation = storage.ensureConversation({ kind: "agent", targetId: "agent-nova" });
+    assert.equal(conversation.id, "conv-agent-nova");
+    snapshot = storage.getSnapshot();
+    assert.equal(snapshot.conversations.some((item) => item.id === "conv-agent-nova"), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("updateTeam edits group metadata without touching member agents", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    storage.updateTeam({
+      teamId: "team-product",
+      name: "Renamed Squad",
+      description: "Updated description",
+      memberIds: ["agent-coder", "agent-designer"],
+      avatarPath: null,
+    });
+
+    const snapshot = storage.getSnapshot();
+    const team = snapshot.teams.find((item) => item.id === "team-product");
+    assert.equal(team?.name, "Renamed Squad");
+    assert.deepEqual(team?.memberIds, ["agent-coder", "agent-designer"]);
+    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-planner"), true);
+    const conversation = snapshot.conversations.find((item) => item.id === "conv-team-product");
+    assert.equal(conversation?.title, "Renamed Squad");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

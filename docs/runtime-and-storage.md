@@ -456,7 +456,6 @@ MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保
 每个快照至少包含：
 
 - `conversationId`
-- `objective`
 - `membersSummary`
 - `activeTasks`
 - `recentDecisions`

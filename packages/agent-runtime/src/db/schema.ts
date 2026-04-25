@@ -47,7 +47,6 @@ export const teams = sqliteTable(
   {
     id: text("id").primaryKey().notNull(),
     name: text("name"),
-    objective: text("objective"),
     workspacePath: text("workspace_path"),
     avatarPath: text("avatar_path"),
     payload: text("payload").notNull(),

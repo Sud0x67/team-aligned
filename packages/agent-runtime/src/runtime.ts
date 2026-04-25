@@ -12,6 +12,8 @@ import type {
   ConversationExportResult,
   ConnectMcpInput,
   ConversationRecord,
+  EnsureConversationInput,
+  EnsureConversationResult,
   McpCatalogRecord,
   MessageVisibility,
   NotificationRecord,
@@ -30,10 +32,10 @@ import type {
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
+  UpdateTeamInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
-  UpdateTeamMcpsInput,
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
 import {
@@ -551,16 +553,20 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     const conversationId = `conv-${agent.id}`;
+    const teamConversationIds = snapshot.teams
+      .filter((team) => team.memberIds.includes(agent.id))
+      .map((team) => `conv-${team.id}`);
+    const blockedConversationIds = new Set([conversationId, ...teamConversationIds]);
     const hasActiveRun = snapshot.runs.some(
       (run) =>
-        run.conversationId === conversationId &&
+        blockedConversationIds.has(run.conversationId) &&
         !["completed", "failed", "cancelled"].includes(run.status),
     );
     if (hasActiveRun) {
       throw new Error(
         byLanguage(responseLanguage, {
-          zh: "该 Agent 仍有运行中的任务，请先取消任务后再删除。",
-          en: "This Agent still has an active run. Cancel it before deleting.",
+          zh: "该 Agent 或所在群组仍有运行中的任务，请先取消任务后再删除。",
+          en: "This Agent or one of its groups still has an active run. Cancel it before deleting.",
         }),
       );
     }
@@ -603,8 +609,55 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async deleteConversation(conversationId: string) {
+    const snapshot = this.storage.getSnapshot();
+    const responseLanguage: RuntimeLanguage = snapshot.settings.language === "en" ? "en" : "zh";
+    const conversation = snapshot.conversations.find((item) => item.id === conversationId);
+    if (!conversation) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "未找到要删除的会话。",
+          en: "Conversation to delete was not found.",
+        }),
+      );
+    }
+
+    const hasActiveRun = snapshot.runs.some(
+      (run) =>
+        run.conversationId === conversation.id &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "该会话仍有运行中的任务，请先取消任务后再删除。",
+          en: "This conversation still has an active run. Cancel it before deleting.",
+        }),
+      );
+    }
+
+    this.storage.deleteConversation(conversation.id);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async ensureConversation(payload: EnsureConversationInput): Promise<EnsureConversationResult> {
+    const conversation = this.storage.ensureConversation(payload);
+    this.emitSnapshot();
+    return {
+      snapshot: this.getSnapshot(),
+      conversationId: conversation.id,
+    };
+  }
+
   async updateAgent(payload: UpdateAgentInput) {
     this.storage.updateAgent(payload);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async updateTeam(payload: UpdateTeamInput) {
+    this.storage.updateTeam(payload);
     this.emitSnapshot();
     return this.getSnapshot();
   }
@@ -930,12 +983,6 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async updateAgentMcps(payload: UpdateAgentMcpsInput) {
     this.storage.updateAgentMcpWhitelist(payload);
-    this.emitSnapshot();
-    return this.getSnapshot();
-  }
-
-  async updateTeamMcps(payload: UpdateTeamMcpsInput) {
-    this.storage.updateTeamMcpWhitelist(payload);
     this.emitSnapshot();
     return this.getSnapshot();
   }
@@ -1302,7 +1349,12 @@ export class TeamalignedRuntime extends EventEmitter {
     const allowedIds =
       conversation.kind === "agent"
         ? (this.storage.getAgent(conversation.targetId)?.mcpWhitelist ?? [])
-        : (this.storage.getTeam(conversation.targetId)?.mcpWhitelist ?? []);
+        : Array.from(
+            new Set(
+              (this.storage.getTeam(conversation.targetId)?.memberIds ?? [])
+                .flatMap((agentId) => this.storage.getAgent(agentId)?.mcpWhitelist ?? []),
+            ),
+          );
 
     const servers = this.storage
       .listMcpConnections()

@@ -1120,13 +1120,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "objective": {
-          "name": "objective",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "workspace_path": {
           "name": "workspace_path",
           "type": "text",

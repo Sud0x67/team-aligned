@@ -251,26 +251,21 @@ export function AgentCard({
 export function TeamCard({
   team,
   members,
-  whitelistedMcps,
   labels,
-  onConfigureMcps,
+  onEdit,
   onOpenWorkspace,
   onOpenConversation,
   onDelete,
 }: {
   team: TeamRecord;
   members: AgentRecord[];
-  whitelistedMcps: McpCatalogRecord[];
   labels: {
     members: string;
-    mcpWhitelist: string;
-    configureMcps: string;
-    noAgentMcps: string;
-    manageAction: string;
+    editAction: string;
     startConversationAction: string;
     deleteAction: string;
   };
-  onConfigureMcps: () => void;
+  onEdit: () => void;
   onOpenWorkspace: () => void;
   onOpenConversation: () => void;
   onDelete: () => void;
@@ -318,46 +313,12 @@ export function TeamCard({
         </div>
       </div>
 
-      <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--foreground)]">
-            <Blocks className="h-3.5 w-3.5 text-[var(--primary)]" />
-            {labels.mcpWhitelist}
-          </div>
-          <button
-            onClick={onConfigureMcps}
-            className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
-          >
-            {labels.configureMcps}
-          </button>
-        </div>
-        {whitelistedMcps.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {whitelistedMcps.slice(0, 3).map((server) => (
-              <span
-                key={server.id}
-                className="rounded-md bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] text-[var(--primary)]"
-              >
-                {server.name}
-              </span>
-            ))}
-            {whitelistedMcps.length > 3 ? (
-              <span className="rounded-md bg-[var(--muted)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">
-                +{whitelistedMcps.length - 3}
-              </span>
-            ) : null}
-          </div>
-        ) : (
-          <p className="text-[12px] text-[var(--muted-foreground)]">{labels.noAgentMcps}</p>
-        )}
-      </div>
-
       <div className="flex gap-2 border-t border-[var(--border)] pt-3">
         <button
-          onClick={onOpenWorkspace}
+          onClick={onEdit}
           className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
         >
-          {labels.manageAction}
+          {labels.editAction}
         </button>
         <button
           onClick={onOpenConversation}

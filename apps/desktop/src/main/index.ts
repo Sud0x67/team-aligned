@@ -9,6 +9,7 @@ import type {
   ConnectMcpInput,
   CreateAgentInput,
   CreateTeamInput,
+  EnsureConversationInput,
   NotificationRecord,
   RunControlPayload,
   SaveAttachmentAssetInput,
@@ -18,10 +19,10 @@ import type {
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
+  UpdateTeamInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
-  UpdateTeamMcpsInput,
 } from "@shared";
 import { evaluateNotificationDispatch, type RuntimeNotificationChannel } from "./notification-policy.ts";
 
@@ -256,8 +257,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:delete-team", async (_event, teamId: string) =>
     runtime?.deleteTeam(teamId),
   );
+  ipcMain.handle("teamaligned:delete-conversation", async (_event, conversationId: string) =>
+    runtime?.deleteConversation(conversationId),
+  );
+  ipcMain.handle("teamaligned:ensure-conversation", async (_event, payload: EnsureConversationInput) =>
+    runtime?.ensureConversation(payload),
+  );
   ipcMain.handle("teamaligned:update-agent", async (_event, payload: UpdateAgentInput) =>
     runtime?.updateAgent(payload),
+  );
+  ipcMain.handle("teamaligned:update-team", async (_event, payload: UpdateTeamInput) =>
+    runtime?.updateTeam(payload),
   );
   ipcMain.handle("teamaligned:refresh-skill-catalog", async () => runtime?.refreshSkillCatalog());
   ipcMain.handle("teamaligned:install-skill", async (_event, skillId: string) =>
@@ -290,9 +300,6 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:update-agent-mcps", async (_event, payload: UpdateAgentMcpsInput) =>
     runtime?.updateAgentMcps(payload),
-  );
-  ipcMain.handle("teamaligned:update-team-mcps", async (_event, payload: UpdateTeamMcpsInput) =>
-    runtime?.updateTeamMcps(payload),
   );
   ipcMain.handle("teamaligned:update-settings", async (_event, payload: UpdateSettingsInput) =>
     runtime?.updateSettings(payload),

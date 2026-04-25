@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { AttachmentAssetRecord } from "@shared";
-import { useLocation } from "react-router-dom";
+import type { AttachmentAssetRecord, ConversationRecord } from "@shared";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 import { AvatarBadge } from "../components/avatar-badge";
@@ -13,6 +13,7 @@ import { getLatestActiveRun } from "../components/chat/chat-utils";
 
 export function ChatPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     profile,
     conversations,
@@ -27,6 +28,9 @@ export function ChatPage() {
     commandSuggestions,
     sendInput,
     controlRun,
+    deleteAgent,
+    deleteTeam,
+    deleteConversation,
     markConversationRead,
     exportConversationData,
     openWorkspace,
@@ -375,6 +379,62 @@ export function ChatPage() {
     }
   };
 
+  const getNextConversationId = (conversationId: string) =>
+    conversations.find((conversation) => conversation.id !== conversationId)?.id ?? "";
+
+  const handleEditConversationTarget = (conversation: ConversationRecord) => {
+    navigate("/manage", {
+      state: {
+        editKind: conversation.kind,
+        targetId: conversation.targetId,
+      },
+    });
+  };
+
+  const handleDeleteConversation = async (conversation: ConversationRecord) => {
+    const confirmed = window.confirm(
+      t.chat("deleteConversationConfirm").replace("{{title}}", conversation.title),
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteConversation(conversation.id);
+      if (activeConversationId === conversation.id) {
+        setActiveConversationId(getNextConversationId(conversation.id));
+      }
+    } catch (error) {
+      window.alert(
+        t.chat("deleteFailedPrefix") +
+          (error instanceof Error ? error.message : t.chat("deleteFailedFallback")),
+      );
+    }
+  };
+
+  const handleDeleteConversationTarget = async (conversation: ConversationRecord) => {
+    const confirmMessage =
+      conversation.kind === "agent"
+        ? t.chat("deleteAgentFromChatConfirm")
+        : t.chat("deleteTeamFromChatConfirm");
+    const confirmed = window.confirm(confirmMessage.replace("{{title}}", conversation.title));
+    if (!confirmed) return;
+
+    try {
+      if (conversation.kind === "agent") {
+        await deleteAgent(conversation.targetId);
+      } else {
+        await deleteTeam(conversation.targetId);
+      }
+      if (activeConversationId === conversation.id) {
+        setActiveConversationId(getNextConversationId(conversation.id));
+      }
+    } catch (error) {
+      window.alert(
+        t.chat("deleteFailedPrefix") +
+          (error instanceof Error ? error.message : t.chat("deleteFailedFallback")),
+      );
+    }
+  };
+
   const handleCancel = async () => {
     if (!activeConversation) return;
     await controlRun({ conversationId: activeConversation.id, action: "cancel" });
@@ -408,6 +468,9 @@ export function ChatPage() {
             conversations={filteredConversations}
             activeConversationId={activeConversationId}
             onSelectConversation={handleSelectConversation}
+            onEditTarget={handleEditConversationTarget}
+            onDeleteConversation={(conversation) => void handleDeleteConversation(conversation)}
+            onDeleteTarget={(conversation) => void handleDeleteConversationTarget(conversation)}
             search={search}
             onSearchChange={setSearch}
           />

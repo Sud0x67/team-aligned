@@ -17,7 +17,6 @@ export type AgentFormState = {
 export type TeamFormState = {
   name: string;
   description: string;
-  objective: string;
   memberIds: string[];
   workspacePath: string;
   avatarPath: string | null;
@@ -177,6 +176,8 @@ export function TeamFormModal({
   open,
   form,
   agents,
+  title,
+  submitLabel,
   labels,
   onChange,
   onClose,
@@ -185,6 +186,8 @@ export function TeamFormModal({
   open: boolean;
   form: TeamFormState;
   agents: AgentRecord[];
+  title: string;
+  submitLabel: string;
   labels: Record<string, string>;
   onChange: (next: TeamFormState) => void;
   onClose: () => void;
@@ -193,7 +196,7 @@ export function TeamFormModal({
   if (!open) return null;
 
   return (
-    <ModalShell title={labels.createNewGroup} onClose={onClose}>
+    <ModalShell title={title} onClose={onClose}>
       <div className="space-y-4">
         <AvatarPicker
           label={labels.avatar}
@@ -219,14 +222,6 @@ export function TeamFormModal({
           <input
             value={form.description}
             onChange={(event) => onChange({ ...form, description: event.target.value })}
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-[13px] text-[var(--muted-foreground)]">{labels.teamObjective}</label>
-          <input
-            value={form.objective}
-            onChange={(event) => onChange({ ...form, objective: event.target.value })}
             className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
           />
         </div>
@@ -308,7 +303,7 @@ export function TeamFormModal({
           onClick={onSubmit}
           className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"
         >
-          {labels.create}
+          {submitLabel}
         </button>
       </div>
     </ModalShell>

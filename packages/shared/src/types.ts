@@ -159,15 +159,12 @@ export interface TeamRecord {
   avatar: string;
   avatarPath: string | null;
   avatarColor: string;
-  objective: string;
   workspacePath: string;
   memberIds: string[];
-  mcpWhitelist: string[];
   context: TeamContext;
 }
 
 export interface TeamContext {
-  objective: string;
   phase: string;
   constraints: string[];
   activeTasks: string[];
@@ -395,7 +392,15 @@ export interface CreateAgentInput {
 export interface CreateTeamInput {
   name: string;
   description: string;
-  objective: string;
+  memberIds: string[];
+  workspacePath?: string;
+  avatarPath?: string | null;
+}
+
+export interface UpdateTeamInput {
+  teamId: string;
+  name: string;
+  description: string;
   memberIds: string[];
   workspacePath?: string;
   avatarPath?: string | null;
@@ -440,9 +445,14 @@ export interface UpdateAgentMcpsInput {
   serverIds: string[];
 }
 
-export interface UpdateTeamMcpsInput {
-  teamId: string;
-  serverIds: string[];
+export interface EnsureConversationInput {
+  kind: ConversationKind;
+  targetId: string;
+}
+
+export interface EnsureConversationResult {
+  snapshot: AppSnapshot;
+  conversationId: string;
 }
 
 export interface SavePromptAliasInput {
@@ -497,7 +507,10 @@ export interface TeamalignedApi {
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
   deleteAgent: (agentId: string) => Promise<AppSnapshot>;
   deleteTeam: (teamId: string) => Promise<AppSnapshot>;
+  deleteConversation: (conversationId: string) => Promise<AppSnapshot>;
+  ensureConversation: (payload: EnsureConversationInput) => Promise<EnsureConversationResult>;
   updateAgent: (payload: UpdateAgentInput) => Promise<AppSnapshot>;
+  updateTeam: (payload: UpdateTeamInput) => Promise<AppSnapshot>;
   refreshSkillCatalog: () => Promise<AppSnapshot>;
   installSkill: (skillId: string) => Promise<AppSnapshot>;
   removeSkill: (skillId: string) => Promise<AppSnapshot>;
@@ -510,7 +523,6 @@ export interface TeamalignedApi {
   toggleExtension: (extensionId: string) => Promise<AppSnapshot>;
   updateAgentSkills: (payload: UpdateAgentSkillsInput) => Promise<AppSnapshot>;
   updateAgentMcps: (payload: UpdateAgentMcpsInput) => Promise<AppSnapshot>;
-  updateTeamMcps: (payload: UpdateTeamMcpsInput) => Promise<AppSnapshot>;
   updateSettings: (payload: UpdateSettingsInput) => Promise<AppSnapshot>;
   updateProfile: (payload: UpdateProfileInput) => Promise<AppSnapshot>;
   updateProvider: (payload: UpdateProviderInput) => Promise<AppSnapshot>;

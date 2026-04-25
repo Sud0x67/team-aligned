@@ -119,7 +119,7 @@ teamaligned
 - 创建群组
 - 配置头像
 - 配置 Agent Skill 白名单
-- 配置 Agent / Team MCP 白名单
+- 配置 Agent MCP 白名单
 
 ### 当前扩展页结构
 
@@ -278,7 +278,6 @@ TeamalignedRuntime
 
 当前群聊会综合这些信息进入规划与总结：
 
-- 群组目标
 - 当前阶段
 - 最近决策
 - 活跃任务
@@ -438,8 +437,8 @@ MCP 当前尚未完成：
 
 - `agents`
 - `teams`
-- Skill 白名单
-- MCP 白名单
+- Agent Skill 白名单
+- Agent MCP 白名单
 
 ### 扩展页
 

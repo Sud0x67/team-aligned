@@ -138,7 +138,6 @@ function buildContextText(team: TeamRecord, context: TeamContext, language: Runt
   const noneText = byLanguage(language, { zh: "无", en: "none" });
   return [
     byLanguage(language, { zh: `群组：${team.name}`, en: `Team: ${team.name}` }),
-    byLanguage(language, { zh: `群组目标：${team.objective}`, en: `Objective: ${team.objective}` }),
     byLanguage(language, { zh: `当前阶段：${context.phase}`, en: `Current phase: ${context.phase}` }),
     byLanguage(language, {
       zh: `约束：${context.constraints.join("；") || noneText}`,

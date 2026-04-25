@@ -177,7 +177,6 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
     isActive: true,
   };
   const context: TeamContext = {
-    objective: "协作完成任务",
     phase: "讨论中",
     constraints: [],
     activeTasks: [],
@@ -192,10 +191,8 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
     avatar: "产",
     avatarPath: null,
     avatarColor: "#7c3aed",
-    objective: "协作完成任务",
     workspacePath: "/tmp",
     memberIds: members.map((item) => item.id),
-    mcpWhitelist: [],
     context,
   };
   const profile: UserProfile = {
@@ -240,7 +237,6 @@ test("normalizeTeamHandoffState filters invalid ids and keeps only current team 
     makeAgent("agent-designer", "designer", "Designer"),
   ];
   const context: TeamContext = {
-    objective: "协作",
     phase: "执行中",
     constraints: [],
     activeTasks: [],

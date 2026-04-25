@@ -79,7 +79,7 @@
 - [x] `stdio npx` MCP
 - [x] `HTTP + headers` MCP
 - [x] MCP 本地配置、健康检查、tool discovery
-- [x] Agent / Team MCP 白名单
+- [x] Agent MCP 白名单
 - [x] MCP discovered tools 注入 runtime
 - [x] workspace 文件、搜索、命令工具层接入 runtime
 

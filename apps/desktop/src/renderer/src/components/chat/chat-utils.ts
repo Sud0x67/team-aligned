@@ -17,7 +17,6 @@ export function getLatestActiveRun(runs: RunRecord[], conversationId: string) {
 
 export function getTeamContextSummary(teamContext: TeamContext) {
   return [
-    teamContext.objective,
     teamContext.phase,
     teamContext.activeTasks[0] ?? "",
   ]

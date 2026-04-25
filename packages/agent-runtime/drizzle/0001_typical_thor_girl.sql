@@ -28,7 +28,6 @@ ALTER TABLE `runs` ADD `transcript_path` text;--> statement-breakpoint
 ALTER TABLE `runs` ADD `workspace_transcript_path` text;--> statement-breakpoint
 ALTER TABLE `runs` ADD `memory_path` text;--> statement-breakpoint
 ALTER TABLE `teams` ADD `name` text;--> statement-breakpoint
-ALTER TABLE `teams` ADD `objective` text;--> statement-breakpoint
 ALTER TABLE `teams` ADD `workspace_path` text;--> statement-breakpoint
 ALTER TABLE `teams` ADD `avatar_path` text;--> statement-breakpoint
 CREATE INDEX `idx_teams_name` ON `teams` (`name`);--> statement-breakpoint

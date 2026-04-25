@@ -6,6 +6,7 @@ import type {
   ConversationExportResult,
   CreateAgentInput,
   CreateTeamInput,
+  EnsureConversationInput,
   ProviderConnectionTestInput,
   ProviderConnectionTestResult,
   RunControlPayload,
@@ -14,10 +15,10 @@ import type {
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
+  UpdateTeamInput,
   UpdateProfileInput,
   UpdateProviderInput,
   UpdateSettingsInput,
-  UpdateTeamMcpsInput,
 } from "@shared";
 
 type AppStore = AppSnapshot & {
@@ -31,7 +32,10 @@ type AppStore = AppSnapshot & {
   createTeam: (payload: CreateTeamInput) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
+  ensureConversation: (payload: EnsureConversationInput) => Promise<string>;
   updateAgent: (payload: UpdateAgentInput) => Promise<void>;
+  updateTeam: (payload: UpdateTeamInput) => Promise<void>;
   refreshSkillCatalog: () => Promise<void>;
   installSkill: (skillId: string) => Promise<void>;
   removeSkill: (skillId: string) => Promise<void>;
@@ -44,7 +48,6 @@ type AppStore = AppSnapshot & {
   toggleExtension: (extensionId: string) => Promise<void>;
   updateAgentSkills: (payload: UpdateAgentSkillsInput) => Promise<void>;
   updateAgentMcps: (payload: UpdateAgentMcpsInput) => Promise<void>;
-  updateTeamMcps: (payload: UpdateTeamMcpsInput) => Promise<void>;
   updateSettings: (payload: UpdateSettingsInput) => Promise<void>;
   updateProfile: (payload: UpdateProfileInput) => Promise<void>;
   updateProvider: (payload: UpdateProviderInput) => Promise<void>;
@@ -137,8 +140,17 @@ export const useAppStore = create<AppStore>((set) => {
       runSnapshotAction(() => window.teamaligned.deleteAgent(agentId)),
     deleteTeam: async (teamId) =>
       runSnapshotAction(() => window.teamaligned.deleteTeam(teamId)),
+    deleteConversation: async (conversationId) =>
+      runSnapshotAction(() => window.teamaligned.deleteConversation(conversationId)),
+    ensureConversation: async (payload) => {
+      const result = await window.teamaligned.ensureConversation(payload);
+      applySnapshot(result.snapshot);
+      return result.conversationId;
+    },
     updateAgent: async (payload) =>
       runSnapshotAction(() => window.teamaligned.updateAgent(payload)),
+    updateTeam: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.updateTeam(payload)),
     refreshSkillCatalog: async () =>
       runLoadingSnapshotAction(() => window.teamaligned.refreshSkillCatalog()),
     installSkill: async (skillId) =>
@@ -167,8 +179,6 @@ export const useAppStore = create<AppStore>((set) => {
       runSnapshotAction(() => window.teamaligned.updateAgentSkills(payload)),
     updateAgentMcps: async (payload) =>
       runSnapshotAction(() => window.teamaligned.updateAgentMcps(payload)),
-    updateTeamMcps: async (payload) =>
-      runSnapshotAction(() => window.teamaligned.updateTeamMcps(payload)),
     updateSettings: async (payload) =>
       runSnapshotAction(() => window.teamaligned.updateSettings(payload)),
     updateProfile: async (payload) =>

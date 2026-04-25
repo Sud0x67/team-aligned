@@ -382,8 +382,7 @@ export const defaultMcpCatalog: McpCatalogRecord[] = [
 
 export const defaultConnectedMcpIds = ["mcp-filesystem", "mcp-playwright"];
 
-export const defaultTeamContext = (objective: string): TeamContext => ({
-  objective,
+export const defaultTeamContext = (): TeamContext => ({
   phase: "执行中",
   constraints: [
     "保持聊天优先，不做成复杂后台",

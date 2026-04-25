@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { Bot, Hash, Search } from "lucide-react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { Bot, Edit3, Hash, Search, Trash2, UserX } from "lucide-react";
 import type { ConversationRecord } from "@shared";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
@@ -9,12 +9,18 @@ export function ChatConversationList({
   conversations,
   activeConversationId,
   onSelectConversation,
+  onEditTarget,
+  onDeleteConversation,
+  onDeleteTarget,
   search,
   onSearchChange,
 }: {
   conversations: ConversationRecord[];
   activeConversationId: string;
   onSelectConversation: (conversationId: string) => void;
+  onEditTarget: (conversation: ConversationRecord) => void;
+  onDeleteConversation: (conversation: ConversationRecord) => void;
+  onDeleteTarget: (conversation: ConversationRecord) => void;
   search: string;
   onSearchChange: (value: string) => void;
 }) {
@@ -24,6 +30,41 @@ export function ChatConversationList({
   const t = createTranslator(language);
   const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const [contextMenu, setContextMenu] = useState<{
+    conversation: ConversationRecord;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const closeMenu = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("blur", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [contextMenu]);
+
+  const openContextMenu = (event: MouseEvent, conversation: ConversationRecord) => {
+    event.preventDefault();
+    onSelectConversation(conversation.id);
+    setContextMenu({
+      conversation,
+      x: Math.min(event.clientX, window.innerWidth - 220),
+      y: Math.min(event.clientY, window.innerHeight - 160),
+    });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
@@ -50,6 +91,7 @@ export function ChatConversationList({
             <button
               key={conversation.id}
               onClick={() => onSelectConversation(conversation.id)}
+              onContextMenu={(event) => openContextMenu(event, conversation)}
               className={`w-full rounded-xl px-3 py-3 text-left transition ${
                 active
                   ? "bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
@@ -132,6 +174,51 @@ export function ChatConversationList({
           </div>
         ) : null}
       </div>
+
+      {contextMenu ? (
+        <div
+          className="fixed z-50 w-52 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] py-1 shadow-2xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onEditTarget(contextMenu.conversation);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+          >
+            <Edit3 className="h-4 w-4 text-[var(--muted-foreground)]" />
+            {t.chat("contextMenuEdit")}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onDeleteConversation(contextMenu.conversation);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+          >
+            <Trash2 className="h-4 w-4 text-[var(--muted-foreground)]" />
+            {t.chat("contextMenuDeleteConversation")}
+          </button>
+          <div className="my-1 h-px bg-[var(--border)]" />
+          <button
+            type="button"
+            onClick={() => {
+              onDeleteTarget(contextMenu.conversation);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+          >
+            <UserX className="h-4 w-4" />
+            {contextMenu.conversation.kind === "agent"
+              ? t.chat("contextMenuDeleteAgent")
+              : t.chat("contextMenuDeleteTeam")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
