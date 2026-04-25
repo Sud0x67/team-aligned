@@ -3,7 +3,11 @@ import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "no
 import { spawn } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
-import { parseSlashCommand } from "@teamaligned/shared";
+import {
+  isSystemBuiltinSkillId,
+  isTeamAlignedAssistantAgentId,
+  parseSlashCommand,
+} from "@teamaligned/shared";
 import type {
   AgentRecord,
   AttachmentAssetRecord,
@@ -551,6 +555,14 @@ export class TeamalignedRuntime extends EventEmitter {
         }),
       );
     }
+    if (isTeamAlignedAssistantAgentId(agent.id)) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "TeamAligned 助手是系统内置 Agent，不能删除。",
+          en: "TeamAligned assistant is a built-in Agent and cannot be deleted.",
+        }),
+      );
+    }
 
     const conversationId = `conv-${agent.id}`;
     const teamConversationIds = snapshot.teams
@@ -651,6 +663,16 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async updateAgent(payload: UpdateAgentInput) {
+    const snapshot = this.storage.getSnapshot();
+    const responseLanguage: RuntimeLanguage = snapshot.settings.language === "en" ? "en" : "zh";
+    if (isTeamAlignedAssistantAgentId(payload.agentId)) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "TeamAligned 助手是系统内置 Agent，不能编辑。",
+          en: "TeamAligned assistant is a built-in Agent and cannot be edited.",
+        }),
+      );
+    }
     this.storage.updateAgent(payload);
     this.emitSnapshot();
     return this.getSnapshot();
@@ -705,6 +727,15 @@ export class TeamalignedRuntime extends EventEmitter {
       this.emitSnapshot();
       return this.getSnapshot();
     }
+    if (isSystemBuiltinSkillId(skill.id)) {
+      this.storage.markSkillInstalled({
+        skillId: skill.id,
+        installPath: "",
+        version: skill.version,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
 
     const installed = await installSkillFromRegistry({
       skill,
@@ -746,6 +777,14 @@ export class TeamalignedRuntime extends EventEmitter {
       });
       this.emitSnapshot();
       return this.getSnapshot();
+    }
+    if (isSystemBuiltinSkillId(skill.id)) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "内置 Skill 不能移除。",
+          en: "Built-in skills cannot be removed.",
+        }),
+      );
     }
 
     if (skill.installPath && isSafeChildPath(this.storage.skillInstallRoot, skill.installPath)) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { Bot, Edit3, Hash, Search, Trash2, UserX } from "lucide-react";
-import type { ConversationRecord } from "@shared";
+import { isTeamAlignedAssistantAgentId, type ConversationRecord } from "@shared";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
 import { AvatarBadge } from "../avatar-badge";
@@ -65,6 +65,9 @@ export function ChatConversationList({
       y: Math.min(event.clientY, window.innerHeight - 160),
     });
   };
+
+  const isSystemAssistantConversation = (conversation: ConversationRecord) =>
+    conversation.kind === "agent" && isTeamAlignedAssistantAgentId(conversation.targetId);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
@@ -184,10 +187,14 @@ export function ChatConversationList({
           <button
             type="button"
             onClick={() => {
+              if (isSystemAssistantConversation(contextMenu.conversation)) {
+                return;
+              }
               onEditTarget(contextMenu.conversation);
               setContextMenu(null);
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            disabled={isSystemAssistantConversation(contextMenu.conversation)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
           >
             <Edit3 className="h-4 w-4 text-[var(--muted-foreground)]" />
             {t.chat("contextMenuEdit")}
@@ -207,10 +214,14 @@ export function ChatConversationList({
           <button
             type="button"
             onClick={() => {
+              if (isSystemAssistantConversation(contextMenu.conversation)) {
+                return;
+              }
               onDeleteTarget(contextMenu.conversation);
               setContextMenu(null);
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+            disabled={isSystemAssistantConversation(contextMenu.conversation)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
           >
             <UserX className="h-4 w-4" />
             {contextMenu.conversation.kind === "agent"

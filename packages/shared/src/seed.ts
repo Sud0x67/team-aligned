@@ -8,6 +8,7 @@ import type {
   TeamContext,
   UserProfile,
 } from "./types.ts";
+import { createTeamAlignedAssistantSkillRecord } from "./builtin.ts";
 
 export const defaultProfile: UserProfile = {
   name: "Alex Chen",
@@ -55,6 +56,7 @@ export const defaultConversationMeta: ConversationMeta = {
 };
 
 export const defaultSkillCatalog: SkillCatalogRecord[] = [
+  createTeamAlignedAssistantSkillRecord(),
   {
     id: "skill-bug-investigator",
     slug: "bug-investigator",

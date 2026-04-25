@@ -4,6 +4,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
+import {
+  TEAMALIGNED_ASSISTANT_AGENT_ID,
+  TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+  TEAMALIGNED_ASSISTANT_SKILL_ID,
+} from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
 
 function createTempRoot() {
@@ -48,7 +53,11 @@ test("init backfills starter agents and teams when only settings exist", () => {
     assert.ok(snapshot.agents.length >= 5);
     assert.ok(snapshot.teams.length >= 2);
     assert.ok(snapshot.conversations.some((conversation) => conversation.title === "Product Squad"));
-    assert.ok(snapshot.messages["conv-agent-nova"]?.some((message) => message.senderName === "You"));
+    assert.ok(
+      snapshot.messages[TEAMALIGNED_ASSISTANT_CONVERSATION_ID]?.some(
+        (message) => message.senderName === "You",
+      ),
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -197,7 +206,7 @@ test("clearConversationHistory removes conversation-scoped history and resets tr
   try {
     const storage = new AppStorage(root);
     storage.init();
-    const conversationId = "conv-agent-nova";
+    const conversationId = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
     const runId = "run-clear-history-test";
 
     storage.createRun({
@@ -206,7 +215,7 @@ test("clearConversationHistory removes conversation-scoped history and resets tr
       title: "Test run",
       kind: "agent_task",
       status: "completed",
-      actorId: "agent-nova",
+      actorId: TEAMALIGNED_ASSISTANT_AGENT_ID,
       stepIndex: 2,
       totalSteps: 2,
       metadata: null,
@@ -307,14 +316,16 @@ test("deleteAgent removes agent conversation data and detaches team members", ()
     const storage = new AppStorage(root);
     storage.init();
 
+    storage.ensureConversation({ kind: "agent", targetId: "agent-coder" });
+
     const runId = "run-delete-agent-test";
     storage.createRun({
       id: runId,
-      conversationId: "conv-agent-nova",
+      conversationId: "conv-agent-coder",
       title: "Delete test run",
       kind: "agent_task",
       status: "completed",
-      actorId: "agent-nova",
+      actorId: "agent-coder",
       stepIndex: 1,
       totalSteps: 1,
       metadata: null,
@@ -323,21 +334,21 @@ test("deleteAgent removes agent conversation data and detaches team members", ()
       type: "agent_message",
       title: "delete-test",
       body: "delete-test",
-      relatedConversationId: "conv-agent-nova",
+      relatedConversationId: "conv-agent-coder",
       relatedRunId: runId,
     });
 
-    const removed = storage.deleteAgent("agent-nova");
+    const removed = storage.deleteAgent("agent-coder");
     assert.equal(removed, true);
 
     const snapshot = storage.getSnapshot();
-    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-nova"), false);
-    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-agent-nova"), false);
-    assert.equal((snapshot.messages["conv-agent-nova"] ?? []).length, 0);
-    assert.equal(snapshot.runs.some((run) => run.conversationId === "conv-agent-nova"), false);
-    assert.equal(snapshot.notifications.some((notice) => notice.relatedConversationId === "conv-agent-nova"), false);
-    const researchTeam = snapshot.teams.find((team) => team.id === "team-research");
-    assert.equal(researchTeam?.memberIds.includes("agent-nova"), false);
+    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-coder"), false);
+    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-agent-coder"), false);
+    assert.equal((snapshot.messages["conv-agent-coder"] ?? []).length, 0);
+    assert.equal(snapshot.runs.some((run) => run.conversationId === "conv-agent-coder"), false);
+    assert.equal(snapshot.notifications.some((notice) => notice.relatedConversationId === "conv-agent-coder"), false);
+    const productTeam = snapshot.teams.find((team) => team.id === "team-product");
+    assert.equal(productTeam?.memberIds.includes("agent-coder"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -381,18 +392,66 @@ test("deleteConversation removes chat history without deleting its target", () =
     const storage = new AppStorage(root);
     storage.init();
 
-    const removed = storage.deleteConversation("conv-agent-nova");
+    const removed = storage.deleteConversation(TEAMALIGNED_ASSISTANT_CONVERSATION_ID);
     assert.equal(removed, true);
 
     let snapshot = storage.getSnapshot();
-    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-nova"), true);
-    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-agent-nova"), false);
-    assert.equal((snapshot.messages["conv-agent-nova"] ?? []).length, 0);
+    assert.equal(snapshot.agents.some((agent) => agent.id === TEAMALIGNED_ASSISTANT_AGENT_ID), true);
+    assert.equal(
+      snapshot.conversations.some(
+        (conversation) => conversation.id === TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+      ),
+      false,
+    );
+    assert.equal((snapshot.messages[TEAMALIGNED_ASSISTANT_CONVERSATION_ID] ?? []).length, 0);
 
-    const conversation = storage.ensureConversation({ kind: "agent", targetId: "agent-nova" });
-    assert.equal(conversation.id, "conv-agent-nova");
+    const conversation = storage.ensureConversation({
+      kind: "agent",
+      targetId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+    });
+    assert.equal(conversation.id, TEAMALIGNED_ASSISTANT_CONVERSATION_ID);
+    assert.equal(conversation.meta.activeSkill, TEAMALIGNED_ASSISTANT_SKILL_ID);
     snapshot = storage.getSnapshot();
-    assert.equal(snapshot.conversations.some((item) => item.id === "conv-agent-nova"), true);
+    assert.equal(
+      snapshot.conversations.some((item) => item.id === TEAMALIGNED_ASSISTANT_CONVERSATION_ID),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("built-in assistant cannot be edited or deleted and stays skill-locked", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    assert.throws(() => {
+      storage.updateAgent({
+        agentId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+        name: "Renamed",
+        role: "Role",
+        description: "Desc",
+        capabilities: ["x"],
+      });
+    });
+
+    assert.throws(() => {
+      storage.deleteAgent(TEAMALIGNED_ASSISTANT_AGENT_ID);
+    });
+
+    storage.updateAgentSkillWhitelist({
+      agentId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+      skillIds: ["skill-bug-investigator"],
+    });
+    storage.markSkillRemoved(TEAMALIGNED_ASSISTANT_SKILL_ID);
+
+    const snapshot = storage.getSnapshot();
+    const assistant = snapshot.agents.find((agent) => agent.id === TEAMALIGNED_ASSISTANT_AGENT_ID);
+    const assistantSkill = snapshot.skillCatalog.find((skill) => skill.id === TEAMALIGNED_ASSISTANT_SKILL_ID);
+    assert.deepEqual(assistant?.skillWhitelist, [TEAMALIGNED_ASSISTANT_SKILL_ID]);
+    assert.equal(assistantSkill?.installed, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { SkillCatalogRecord } from "@teamaligned/shared";
+import {
+  TEAMALIGNED_ASSISTANT_SKILL_DEFINITION,
+  isSystemBuiltinSkill,
+  type SkillCatalogRecord,
+} from "@teamaligned/shared";
 
 type RemoteSkillCatalog = {
   generatedAt?: string;
@@ -178,6 +182,10 @@ export async function installSkillFromRegistry(input: {
 }
 
 export function readInstalledSkillDefinition(skill: SkillCatalogRecord) {
+  if (isSystemBuiltinSkill(skill)) {
+    return TEAMALIGNED_ASSISTANT_SKILL_DEFINITION;
+  }
+
   if (!skill.installPath) {
     return null;
   }

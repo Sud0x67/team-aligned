@@ -71,6 +71,7 @@ export function AgentCard({
   whitelistedMcps,
   completedRunCount,
   language,
+  isBuiltin,
   labels,
   onEdit,
   onConfigureSkills,
@@ -84,6 +85,7 @@ export function AgentCard({
   whitelistedMcps: McpCatalogRecord[];
   completedRunCount: number;
   language: "zh" | "en";
+  isBuiltin: boolean;
   labels: {
     skillWhitelist: string;
     mcpWhitelist: string;
@@ -99,6 +101,7 @@ export function AgentCard({
     edit: string;
     startConversationAction: string;
     deleteAction: string;
+    systemBuiltin: string;
   };
   onEdit: () => void;
   onConfigureSkills: () => void;
@@ -113,18 +116,27 @@ export function AgentCard({
         <div className="flex items-center gap-3">
           <AgentAvatar agent={agent} />
           <div>
-            <h4 className="text-[15px] font-semibold text-[var(--foreground)]">{agent.name}</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-[15px] font-semibold text-[var(--foreground)]">{agent.name}</h4>
+              {isBuiltin ? (
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--primary)]">
+                  {labels.systemBuiltin}
+                </span>
+              ) : null}
+            </div>
             <p className="text-[12px] text-[var(--muted-foreground)]">{agent.role}</p>
           </div>
         </div>
-        <button
-          type="button"
-          title={labels.edit}
-          onClick={onEdit}
-          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-        >
-          <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
-        </button>
+        {isBuiltin ? null : (
+          <button
+            type="button"
+            title={labels.edit}
+            onClick={onEdit}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+          >
+            <MoreHorizontal className="h-4 w-4 text-[var(--muted-foreground)]" />
+          </button>
+        )}
       </div>
 
       <p className="mb-4 text-[13px] leading-6 text-[var(--muted-foreground)]">{agent.description}</p>
@@ -151,12 +163,14 @@ export function AgentCard({
             <Puzzle className="h-3.5 w-3.5 text-[var(--primary)]" />
             {labels.skillWhitelist}
           </div>
-          <button
-            onClick={onConfigureSkills}
-            className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
-          >
-            {labels.configureSkills}
-          </button>
+          {isBuiltin ? null : (
+            <button
+              onClick={onConfigureSkills}
+              className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+            >
+              {labels.configureSkills}
+            </button>
+          )}
         </div>
         {whitelistedSkills.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -187,12 +201,14 @@ export function AgentCard({
             <Blocks className="h-3.5 w-3.5 text-[var(--primary)]" />
             {labels.mcpWhitelist}
           </div>
-          <button
-            onClick={onConfigureMcps}
-            className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
-          >
-            {labels.configureMcps}
-          </button>
+          {isBuiltin ? null : (
+            <button
+              onClick={onConfigureMcps}
+              className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]"
+            >
+              {labels.configureMcps}
+            </button>
+          )}
         </div>
         {whitelistedMcps.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -236,13 +252,15 @@ export function AgentCard({
           <Zap className="h-3.5 w-3.5" />
           {labels.completedTasks} {completedRunCount} {labels.tasksUnit}
         </div>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="ml-auto rounded-md px-2 py-1 text-[12px] font-medium text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
-        >
-          {labels.deleteAction}
-        </button>
+        {isBuiltin ? null : (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="ml-auto rounded-md px-2 py-1 text-[12px] font-medium text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+          >
+            {labels.deleteAction}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,15 @@ import {
   defaultSettings,
   defaultSkillCatalog,
   defaultTeamContext,
+  createTeamAlignedAssistantSkillRecord,
+  isSystemBuiltinSkill,
+  isSystemBuiltinSkillId,
+  isTeamAlignedAssistantAgentId,
+  LEGACY_NOVA_AGENT_ID,
+  LEGACY_NOVA_CONVERSATION_ID,
+  TEAMALIGNED_ASSISTANT_AGENT_ID,
+  TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+  TEAMALIGNED_ASSISTANT_SKILL_ID,
 } from "@teamaligned/shared";
 import type {
   AgentRecord,
@@ -146,7 +155,7 @@ const agentPalette = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#3
 const teamPalette = ["#7c3aed", "#0ea5e9", "#14b8a6", "#8b5cf6"];
 const teamMemberLimit = 5;
 const starterSeedVersionKey = "system.starterSeedVersion";
-const starterSeedVersion = "2026-04-starter-v1";
+const starterSeedVersion = "2026-04-starter-v2";
 
 export class AppStorage {
   readonly rootDir: string;
@@ -197,9 +206,10 @@ export class AppStorage {
   init() {
     if (this.databaseHasData()) {
       this.loadState();
-      this.ensureWorkspaceLayouts();
       const seededStarter = this.ensureStarterWorkspaceIfNeeded();
-      if (seededStarter) {
+      const normalizedBuiltins = this.ensureSystemBuiltins();
+      this.ensureWorkspaceLayouts();
+      if (normalizedBuiltins || seededStarter) {
         this.persist();
       }
       return;
@@ -302,6 +312,12 @@ export class AppStorage {
     this.state.settingsEntries["settings.notifyGroup"] = String(merged.notifyGroup);
     this.state.settingsEntries["settings.activeProviderId"] = merged.activeProviderId;
     this.state.settingsEntries["settings.onboardingCompleted"] = String(merged.onboardingCompleted);
+    const hasChatEntities =
+      this.state.agents.length > 0 || this.state.teams.length > 0 || this.state.conversations.length > 0;
+    if (hasChatEntities) {
+      this.ensureAssistantAgentRecord();
+      this.ensureAssistantConversation();
+    }
     this.persist();
   }
 
@@ -361,7 +377,7 @@ export class AppStorage {
       description: input.description,
       capabilities: input.capabilities,
       skillWhitelist: this.listSkillCatalog()
-        .filter((skill) => skill.installed)
+        .filter((skill) => skill.installed && !isSystemBuiltinSkill(skill))
         .map((skill) => skill.id),
       mcpWhitelist: this.listMcpConnections()
         .filter((connection) => connection.enabled && connection.status === "connected")
@@ -395,7 +411,7 @@ export class AppStorage {
 
   createTeam(input: CreateTeamInput): TeamRecord {
     const id = `team-${nanoid(6)}`;
-    const memberIds = Array.from(new Set(input.memberIds)).slice(0, teamMemberLimit);
+    const memberIds = this.normalizeTeamMemberIds(input.memberIds);
     const workspacePath = input.workspacePath || join(this.teamWorkspaceRoot, id);
     this.ensureWorkspaceLayout(workspacePath, {
       type: "team",
@@ -431,6 +447,10 @@ export class AppStorage {
   }
 
   deleteAgent(agentId: string) {
+    if (isTeamAlignedAssistantAgentId(agentId)) {
+      throw new Error("TeamAligned 助手是系统内置 Agent，不能删除。");
+    }
+
     const agent = this.getAgent(agentId);
     if (!agent) return false;
 
@@ -514,7 +534,24 @@ export class AppStorage {
     const existing = this.state.conversations.find(
       (conversation) => conversation.kind === input.kind && conversation.targetId === input.targetId,
     );
-    if (existing) return existing;
+    if (existing) {
+      if (existing.kind === "agent" && isTeamAlignedAssistantAgentId(existing.targetId)) {
+        const language = this.getSettings().language;
+        const labels = this.assistantLabels(language);
+        existing.id = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+        existing.targetId = TEAMALIGNED_ASSISTANT_AGENT_ID;
+        existing.title = labels.name;
+        existing.meta = {
+          ...existing.meta,
+          activeSkill: TEAMALIGNED_ASSISTANT_SKILL_ID,
+        };
+        if (!existing.lastMessage.trim()) {
+          existing.lastMessage = labels.lastMessage;
+        }
+        this.persist();
+      }
+      return existing;
+    }
 
     const target = input.kind === "agent" ? this.getAgent(input.targetId) : this.getTeam(input.targetId);
     if (!target) {
@@ -523,17 +560,32 @@ export class AppStorage {
 
     const language = this.getSettings().language;
     const conversation: ConversationRecord = {
-      id: `conv-${target.id}`,
+      id:
+        input.kind === "agent" && isTeamAlignedAssistantAgentId(target.id)
+          ? TEAMALIGNED_ASSISTANT_CONVERSATION_ID
+          : `conv-${target.id}`,
       kind: input.kind,
-      targetId: target.id,
-      title: target.name,
+      targetId:
+        input.kind === "agent" && isTeamAlignedAssistantAgentId(target.id)
+          ? TEAMALIGNED_ASSISTANT_AGENT_ID
+          : target.id,
+      title:
+        input.kind === "agent" && isTeamAlignedAssistantAgentId(target.id)
+          ? this.assistantLabels(language).name
+          : target.name,
       unread: 0,
       lastMessage:
         language === "en"
           ? "New conversation. Start chatting when you are ready."
           : "新的会话，准备好就开始对话吧。",
       lastActivityAt: now(),
-      meta: { ...defaultConversationMeta },
+      meta:
+        input.kind === "agent" && isTeamAlignedAssistantAgentId(target.id)
+          ? {
+              ...defaultConversationMeta,
+              activeSkill: TEAMALIGNED_ASSISTANT_SKILL_ID,
+            }
+          : { ...defaultConversationMeta },
     };
     this.state.conversations.push(conversation);
     this.persist();
@@ -541,6 +593,10 @@ export class AppStorage {
   }
 
   updateAgent(input: UpdateAgentInput) {
+    if (isTeamAlignedAssistantAgentId(input.agentId)) {
+      throw new Error("TeamAligned 助手是系统内置 Agent，不能编辑。");
+    }
+
     const agent = this.getAgent(input.agentId);
     if (!agent) return;
 
@@ -581,7 +637,7 @@ export class AppStorage {
 
     team.name = input.name;
     team.description = input.description;
-    team.memberIds = Array.from(new Set(input.memberIds)).slice(0, teamMemberLimit);
+    team.memberIds = this.normalizeTeamMemberIds(input.memberIds);
     team.workspacePath = nextWorkspacePath;
     team.avatarPath = input.avatarPath ?? null;
     team.avatar = input.name.slice(0, 1) || "G";
@@ -1056,8 +1112,15 @@ export class AppStorage {
 
   replaceSkillCatalog(entries: SkillCatalogRecord[]) {
     const previous = new Map(this.state.skillCatalog.map((skill) => [skill.id, skill]));
-    const resolvedEntries = entries.map((entry) => {
+    const builtinSkill = createTeamAlignedAssistantSkillRecord();
+    const resolvedEntries = [
+      builtinSkill,
+      ...entries.filter((entry) => !isSystemBuiltinSkillId(entry.id)),
+    ].map((entry) => {
       const existing = previous.get(entry.id);
+      if (isSystemBuiltinSkillId(entry.id)) {
+        return builtinSkill;
+      }
       return {
         ...entry,
         installed: existing?.installed ?? entry.installed,
@@ -1084,18 +1147,36 @@ export class AppStorage {
         .filter((item): item is SkillCatalogRecord => item !== null)
         .map((item) => item.id);
 
-      agent.skillWhitelist = Array.from(new Set(normalizedWhitelist));
+      agent.skillWhitelist = isTeamAlignedAssistantAgentId(agent.id)
+        ? [TEAMALIGNED_ASSISTANT_SKILL_ID]
+        : Array.from(
+            new Set(normalizedWhitelist.filter((skillId) => !isSystemBuiltinSkillId(skillId))),
+          );
     }
     this.persist();
   }
 
   markSkillInstalled(input: { skillId: string; installPath: string; version: string }) {
+    if (isSystemBuiltinSkillId(input.skillId)) {
+      this.ensureBuiltinSkillCatalogEntry();
+      this.ensureAssistantAgentRecord();
+      this.persist();
+      return;
+    }
+
     const skill = this.getSkillCatalogEntry(input.skillId);
     if (!skill) return;
     skill.installed = true;
     skill.installedVersion = input.version;
     skill.installPath = input.installPath;
     for (const agent of this.state.agents) {
+      if (isTeamAlignedAssistantAgentId(agent.id)) {
+        agent.skillWhitelist = [TEAMALIGNED_ASSISTANT_SKILL_ID];
+        continue;
+      }
+      if (isSystemBuiltinSkillId(skill.id)) {
+        continue;
+      }
       if (!agent.skillWhitelist.includes(skill.id)) {
         agent.skillWhitelist.push(skill.id);
       }
@@ -1104,6 +1185,13 @@ export class AppStorage {
   }
 
   markSkillRemoved(skillId: string) {
+    if (isSystemBuiltinSkillId(skillId)) {
+      this.ensureBuiltinSkillCatalogEntry();
+      this.ensureAssistantAgentRecord();
+      this.persist();
+      return;
+    }
+
     const skill = this.getSkillCatalogEntry(skillId);
     if (!skill) return;
 
@@ -1127,7 +1215,9 @@ export class AppStorage {
   updateAgentSkillWhitelist(input: UpdateAgentSkillsInput) {
     const agent = this.getAgent(input.agentId);
     if (!agent) return;
-    agent.skillWhitelist = Array.from(new Set(input.skillIds));
+    agent.skillWhitelist = isTeamAlignedAssistantAgentId(agent.id)
+      ? [TEAMALIGNED_ASSISTANT_SKILL_ID]
+      : Array.from(new Set(input.skillIds.filter((skillId) => !isSystemBuiltinSkillId(skillId))));
     this.persist();
   }
 
@@ -1186,6 +1276,10 @@ export class AppStorage {
 
     if (connection.enabled && connection.status === "connected") {
       for (const agent of this.state.agents) {
+        if (isTeamAlignedAssistantAgentId(agent.id)) {
+          agent.mcpWhitelist = [];
+          continue;
+        }
         if (!agent.mcpWhitelist.includes(connection.serverId)) {
           agent.mcpWhitelist.push(connection.serverId);
         }
@@ -1202,7 +1296,9 @@ export class AppStorage {
   updateAgentMcpWhitelist(input: { agentId: string; serverIds: string[] }) {
     const agent = this.getAgent(input.agentId);
     if (!agent) return;
-    agent.mcpWhitelist = Array.from(new Set(input.serverIds));
+    agent.mcpWhitelist = isTeamAlignedAssistantAgentId(agent.id)
+      ? []
+      : Array.from(new Set(input.serverIds));
     this.persist();
   }
 
@@ -1745,7 +1841,11 @@ export class AppStorage {
         ...agent,
         skillWhitelist: Array.isArray(agent.skillWhitelist)
           ? agent.skillWhitelist
-          : defaultSkillCatalog.map((skill) => skill.id),
+          : isTeamAlignedAssistantAgentId(agent.id)
+            ? [TEAMALIGNED_ASSISTANT_SKILL_ID]
+            : defaultSkillCatalog
+                .filter((skill) => !isSystemBuiltinSkill(skill))
+                .map((skill) => skill.id),
         mcpWhitelist: Array.isArray(agent.mcpWhitelist) ? agent.mcpWhitelist : defaultConnectedMcpIds,
       })),
       teams: this.readTeams(),
@@ -2473,6 +2573,7 @@ export class AppStorage {
       this.state.providers = configState.providers;
     }
     this.seedStarterWorkspace(now());
+    this.ensureSystemBuiltins();
     this.persist();
   }
 
@@ -2500,25 +2601,334 @@ export class AppStorage {
     return true;
   }
 
+  private assistantLabels(language: AppSettings["language"]) {
+    return language === "en"
+      ? {
+          name: "TeamAligned Guide",
+          role: "Application Assistant",
+          avatar: "TA",
+          description:
+            "Answers questions about using TeamAligned, including setup, chat, Skills, MCP, workspaces, and notifications.",
+          capabilities: ["Onboarding", "Provider setup", "Skills and MCP", "Workspace help"],
+          lastMessage: "Ask me anything about using TeamAligned.",
+          welcomeQuestion: "How should I start using TeamAligned?",
+          welcomeAnswer:
+            "Start by completing your profile, configuring a Provider in Settings, then open a direct chat or a starter Team. I can help with TeamAligned usage, Skills, MCP, workspaces, and notifications.",
+        }
+      : {
+          name: "TeamAligned 助手",
+          role: "应用助手",
+          avatar: "助",
+          description: "回答 TeamAligned 使用、配置、单聊群聊、Skills、MCP、工作区与通知相关问题。",
+          capabilities: ["新手引导", "Provider 配置", "Skills 与 MCP", "工作区帮助"],
+          lastMessage: "有任何 TeamAligned 使用问题，都可以直接问我。",
+          welcomeQuestion: "我应该如何开始使用 TeamAligned？",
+          welcomeAnswer:
+            "建议先完成个人信息，再到设置里配置并测试 Provider，然后从单聊 Agent 或默认群组开始。我可以帮你理解 TeamAligned 的聊天、Skills、MCP、工作区和通知设置。",
+        };
+  }
+
+  private normalizeTeamMemberIds(memberIds: string[]) {
+    return Array.from(new Set(memberIds))
+      .filter((memberId) => !isTeamAlignedAssistantAgentId(memberId))
+      .slice(0, teamMemberLimit);
+  }
+
+  private ensureSystemBuiltins() {
+    let changed = false;
+    changed = this.renameLegacyAssistantIds() || changed;
+    changed = this.ensureBuiltinSkillCatalogEntry() || changed;
+    changed = this.ensureAssistantAgentRecord() || changed;
+    changed = this.ensureAssistantConversation() || changed;
+    changed = this.removeAssistantFromTeams() || changed;
+    return changed;
+  }
+
+  private renameLegacyAssistantIds() {
+    let changed = false;
+
+    const legacyAgent = this.state.agents.find((agent) => agent.id === LEGACY_NOVA_AGENT_ID);
+    const currentAgent = this.state.agents.find((agent) => agent.id === TEAMALIGNED_ASSISTANT_AGENT_ID);
+    if (legacyAgent && currentAgent) {
+      this.state.agents = this.state.agents.filter((agent) => agent.id !== LEGACY_NOVA_AGENT_ID);
+      changed = true;
+    } else if (legacyAgent) {
+      legacyAgent.id = TEAMALIGNED_ASSISTANT_AGENT_ID;
+      changed = true;
+    }
+
+    const replaceAgentId = (value: string) =>
+      value === LEGACY_NOVA_AGENT_ID ? TEAMALIGNED_ASSISTANT_AGENT_ID : value;
+    const replaceConversationId = (value: string | null) =>
+      value === LEGACY_NOVA_CONVERSATION_ID ? TEAMALIGNED_ASSISTANT_CONVERSATION_ID : value;
+
+    for (const team of this.state.teams) {
+      const memberIds = team.memberIds.map(replaceAgentId);
+      if (memberIds.join("\0") !== team.memberIds.join("\0")) {
+        team.memberIds = memberIds;
+        changed = true;
+      }
+      if (team.context.handoff) {
+        const nextHandoff = {
+          ...team.context.handoff,
+          activeAgentId: team.context.handoff.activeAgentId
+            ? replaceAgentId(team.context.handoff.activeAgentId)
+            : null,
+          lastSpeakerId: team.context.handoff.lastSpeakerId
+            ? replaceAgentId(team.context.handoff.lastSpeakerId)
+            : null,
+          nextAgentIds: team.context.handoff.nextAgentIds.map(replaceAgentId),
+        };
+        if (JSON.stringify(nextHandoff) !== JSON.stringify(team.context.handoff)) {
+          team.context.handoff = {
+            ...nextHandoff,
+            revision: nextHandoff.revision + 1,
+            updatedAt: now(),
+          };
+          changed = true;
+        }
+      }
+    }
+
+    for (const conversation of this.state.conversations) {
+      if (conversation.id === LEGACY_NOVA_CONVERSATION_ID) {
+        conversation.id = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+        changed = true;
+      }
+      if (conversation.targetId === LEGACY_NOVA_AGENT_ID) {
+        conversation.targetId = TEAMALIGNED_ASSISTANT_AGENT_ID;
+        changed = true;
+      }
+    }
+
+    for (const message of this.state.messages) {
+      const nextConversationId = replaceConversationId(message.conversationId);
+      if (nextConversationId && nextConversationId !== message.conversationId) {
+        message.conversationId = nextConversationId;
+        changed = true;
+      }
+      const nextSenderId = replaceAgentId(message.senderId);
+      if (nextSenderId !== message.senderId) {
+        message.senderId = nextSenderId;
+        changed = true;
+      }
+      const nextMentions = message.mentions.map(replaceAgentId);
+      if (nextMentions.join("\0") !== message.mentions.join("\0")) {
+        message.mentions = nextMentions;
+        changed = true;
+      }
+    }
+
+    for (const run of this.state.runs) {
+      const nextConversationId = replaceConversationId(run.conversationId);
+      if (nextConversationId && nextConversationId !== run.conversationId) {
+        run.conversationId = nextConversationId;
+        changed = true;
+      }
+      const nextActorId = replaceAgentId(run.actorId);
+      if (nextActorId !== run.actorId) {
+        run.actorId = nextActorId;
+        changed = true;
+      }
+    }
+
+    for (const step of this.state.runSteps) {
+      const nextConversationId = replaceConversationId(step.conversationId);
+      if (nextConversationId && nextConversationId !== step.conversationId) {
+        step.conversationId = nextConversationId;
+        changed = true;
+      }
+    }
+
+    for (const item of [
+      ...this.state.attachments,
+      ...this.state.artifacts,
+      ...this.state.toolInvocations,
+    ]) {
+      const nextConversationId = replaceConversationId(item.conversationId);
+      if (nextConversationId && nextConversationId !== item.conversationId) {
+        item.conversationId = nextConversationId;
+        changed = true;
+      }
+    }
+
+    for (const notification of this.state.notifications) {
+      const nextConversationId = replaceConversationId(notification.relatedConversationId);
+      if (nextConversationId !== notification.relatedConversationId) {
+        notification.relatedConversationId = nextConversationId;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  private ensureBuiltinSkillCatalogEntry() {
+    const builtinSkill = createTeamAlignedAssistantSkillRecord();
+    const existingIndex = this.state.skillCatalog.findIndex((skill) => skill.id === builtinSkill.id);
+    if (existingIndex === -1) {
+      this.state.skillCatalog = [builtinSkill, ...this.state.skillCatalog];
+      return true;
+    }
+
+    const existing = this.state.skillCatalog[existingIndex];
+    const next = {
+      ...builtinSkill,
+      installed: true,
+      installedVersion: builtinSkill.version,
+      installPath: null,
+    };
+    if (JSON.stringify(existing) === JSON.stringify(next)) {
+      return false;
+    }
+
+    this.state.skillCatalog[existingIndex] = next;
+    return true;
+  }
+
+  private ensureAssistantAgentRecord() {
+    const language = this.state.settingsEntries["settings.language"] === "en" ? "en" : "zh";
+    const labels = this.assistantLabels(language);
+    const workspacePath = join(this.agentWorkspaceRoot, TEAMALIGNED_ASSISTANT_AGENT_ID);
+    const modelId = this.getSettings().activeProviderId === "openai" ? "gpt-5" : "qwen-max";
+    const nextAgent: AgentRecord = {
+      id: TEAMALIGNED_ASSISTANT_AGENT_ID,
+      name: labels.name,
+      role: labels.role,
+      avatar: labels.avatar,
+      avatarPath: null,
+      avatarColor: agentPalette[0],
+      status: "online",
+      description: labels.description,
+      capabilities: labels.capabilities,
+      skillWhitelist: [TEAMALIGNED_ASSISTANT_SKILL_ID],
+      mcpWhitelist: [],
+      workspacePath,
+      modelId,
+    };
+
+    const existing = this.state.agents.find((agent) => agent.id === TEAMALIGNED_ASSISTANT_AGENT_ID);
+    if (!existing) {
+      this.ensureWorkspaceLayout(workspacePath, {
+        type: "agent",
+        title: labels.name,
+        summary: labels.description,
+      });
+      this.state.agents.unshift(nextAgent);
+      return true;
+    }
+
+    const previous = JSON.stringify(existing);
+    Object.assign(existing, nextAgent);
+    return previous !== JSON.stringify(existing);
+  }
+
+  private ensureAssistantConversation() {
+    const language = this.state.settingsEntries["settings.language"] === "en" ? "en" : "zh";
+    const labels = this.assistantLabels(language);
+    const existing = this.state.conversations.find(
+      (conversation) => conversation.id === TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+    );
+    if (!existing) {
+      this.state.conversations.unshift({
+        id: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+        kind: "agent",
+        targetId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+        title: labels.name,
+        unread: 0,
+        lastMessage: labels.lastMessage,
+        lastActivityAt: now(),
+        meta: {
+          ...defaultConversationMeta,
+          activeSkill: TEAMALIGNED_ASSISTANT_SKILL_ID,
+        },
+      });
+      return true;
+    }
+
+    const previous = JSON.stringify(existing);
+    existing.kind = "agent";
+    existing.targetId = TEAMALIGNED_ASSISTANT_AGENT_ID;
+    existing.title = labels.name;
+    existing.meta = {
+      ...existing.meta,
+      activeSkill: TEAMALIGNED_ASSISTANT_SKILL_ID,
+    };
+    if (!existing.lastMessage.trim()) {
+      existing.lastMessage = labels.lastMessage;
+    }
+    return previous !== JSON.stringify(existing);
+  }
+
+  private removeAssistantFromTeams() {
+    let changed = false;
+    for (const team of this.state.teams) {
+      const memberIds = this.normalizeTeamMemberIds(team.memberIds);
+      if (memberIds.join("\0") !== team.memberIds.join("\0")) {
+        team.memberIds = memberIds;
+        changed = true;
+      }
+      if (!team.context.handoff) {
+        continue;
+      }
+      const nextHandoff = {
+        ...team.context.handoff,
+        activeAgentId:
+          team.context.handoff.activeAgentId &&
+          isTeamAlignedAssistantAgentId(team.context.handoff.activeAgentId)
+            ? null
+            : team.context.handoff.activeAgentId,
+        lastSpeakerId:
+          team.context.handoff.lastSpeakerId &&
+          isTeamAlignedAssistantAgentId(team.context.handoff.lastSpeakerId)
+            ? null
+            : team.context.handoff.lastSpeakerId,
+        nextAgentIds: team.context.handoff.nextAgentIds.filter(
+          (agentId) => !isTeamAlignedAssistantAgentId(agentId),
+        ),
+      };
+      if (JSON.stringify(nextHandoff) !== JSON.stringify(team.context.handoff)) {
+        team.context.handoff = {
+          ...nextHandoff,
+          revision: nextHandoff.revision + 1,
+          updatedAt: now(),
+        };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   private seedStarterWorkspace(timestamp: number) {
     const language = this.state.settingsEntries["settings.language"] === "en" ? "en" : "zh";
+    const assistantLabels = this.assistantLabels(language);
+    const defaultWorkSkillIds = defaultSkillCatalog
+      .filter((skill) => !isSystemBuiltinSkill(skill))
+      .map((skill) => skill.id);
 
-    const agentSeeds = [
+    const agentSeeds: Array<{
+      id: string;
+      name: string;
+      role: string;
+      avatar: string;
+      color: string;
+      status: "online";
+      description: string;
+      capabilities: string[];
+      skillWhitelist?: string[];
+      mcpWhitelist?: string[];
+    }> = [
       {
-        id: "agent-nova",
-        name: "Nova",
-        role: language === "en" ? "Data Analyst" : "数据分析师",
-        avatar: "N",
+        id: TEAMALIGNED_ASSISTANT_AGENT_ID,
+        name: assistantLabels.name,
+        role: assistantLabels.role,
+        avatar: assistantLabels.avatar,
         color: agentPalette[0],
         status: "online" as const,
-        description:
-          language === "en"
-            ? "Great at data analysis, metric breakdown, and concise conclusions."
-            : "擅长数据分析、指标拆解与结论总结。",
-        capabilities:
-          language === "en"
-            ? ["Data cleaning", "Statistical analysis", "Reporting", "Retrospectives"]
-            : ["数据清洗", "统计分析", "图表报告", "复盘总结"],
+        description: assistantLabels.description,
+        capabilities: assistantLabels.capabilities,
+        skillWhitelist: [TEAMALIGNED_ASSISTANT_SKILL_ID],
+        mcpWhitelist: [],
       },
       {
         id: "agent-coder",
@@ -2600,8 +3010,8 @@ export class AppStorage {
         status: seed.status,
         description: seed.description,
         capabilities: [...seed.capabilities],
-        skillWhitelist: defaultSkillCatalog.map((skill) => skill.id),
-        mcpWhitelist: [...defaultConnectedMcpIds],
+        skillWhitelist: [...(seed.skillWhitelist ?? defaultWorkSkillIds)],
+        mcpWhitelist: [...(seed.mcpWhitelist ?? defaultConnectedMcpIds)],
         workspacePath,
         modelId: index % 2 === 0 ? "qwen-max" : "gpt-5",
       });
@@ -2628,7 +3038,7 @@ export class AppStorage {
             : "负责背景研究、用户反馈与方案补充。",
         avatar: language === "en" ? "R" : "研",
         avatarColor: teamPalette[1],
-        members: ["agent-nova", "agent-researcher", "agent-planner"],
+        members: ["agent-researcher", "agent-planner", "agent-designer"],
       },
     ];
 
@@ -2654,17 +3064,14 @@ export class AppStorage {
 
     this.state.conversations = [
       {
-        id: "conv-agent-nova",
+        id: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
         kind: "agent",
-        targetId: "agent-nova",
-        title: "Nova",
-        unread: 1,
-        lastMessage:
-          language === "en"
-            ? "I’ve prepared an overview. Want me to continue with a chart?"
-            : "数据摘要已经整理好了，你要我继续出图表吗？",
+        targetId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+        title: assistantLabels.name,
+        unread: 0,
+        lastMessage: assistantLabels.lastMessage,
         lastActivityAt: timestamp,
-        meta: { ...defaultConversationMeta },
+        meta: { ...defaultConversationMeta, activeSkill: TEAMALIGNED_ASSISTANT_SKILL_ID },
       },
       {
         id: "conv-team-product",
@@ -2685,27 +3092,26 @@ export class AppStorage {
       language === "en"
         ? [
             {
-              conversationId: "conv-agent-nova",
+              conversationId: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
               senderId: "user",
               senderName: "You",
               senderKind: "user",
               messageType: "user",
               visibility: "public",
-              content: "Nova, what should we focus on first for this project?",
+              content: assistantLabels.welcomeQuestion,
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 14,
               runId: null,
               metadata: null,
             },
             {
-              conversationId: "conv-agent-nova",
-              senderId: "agent-nova",
-              senderName: "Nova",
+              conversationId: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+              senderId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+              senderName: assistantLabels.name,
               senderKind: "agent",
               messageType: "agent",
               visibility: "public",
-              content:
-                "The top priority is to make TeamAligned clearly usable in single chat and group collaboration flows.",
+              content: assistantLabels.welcomeAnswer,
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 12,
               runId: null,
@@ -2727,27 +3133,26 @@ export class AppStorage {
           ]
         : [
             {
-              conversationId: "conv-agent-nova",
+              conversationId: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
               senderId: "user",
               senderName: "你",
               senderKind: "user",
               messageType: "user",
               visibility: "public",
-              content: "Nova，帮我总结一下这个项目现在最重要的目标。",
+              content: assistantLabels.welcomeQuestion,
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 14,
               runId: null,
               metadata: null,
             },
             {
-              conversationId: "conv-agent-nova",
-              senderId: "agent-nova",
-              senderName: "Nova",
+              conversationId: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+              senderId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+              senderName: assistantLabels.name,
               senderKind: "agent",
               messageType: "agent",
               visibility: "public",
-              content:
-                "当前最重要的目标是先把 teamaligned 做成一个可体验的桌面原型，优先验证单聊命令、群聊协作和本地运行时。",
+              content: assistantLabels.welcomeAnswer,
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 12,
               runId: null,

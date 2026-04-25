@@ -18,7 +18,13 @@ import {
   Unplug,
   X,
 } from "lucide-react";
-import type { ConnectMcpInput, McpCatalogRecord, PromptAliasRecord, SavePromptAliasInput } from "@shared";
+import {
+  isSystemBuiltinSkill,
+  type ConnectMcpInput,
+  type McpCatalogRecord,
+  type PromptAliasRecord,
+  type SavePromptAliasInput,
+} from "@shared";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 
@@ -199,6 +205,11 @@ export function ExtensionsPage() {
   };
 
   const runSkillAction = async (skillId: string, type: "install" | "remove") => {
+    const targetSkill = skillCatalog.find((item) => item.id === skillId);
+    if (targetSkill && isSystemBuiltinSkill(targetSkill)) {
+      return;
+    }
+
     if (skillAction) return;
     if (type === "remove" && !window.confirm(t.extensions("removeSkillConfirm"))) {
       return;
@@ -425,6 +436,7 @@ export function ExtensionsPage() {
               const subtitle =
                 settings.language === "zh" && item.name !== item.displayName ? item.name : null;
               const installed = item.installed;
+              const isBuiltin = isSystemBuiltinSkill(item);
               const Icon = getExtensionIcon(item.name, installed);
               const activeAction = skillAction?.skillId === item.id ? skillAction.type : null;
               return (
@@ -462,6 +474,11 @@ export function ExtensionsPage() {
                             {t.extensions("installed")}
                           </span>
                         ) : null}
+                        {isBuiltin ? (
+                          <span className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-medium text-[var(--primary)]">
+                            {t.manage("systemBuiltin")}
+                          </span>
+                        ) : null}
                         {activeAction ? (
                           <button
                             disabled
@@ -475,16 +492,16 @@ export function ExtensionsPage() {
                         ) : installed ? (
                           <button
                             onClick={() => void runSkillAction(item.id, "remove")}
-                            disabled={!!skillAction}
+                            disabled={!!skillAction || isBuiltin}
                             className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
-                            {t.extensions("removeSkill")}
+                            {isBuiltin ? t.extensions("builtInSkillLocked") : t.extensions("removeSkill")}
                           </button>
                         ) : (
                           <button
                             onClick={() => void runSkillAction(item.id, "install")}
-                            disabled={!!skillAction}
+                            disabled={!!skillAction || isBuiltin}
                             className="flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[var(--panel-muted)] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <DownloadCloud className="h-3.5 w-3.5" />

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { AttachmentAssetRecord, ConversationRecord } from "@shared";
+import {
+  isTeamAlignedAssistantAgentId,
+  type AttachmentAssetRecord,
+  type ConversationRecord,
+} from "@shared";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
@@ -383,6 +387,14 @@ export function ChatPage() {
     conversations.find((conversation) => conversation.id !== conversationId)?.id ?? "";
 
   const handleEditConversationTarget = (conversation: ConversationRecord) => {
+    if (conversation.kind === "agent" && isTeamAlignedAssistantAgentId(conversation.targetId)) {
+      window.alert(
+        settings.language === "en"
+          ? "TeamAligned assistant is built in and cannot be edited."
+          : "TeamAligned 助手是系统内置 Agent，不能编辑。",
+      );
+      return;
+    }
     navigate("/manage", {
       state: {
         editKind: conversation.kind,
@@ -411,6 +423,14 @@ export function ChatPage() {
   };
 
   const handleDeleteConversationTarget = async (conversation: ConversationRecord) => {
+    if (conversation.kind === "agent" && isTeamAlignedAssistantAgentId(conversation.targetId)) {
+      window.alert(
+        settings.language === "en"
+          ? "TeamAligned assistant is built in and cannot be deleted."
+          : "TeamAligned 助手是系统内置 Agent，不能删除。",
+      );
+      return;
+    }
     const confirmMessage =
       conversation.kind === "agent"
         ? t.chat("deleteAgentFromChatConfirm")

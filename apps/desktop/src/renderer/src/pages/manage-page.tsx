@@ -6,7 +6,11 @@ import {
   Users,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import type { AgentRecord, TeamRecord } from "@shared";
+import {
+  isTeamAlignedAssistantAgentId,
+  type AgentRecord,
+  type TeamRecord,
+} from "@shared";
 import { createTranslator } from "../i18n";
 import { useAppStore } from "../store/use-app-store";
 import { AgentCard, TeamCard, TabButton } from "../components/manage/manage-cards";
@@ -128,6 +132,10 @@ export function ManagePage() {
         }),
     [agents, teamSearch, teams],
   );
+  const selectableTeamAgents = useMemo(
+    () => agents.filter((agent) => !isTeamAlignedAssistantAgentId(agent.id)),
+    [agents],
+  );
 
   const installedSkills = useMemo(
     () => skillCatalog.filter((skill) => skill.installed),
@@ -248,6 +256,10 @@ export function ManagePage() {
     if (state.editKind === "agent") {
       const agent = agents.find((item) => item.id === state.targetId);
       if (!agent) return;
+      if (isTeamAlignedAssistantAgentId(agent.id)) {
+        navigate("/manage", { replace: true, state: null });
+        return;
+      }
       setActiveTab("agents");
       openEditAgentForm(agent);
     } else {
@@ -261,6 +273,7 @@ export function ManagePage() {
   }, [agents, location.state, navigate, teams]);
 
   const openSkillEditor = (agent: AgentRecord) => {
+    if (isTeamAlignedAssistantAgentId(agent.id)) return;
     setEditingAgentSkills(agent);
     setSelectedSkillIds(
       agent.skillWhitelist.filter((skillId) => installedSkills.some((skill) => skill.id === skillId)),
@@ -278,6 +291,7 @@ export function ManagePage() {
   };
 
   const openAgentMcpEditor = (agent: AgentRecord) => {
+    if (isTeamAlignedAssistantAgentId(agent.id)) return;
     setEditingAgentMcps(agent);
     setSelectedMcpIds(
       agent.mcpWhitelist.filter((serverId) => connectedMcps.some((server) => server.id === serverId)),
@@ -295,6 +309,14 @@ export function ManagePage() {
   };
 
   const submitDeleteAgent = async (agent: AgentRecord) => {
+    if (isTeamAlignedAssistantAgentId(agent.id)) {
+      window.alert(
+        settings.language === "en"
+          ? "TeamAligned assistant is built in and cannot be deleted."
+          : "TeamAligned 助手是系统内置 Agent，不能删除。",
+      );
+      return;
+    }
     const confirmed = window.confirm(
       t.manage("deleteAgentConfirm").replace("{{name}}", agent.name),
     );
@@ -401,6 +423,7 @@ export function ManagePage() {
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {visibleAgents.map((agent) => {
+                const isBuiltinAssistant = isTeamAlignedAssistantAgentId(agent.id);
                 const whitelistedSkills = installedSkills.filter((skill) =>
                   agent.skillWhitelist.includes(skill.id),
                 );
@@ -416,6 +439,7 @@ export function ManagePage() {
                     whitelistedMcps={whitelistedMcps}
                     completedRunCount={completedRunsByActor.get(agent.id) ?? 0}
                     language={settings.language}
+                    isBuiltin={isBuiltinAssistant}
                     labels={{
                       skillWhitelist: t.manage("skillWhitelist"),
                       mcpWhitelist: t.manage("mcpWhitelist"),
@@ -435,6 +459,7 @@ export function ManagePage() {
                       edit: t.manage("editAgent"),
                       startConversationAction: t.manage("startConversationAction"),
                       deleteAction: t.manage("deleteAction"),
+                      systemBuiltin: t.manage("systemBuiltin"),
                     }}
                     onEdit={() => openEditAgentForm(agent)}
                     onConfigureSkills={() =>
@@ -540,7 +565,7 @@ export function ManagePage() {
       <TeamFormModal
         open={showTeamForm}
         form={teamForm}
-        agents={agents}
+        agents={selectableTeamAgents}
         title={editingTeam ? t.manage("editTeam") : t.manage("createNewGroup")}
         submitLabel={editingTeam ? t.manage("saveTeam") : t.manage("create")}
         labels={{

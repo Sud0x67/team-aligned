@@ -195,6 +195,7 @@ const translations = {
       deleteTeamFromChatConfirm: "确定删除群组「{{title}}」吗？不会删除群组里的 Agent。",
       deleteFailedPrefix: "删除失败：",
       deleteFailedFallback: "未知错误",
+      systemBuiltin: "系统内置",
     },
     manage: {
       title: "管理",
@@ -272,6 +273,7 @@ const translations = {
       openExtensions: "去扩展中心安装",
       saveSkills: "保存 Skills",
       saveMcps: "保存 MCP",
+      systemBuiltin: "系统内置",
     },
     extensions: {
       title: "扩展",
@@ -304,6 +306,7 @@ const translations = {
       removeSkill: "移除",
       removingSkill: "移除中",
       removeSkillConfirm: "移除后会从所有 Agent 的 Skill 白名单中取消启用，确定要移除吗？",
+      builtInSkillLocked: "系统内置",
       connectAndEnable: "连接并启用",
       connectAndConfigure: "添加并配置",
       disconnect: "移除连接",
@@ -646,6 +649,7 @@ const translations = {
         "Delete Group \"{{title}}\"? Agents in the group will stay untouched.",
       deleteFailedPrefix: "Delete failed: ",
       deleteFailedFallback: "Unknown error",
+      systemBuiltin: "Built-in",
     },
     manage: {
       title: "Manage",
@@ -725,6 +729,7 @@ const translations = {
       openExtensions: "Open extensions",
       saveSkills: "Save Skills",
       saveMcps: "Save MCP",
+      systemBuiltin: "Built-in",
     },
     extensions: {
       title: "Extensions",
@@ -757,6 +762,7 @@ const translations = {
       removeSkill: "Remove",
       removingSkill: "Removing",
       removeSkillConfirm: "Removing this Skill also disables it for all Agents. Continue?",
+      builtInSkillLocked: "Built-in",
       connectAndEnable: "Connect and enable",
       connectAndConfigure: "Add and configure",
       disconnect: "Disconnect",
