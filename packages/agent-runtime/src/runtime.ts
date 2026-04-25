@@ -70,11 +70,11 @@ import {
   MAX_TEAM_SUBROUNDS,
   MAX_TEAM_TURN_MESSAGES,
   normalizeTeamHandoffState,
-  planTeamExecution,
+  planTeamTurn,
   resolveMentionedMembers,
-  selectNaturalTeamSpeakers,
   TEAM_MEMBER_LIMIT,
   type TeamExecutionPlan,
+  type TeamTurnPlan,
   type TeamExecutionWorkItem,
   type NaturalTeamAgentMessage,
 } from "./team-runtime.ts";
@@ -320,6 +320,11 @@ export class TeamalignedRuntime extends EventEmitter {
   private getRunResponseLanguage(run: RunRecord): RuntimeLanguage {
     const value = run.metadata?.responseLanguage;
     return value === "en" ? "en" : "zh";
+  }
+
+  private isRunTerminal(runId: string) {
+    const run = this.storage.getRun(runId);
+    return !run || ["cancelled", "failed", "completed"].includes(run.status);
   }
 
   async sendInput(payload: SendInputPayload) {
@@ -1171,6 +1176,9 @@ export class TeamalignedRuntime extends EventEmitter {
 
   private createToolInvocationObserver(conversationId: string, runId: string) {
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
+      if (this.isRunTerminal(runId)) {
+        return;
+      }
       if (event.phase === "start") {
         this.storage.createToolInvocation({
           id: event.invocationId,
@@ -1217,7 +1225,13 @@ export class TeamalignedRuntime extends EventEmitter {
     let announcedContextLookup = false;
     const announcedToolStarts = new Set<string>();
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
+      if (this.isRunTerminal(input.runId)) {
+        return;
+      }
       await baseObserver(event);
+      if (this.isRunTerminal(input.runId)) {
+        return;
+      }
 
       const toolName = event.toolName.replace(/^workspace_/, "");
       const sourceName = "server" in event ? event.server.name : event.serverName;
@@ -1564,6 +1578,7 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       const removed = this.storage.clearConversationHistory(conversation.id);
+      this.singleChatSessions.delete(conversation.id);
       this.addSlashFeedbackMessage(conversation, {
         title: byLanguage(responseLanguage, { zh: "会话已清空", en: "Conversation cleared" }),
         body: byLanguage(responseLanguage, {
@@ -2116,6 +2131,7 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     const runId = `run-${nanoid(8)}`;
+    const shouldContinueRun = () => !this.isRunTerminal(runId);
     let updatedContext: TeamContext = {
       ...team.context,
       activeTasks: Array.from(
@@ -2137,8 +2153,16 @@ export class TeamalignedRuntime extends EventEmitter {
       activeSkill: null,
       onInvocation: this.createToolInvocationObserver(conversation.id, runId),
     });
-    let selection: Awaited<ReturnType<typeof selectNaturalTeamSpeakers>> | null = null;
+    let selection: {
+      mode: TeamTurnPlan["mode"];
+      speakers: AgentRecord[];
+      reason: string;
+      activeTask: string;
+      nextPhase: string;
+      decision: string;
+    } | null = null;
     let executionPlan: TeamExecutionPlan | null = null;
+    let turnPlan: TeamTurnPlan | null = null;
     const turnMessages: NaturalTeamAgentMessage[] = [];
 
     const steps: RunStep[] = [
@@ -2146,6 +2170,9 @@ export class TeamalignedRuntime extends EventEmitter {
         label: byLanguage(responseLanguage, { zh: "同步群组上下文", en: "Sync group context" }),
         delayMs: 300,
         execute: () => {
+          if (!shouldContinueRun()) {
+            return;
+          }
           const mentionedAgents = explicitMentions
             .map((id) => members.find((agent) => agent.id === id))
             .filter((agent): agent is AgentRecord => agent !== undefined);
@@ -2188,7 +2215,10 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: byLanguage(responseLanguage, { zh: "选择发言成员", en: "Select speakers" }),
         execute: async () => {
-          executionPlan = await planTeamExecution({
+          if (!shouldContinueRun()) {
+            return;
+          }
+          turnPlan = await planTeamTurn({
             provider: provider!,
             profile: snapshot.profile,
             team: {
@@ -2208,6 +2238,28 @@ export class TeamalignedRuntime extends EventEmitter {
             mcpServers: availableMcpServers,
             responseLanguage,
           });
+          if (!shouldContinueRun()) {
+            return;
+          }
+
+          selection = {
+            mode: turnPlan.mode,
+            speakers: turnPlan.speakers,
+            reason: turnPlan.reason,
+            activeTask: turnPlan.activeTask,
+            nextPhase: turnPlan.nextPhase,
+            decision: turnPlan.decision,
+          };
+          executionPlan =
+            turnPlan.intent === "execute"
+              ? {
+                  reason: turnPlan.reason,
+                  activeTask: turnPlan.activeTask,
+                  nextPhase: turnPlan.nextPhase,
+                  decision: turnPlan.decision,
+                  workItems: turnPlan.workItems,
+                }
+              : null;
 
           if (executionPlan) {
             updatedContext = {
@@ -2261,27 +2313,9 @@ export class TeamalignedRuntime extends EventEmitter {
             });
             return;
           }
-
-          selection = await selectNaturalTeamSpeakers({
-            provider: provider!,
-            profile: snapshot.profile,
-            team: {
-              ...team,
-              context: updatedContext,
-            },
-            members,
-            context: updatedContext,
-            handoff: handoffState,
-            history: this.storage.listMessages(conversation.id).map((message) => ({
-              senderName: message.senderName,
-              visibility: message.visibility,
-              content: message.content,
-            })),
-            userInput: input,
-            explicitMentionIds: explicitMentions,
-            mcpServers: availableMcpServers,
-            responseLanguage,
-          });
+          if (!selection) {
+            return;
+          }
 
           updatedContext = {
             ...updatedContext,
@@ -2335,6 +2369,9 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: byLanguage(responseLanguage, { zh: "Agent 自然发言", en: "Agent natural replies" }),
         execute: async () => {
+          if (!shouldContinueRun()) {
+            return;
+          }
           if (executionPlan && executionPlan.workItems.length > 0) {
             const batches = buildExecutionBatches(executionPlan.workItems);
             const completedOutputs: string[] = [];
@@ -2342,6 +2379,9 @@ export class TeamalignedRuntime extends EventEmitter {
             const announcedWaitingWorkItems = new Set<string>();
 
             for (const [batchIndex, batch] of batches.entries()) {
+              if (!shouldContinueRun()) {
+                return;
+              }
               const batchIds = new Set(batch.map((item) => item.id));
               const batchOwnerIds = new Set(batch.map((item) => item.owner.id));
               const waitingItems = executionPlan.workItems.filter(
@@ -2353,6 +2393,9 @@ export class TeamalignedRuntime extends EventEmitter {
               );
 
               for (const item of waitingItems) {
+                if (!shouldContinueRun()) {
+                  return;
+                }
                 const dependencyNames = item.dependsOnAgentIds
                   .map((id) => members.find((agent) => agent.id === id)?.name)
                   .filter((name): name is string => Boolean(name));
@@ -2415,6 +2458,9 @@ export class TeamalignedRuntime extends EventEmitter {
               }
 
               for (const item of batch) {
+                if (!shouldContinueRun()) {
+                  return;
+                }
                 this.storage.addMessage({
                   conversationId: conversation.id,
                   senderId: item.owner.id,
@@ -2481,6 +2527,9 @@ export class TeamalignedRuntime extends EventEmitter {
                         speaker: item.owner,
                         responseLanguage,
                         onUpdate: (content, metadata) => {
+                          if (!shouldContinueRun()) {
+                            return;
+                          }
                           this.emitTeamUpdate({
                             conversationId: conversation.id,
                             runId,
@@ -2498,6 +2547,9 @@ export class TeamalignedRuntime extends EventEmitter {
                         },
                       }),
                       onUpdate: ({ phase, content }) => {
+                        if (!shouldContinueRun()) {
+                          return;
+                        }
                         this.emitTeamUpdate({
                           conversationId: conversation.id,
                           runId,
@@ -2517,6 +2569,9 @@ export class TeamalignedRuntime extends EventEmitter {
                         });
                       },
                       onTextStream: async (aggregatedText) => {
+                        if (!shouldContinueRun()) {
+                          return;
+                        }
                         if (streamMessageId) {
                           this.storage.updateMessage(streamMessageId, {
                             content: aggregatedText,
@@ -2573,8 +2628,14 @@ export class TeamalignedRuntime extends EventEmitter {
                   }
                 }),
               );
+              if (!shouldContinueRun()) {
+                return;
+              }
 
               for (const result of results) {
+                if (!shouldContinueRun()) {
+                  return;
+                }
                 completedOutputs.push(result.content);
                 completedWorkItemIds.add(result.item.id);
                 if (result.streamMessageId) {
@@ -2664,6 +2725,9 @@ export class TeamalignedRuntime extends EventEmitter {
                 zh: `${team.name} 已完成本轮执行。`,
                 en: `${team.name} finished this execution turn.`,
               });
+            if (!shouldContinueRun()) {
+              return;
+            }
             this.createAppNotification(
               {
                 type: "group_message",
@@ -2699,6 +2763,9 @@ export class TeamalignedRuntime extends EventEmitter {
           const speakerMessageCounts = new Map<string, number>();
           let speakers = selection.speakers;
           for (let roundIndex = 0; roundIndex < MAX_TEAM_SUBROUNDS; roundIndex += 1) {
+            if (!shouldContinueRun()) {
+              return;
+            }
             if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES || speakers.length === 0) {
               break;
             }
@@ -2721,6 +2788,9 @@ export class TeamalignedRuntime extends EventEmitter {
               });
             }
             for (const speaker of speakers) {
+              if (!shouldContinueRun()) {
+                return;
+              }
               if (turnMessages.length >= MAX_TEAM_TURN_MESSAGES) {
                 break;
               }
@@ -2772,6 +2842,9 @@ export class TeamalignedRuntime extends EventEmitter {
                 speaker,
                 responseLanguage,
                 onUpdate: (content, metadata) => {
+                  if (!shouldContinueRun()) {
+                    return;
+                  }
                   this.emitTeamUpdate({
                     conversationId: conversation.id,
                     runId,
@@ -2789,6 +2862,9 @@ export class TeamalignedRuntime extends EventEmitter {
                 },
               }),
               onTextStream: async (aggregatedText) => {
+                if (!shouldContinueRun()) {
+                  return;
+                }
                 if (streamMessageId) {
                   this.storage.updateMessage(streamMessageId, {
                     content: aggregatedText,
@@ -2827,6 +2903,9 @@ export class TeamalignedRuntime extends EventEmitter {
               },
               additionalTools: runtimeTools.tools,
             });
+              if (!shouldContinueRun()) {
+                return;
+              }
               if (!message) {
                 if (streamMessageId) {
                   this.storage.removeMessage(streamMessageId);
@@ -3018,6 +3097,9 @@ export class TeamalignedRuntime extends EventEmitter {
               }),
           );
 
+          if (!shouldContinueRun()) {
+            return;
+          }
           this.createAppNotification(
             {
               type: hasMention ? "mention" : "group_message",
@@ -3041,6 +3123,9 @@ export class TeamalignedRuntime extends EventEmitter {
       {
         label: byLanguage(responseLanguage, { zh: "更新群组记忆", en: "Update group memory" }),
         execute: () => {
+          if (!shouldContinueRun()) {
+            return;
+          }
           const activeSpeakers =
             executionPlan?.workItems.map((item) => item.owner.name) ??
             turnMessages.map((message) => message.speaker.name);

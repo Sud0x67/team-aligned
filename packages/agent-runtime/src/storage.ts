@@ -869,6 +869,40 @@ export class AppStorage {
     conversation.lastMessage = "";
     conversation.lastActivityAt = now();
 
+    if (conversation.kind === "team") {
+      const team = this.getTeam(conversation.targetId);
+      if (team) {
+        const layout = this.ensureWorkspaceLayout(team.workspacePath, {
+          type: "team",
+          title: team.name,
+          summary: team.description,
+        });
+        team.context = {
+          ...team.context,
+          activeTasks: [],
+          recentDecisions: [],
+          handoff: {
+            activeAgentId: null,
+            lastSpeakerId: null,
+            nextAgentIds: [],
+            reason: "会话已通过 /clear 重置",
+            revision: (team.context.handoff?.revision ?? 0) + 1,
+            updatedAt: now(),
+          },
+        };
+        writeFileSync(
+          layout.memoryFilePath,
+          `# ${team.name} 记忆\n\n- 类型：团队\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+          "utf8",
+        );
+        writeFileSync(
+          layout.sharedMemoryPath,
+          `# ${team.name} 共享记忆\n\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
+          "utf8",
+        );
+      }
+    }
+
     const { globalTranscriptPath, workspaceTranscriptPath } = this.getConversationTranscriptPaths(conversationId);
     if (existsSync(globalTranscriptPath)) {
       writeFileSync(globalTranscriptPath, "", "utf8");

@@ -6,6 +6,7 @@ import {
   buildExecutionBatches,
   MAX_PARALLEL_TEAM_EXECUTIONS,
   normalizeTeamHandoffState,
+  planTeamTurn,
   resolveMentionedMembers,
   resolveTeamMessageMentions,
   selectNaturalTeamSpeakers,
@@ -219,6 +220,18 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
     userInput: "@Designer 然后 @Coder",
     explicitMentionIds: ["agent-designer", "agent-coder"],
     mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "chat",
+        mode: "multi_voice",
+        speakerIds: ["agent-coder"],
+        reason: "planner response",
+        activeTask: "",
+        nextPhase: "",
+        decision: "",
+        workItems: [],
+      }),
+    },
   });
 
   assert.deepEqual(
@@ -226,6 +239,234 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
     ["agent-designer", "agent-coder"],
   );
   assert.equal(result.mode, "multi_voice");
+});
+
+test("planTeamTurn uses planner intent for execute path", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+    makeAgent("agent-tester", "tester", "Tester"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput: "请你们直接落地第一版页面",
+    explicitMentionIds: [],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "execute",
+        mode: "collaboration",
+        speakerIds: ["agent-coder", "agent-designer", "agent-tester"],
+        reason: "进入执行模式",
+        activeTask: "落地第一版页面",
+        nextPhase: "执行中",
+        decision: "并行推进",
+        workItems: [
+          {
+            ownerAgentId: "agent-designer",
+            summary: "先出结构与样式方案",
+            kickoffMessage: "我先处理页面结构。",
+            readTargets: [],
+            writeTargets: ["src/styles.css"],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+          {
+            ownerAgentId: "agent-coder",
+            summary: "实现页面骨架",
+            kickoffMessage: "我来实现页面骨架。",
+            readTargets: ["src/styles.css"],
+            writeTargets: ["src/app.tsx"],
+            dependsOnAgentIds: ["agent-designer"],
+            canRunInParallel: false,
+          },
+        ],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "execute");
+  assert.equal(result.mode, "collaboration");
+  assert.equal(result.workItems.length, 2);
+  assert.deepEqual(
+    result.workItems.map((item) => item.owner.id),
+    ["agent-designer", "agent-coder"],
+  );
+});
+
+test("planTeamTurn enforces explicit mentions in speaker selection", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+    makeAgent("agent-tester", "tester", "Tester"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput: "@Designer 你先说",
+    explicitMentionIds: ["agent-designer"],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "chat",
+        mode: "focused",
+        speakerIds: ["agent-coder"],
+        reason: "chat turn",
+        activeTask: "",
+        nextPhase: "",
+        decision: "",
+        workItems: [],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "chat");
+  assert.equal(result.speakers[0]?.id, "agent-designer");
+});
+
+test("planTeamTurn falls back safely when planner fails", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+    makeAgent("agent-tester", "tester", "Tester"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput: "hello 大家报个数",
+    explicitMentionIds: [],
+    mcpServers: [],
+    planner: {
+      invoke: async () => {
+        throw new Error("planner unavailable");
+      },
+    },
+  });
+
+  assert.equal(result.intent, "chat");
+  assert.equal(result.mode, "collaboration");
+  assert.equal(result.speakers.length, 3);
 });
 
 test("normalizeTeamHandoffState filters invalid ids and keeps only current team members", () => {

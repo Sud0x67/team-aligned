@@ -310,6 +310,57 @@ test("clearConversationHistory removes conversation-scoped history and resets tr
   }
 });
 
+test("clearConversationHistory resets team context and team memory files for group conversations", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const snapshot = storage.getSnapshot();
+    const team = snapshot.teams.find((item) => item.id === "team-product") ?? snapshot.teams[0];
+    assert.ok(team);
+    const conversationId = `conv-${team.id}`;
+
+    storage.updateTeamContext(team.id, {
+      ...team.context,
+      activeTasks: ["旧任务 A", "旧任务 B"],
+      recentDecisions: ["旧决策 A"],
+      handoff: {
+        activeAgentId: team.memberIds[0] ?? null,
+        lastSpeakerId: team.memberIds[1] ?? null,
+        nextAgentIds: team.memberIds.slice(0, 2),
+        reason: "旧接棒",
+        revision: 8,
+        updatedAt: Date.now(),
+      },
+    });
+    writeFileSync(join(team.workspacePath, "memory", "MEMORY.md"), "old team memory", "utf8");
+    writeFileSync(join(team.workspacePath, "shared-memory.md"), "old shared memory", "utf8");
+
+    storage.clearConversationHistory(conversationId);
+
+    const nextSnapshot = storage.getSnapshot();
+    const nextTeam = nextSnapshot.teams.find((item) => item.id === team.id);
+    assert.ok(nextTeam);
+    assert.equal(nextTeam.context.activeTasks.length, 0);
+    assert.equal(nextTeam.context.recentDecisions.length, 0);
+    assert.equal(nextTeam.context.handoff?.activeAgentId ?? null, null);
+    assert.equal(nextTeam.context.handoff?.lastSpeakerId ?? null, null);
+    assert.equal(nextTeam.context.handoff?.nextAgentIds.length ?? 0, 0);
+    assert.equal((nextTeam.context.handoff?.reason ?? "").includes("/clear"), true);
+    assert.equal((nextTeam.context.handoff?.revision ?? 0) > 8, true);
+    assert.equal(
+      readFileSync(join(team.workspacePath, "memory", "MEMORY.md"), "utf8").includes("会话上下文已通过 /clear 重置"),
+      true,
+    );
+    assert.equal(
+      readFileSync(join(team.workspacePath, "shared-memory.md"), "utf8").includes("会话上下文已通过 /clear 重置"),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("deleteAgent removes agent conversation data and detaches team members", () => {
   const root = createTempRoot();
   try {

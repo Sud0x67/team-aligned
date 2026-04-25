@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TeamAligned - Local-first AI workspace</title>
+    <meta
+      name="description"
+      content="TeamAligned is a local-first AI workspace for natural conversations with AI teammates, open model providers, Skills, and MCP extensions."
+    />
+    <meta property="og:title" content="TeamAligned" />
+    <meta
+      property="og:description"
+      content="Talk with your silicon partners like real teammates. Bring any OpenAI-compatible provider, Skills, and MCP tools."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#7c3aed" />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #191827;
+        --muted: #62677d;
+        --subtle: #85899a;
+        --line: #e5e7ef;
+        --panel: #ffffff;
+        --surface: #f7f7fb;
+        --purple: #7c3aed;
+        --purple-strong: #6d28d9;
+        --purple-soft: #efe7ff;
+        --teal: #0f9f8f;
+        --coral: #f97362;
+        --gold: #d89921;
+        --shadow: 0 24px 70px rgba(30, 24, 54, 0.14);
+        --radius: 8px;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(180deg, #ffffff 0%, #fbfbfe 43%, #f3f5f8 100%);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        min-height: 100vh;
+      }
+
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid rgba(229, 231, 239, 0.78);
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .nav-inner,
+      .section,
+      .hero-inner,
+      .footer-inner {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 72px;
+        gap: 20px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 8px;
+        color: #fff;
+        background: var(--purple);
+        box-shadow: 0 12px 24px rgba(124, 58, 237, 0.28);
+      }
+
+      .brand-mark svg {
+        width: 23px;
+        height: 23px;
+      }
+
+      .nav-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .lang-switch {
+        display: inline-grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .lang-switch button {
+        min-width: 44px;
+        height: 34px;
+        border: 0;
+        border-radius: 6px;
+        color: var(--muted);
+        background: transparent;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .lang-switch button.active {
+        color: #fff;
+        background: var(--ink);
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        font-weight: 800;
+        white-space: nowrap;
+        transition:
+          transform 160ms ease,
+          box-shadow 160ms ease,
+          border-color 160ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+        border-color: #d8dbe8;
+        box-shadow: 0 12px 28px rgba(30, 24, 54, 0.1);
+      }
+
+      .button.primary {
+        border-color: var(--purple);
+        background: var(--purple);
+        color: #fff;
+      }
+
+      .button.primary:hover {
+        border-color: var(--purple-strong);
+        background: var(--purple-strong);
+      }
+
+      .hero {
+        position: relative;
+        overflow: hidden;
+        padding: 86px 0 40px;
+      }
+
+      .hero-inner {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(520px, 1.08fr);
+        align-items: center;
+        gap: 56px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 18px;
+        color: var(--purple-strong);
+        font-size: 0.78rem;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 28px;
+        height: 2px;
+        border-radius: 999px;
+        background: var(--purple);
+      }
+
+      h1 {
+        max-width: 670px;
+        margin: 0;
+        font-size: clamp(2.55rem, 6.2vw, 5.4rem);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .hero-copy {
+        max-width: 620px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: clamp(1.05rem, 1.7vw, 1.24rem);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .note {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        margin-top: 18px;
+        color: var(--subtle);
+        font-size: 0.94rem;
+      }
+
+      .note span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .note span::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--teal);
+      }
+
+      .screenshot-frame {
+        overflow: hidden;
+        border: 1px solid rgba(229, 231, 239, 0.94);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .screenshot-chrome {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfbfd;
+      }
+
+      .window-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      .window-dot.red {
+        background: #fb5f57;
+      }
+
+      .window-dot.yellow {
+        background: #fdbc2e;
+      }
+
+      .window-dot.green {
+        background: #2ac840;
+      }
+
+      .screenshot-image {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #fff;
+      }
+
+      .hero-screenshot .screenshot-image {
+        aspect-ratio: 1324 / 769;
+        object-fit: cover;
+      }
+
+      .feature-shot {
+        overflow: hidden;
+        margin-top: 22px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #f7f7fb;
+      }
+
+      .feature-shot img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        object-position: left top;
+      }
+
+      .section {
+        padding: 78px 0;
+      }
+
+      .section-head {
+        max-width: 760px;
+        margin-bottom: 34px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.25rem);
+        line-height: 1.06;
+        letter-spacing: 0;
+      }
+
+      .section-copy {
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: 1.08rem;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+
+      .feature-card {
+        min-height: 310px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 14px 34px rgba(30, 24, 54, 0.06);
+      }
+
+      .feature-icon {
+        display: grid;
+        width: 46px;
+        height: 46px;
+        margin-bottom: 24px;
+        place-items: center;
+        border-radius: 8px;
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .feature-card:nth-child(1) .feature-icon {
+        background: var(--purple);
+      }
+
+      .feature-card:nth-child(2) .feature-icon {
+        background: var(--teal);
+      }
+
+      .feature-card:nth-child(3) .feature-icon {
+        background: var(--coral);
+      }
+
+      h3 {
+        margin: 0 0 12px;
+        font-size: 1.32rem;
+        line-height: 1.24;
+        letter-spacing: 0;
+      }
+
+      .feature-card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .mini-panel {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .mini-panel strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .mini-panel span {
+        color: var(--muted);
+      }
+
+      .download {
+        padding: 72px 0;
+        background: #191827;
+        color: #fff;
+      }
+
+      .download .section {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 24px;
+        padding: 0;
+      }
+
+      .download p {
+        max-width: 700px;
+        margin: 14px 0 0;
+        color: #c8c7d4;
+      }
+
+      .download .button {
+        border-color: #fff;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .footer-inner {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 26px 0;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      body [data-lang] {
+        display: none;
+      }
+
+      html[data-lang="zh"] body [data-lang="zh"],
+      html[data-lang="en"] body [data-lang="en"] {
+        display: revert;
+      }
+
+      html[data-lang="zh"] body img[data-lang="zh"],
+      html[data-lang="en"] body img[data-lang="en"] {
+        display: block;
+      }
+
+      @media (max-width: 1040px) {
+        .hero-inner {
+          grid-template-columns: 1fr;
+          gap: 42px;
+        }
+
+        .screenshot-frame {
+          max-width: 840px;
+        }
+
+        .features {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .nav-inner,
+        .section,
+        .hero-inner,
+        .footer-inner {
+          width: min(100% - 28px, 1180px);
+        }
+
+        .nav-inner {
+          min-height: 64px;
+        }
+
+        .brand > span:not(.brand-mark) {
+          display: none;
+        }
+
+        .nav-actions .button {
+          display: none;
+        }
+
+        .hero {
+          padding-top: 56px;
+        }
+
+        .hero-actions .button {
+          width: 100%;
+        }
+
+        .hero-screenshot .screenshot-image {
+          min-height: 360px;
+          object-fit: cover;
+          object-position: left top;
+        }
+
+        .mini-grid,
+        .download .section {
+          grid-template-columns: 1fr;
+        }
+
+        .footer-inner {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body bgcolor="#ffffff" text="#191827" style="margin: 0; background: #ffffff; color: #191827;">
+    <div class="page">
+      <nav class="nav" aria-label="Primary navigation">
+        <div class="nav-inner">
+          <a class="brand" href="#top" aria-label="TeamAligned home">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 4L6 22h5.5L16 13l4.5 9H26L16 4Z" fill="currentColor" />
+                <rect x="9" y="24" width="14" height="3.5" rx="1.75" fill="currentColor" opacity="0.55" />
+              </svg>
+            </span>
+            <span>TeamAligned</span>
+          </a>
+          <div class="nav-actions">
+            <div class="lang-switch" role="group" aria-label="Language">
+              <button type="button" class="active" data-set-lang="zh">中</button>
+              <button type="button" data-set-lang="en">EN</button>
+            </div>
+            <a class="button" href="https://github.com/Sud0x67/team-aligned" target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <main id="top">
+        <section class="hero">
+          <div class="hero-inner">
+            <div>
+              <p class="eyebrow">Local-first AI workspace</p>
+              <h1>
+                <span data-lang="zh">让你和硅基伙伴交流，像和真实的人类一样。</span>
+                <span data-lang="en">Talk with silicon partners like real teammates.</span>
+              </h1>
+              <p class="hero-copy">
+                <span data-lang="zh">
+                  TeamAligned 是一个本地优先的 Mac AI 工作空间。它把 Agent 私聊、团队会话、模型 Provider、Skills
+                  与 MCP 扩展放进熟悉的聊天界面，让你的 AI 伙伴更像可以协作的同事。
+                </span>
+                <span data-lang="en">
+                  TeamAligned is a local-first Mac AI workspace. It brings agent chats, team conversations, model
+                  providers, Skills, and MCP extensions into a familiar chat experience.
+                </span>
+              </p>
+              <div class="hero-actions">
+                <a
+                  class="button primary"
+                  href="https://github.com/Sud0x67/team-aligned/releases/tag/0.0.1-beta"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span data-lang="zh">下载 Mac Beta</span>
+                  <span data-lang="en">Download Mac Beta</span>
+                </a>
+                <a class="button" href="#features">
+                  <span data-lang="zh">查看能力</span>
+                  <span data-lang="en">Explore features</span>
+                </a>
+              </div>
+              <div class="note">
+                <span data-lang="zh">GitHub Release 0.0.1-beta</span>
+                <span data-lang="en">GitHub Release 0.0.1-beta</span>
+                <span data-lang="zh">本地优先，可审计，可扩展</span>
+                <span data-lang="en">Local-first, auditable, extensible</span>
+              </div>
+            </div>
+
+            <div class="screenshot-frame hero-screenshot" aria-label="TeamAligned product screenshot">
+              <div class="screenshot-chrome" aria-hidden="true">
+                <span class="window-dot red"></span>
+                <span class="window-dot yellow"></span>
+                <span class="window-dot green"></span>
+              </div>
+              <img
+                class="screenshot-image"
+                src="./assets/screenshots/zh/chat.png"
+                alt="TeamAligned 中文会话界面截图"
+                width="2960"
+                height="1662"
+                data-lang="zh"
+              />
+              <img
+                class="screenshot-image"
+                src="./assets/screenshots/en/chat.png"
+                alt="TeamAligned English conversations screenshot"
+                width="2960"
+                height="1662"
+                data-lang="en"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="features">
+          <div class="section-head">
+            <h2>
+              <span data-lang="zh">三个核心能力，围绕真正可用的本地 AI 协作。</span>
+              <span data-lang="en">Three core capabilities for practical local AI collaboration.</span>
+            </h2>
+            <p class="section-copy">
+              <span data-lang="zh">TeamAligned 不把你锁进单一模型或单一工作流，而是给你一个可以自由组合的 AI 工作台。</span>
+              <span data-lang="en">TeamAligned does not lock you into one model or workflow. It gives you a composable AI workbench.</span>
+            </p>
+          </div>
+
+          <div class="features">
+            <article class="feature-card">
+              <div class="feature-icon">1</div>
+              <h3>
+                <span data-lang="zh">自然的伙伴感会话</span>
+                <span data-lang="en">Human-feeling AI conversations</span>
+              </h3>
+              <p>
+                <span data-lang="zh">
+                  以聊天软件的方式和 Agent 私聊或团队群聊。上下文、附件、工具调用与运行记录都围绕会话组织，协作不会散落在命令行碎片里。
+                </span>
+                <span data-lang="en">
+                  Chat with one agent or an AI team in a messenger-like interface. Context, attachments, tool calls, and run history stay organized around the conversation.
+                </span>
+              </p>
+              <div class="feature-shot">
+                <img
+                  src="./assets/screenshots/zh/chat.png"
+                  alt="TeamAligned 中文会话列表和聊天线程"
+                  width="2960"
+                  height="1662"
+                  data-lang="zh"
+                  loading="lazy"
+                />
+                <img
+                  src="./assets/screenshots/en/chat.png"
+                  alt="TeamAligned English conversation list and chat thread"
+                  width="2960"
+                  height="1662"
+                  data-lang="en"
+                  loading="lazy"
+                />
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">2</div>
+              <h3>
+                <span data-lang="zh">自由配置 OpenAI 兼容 Provider</span>
+                <span data-lang="en">Bring any OpenAI-compatible provider</span>
+              </h3>
+              <p>
+                <span data-lang="zh">
+                  自己配置 base URL、API key、模型名与参数。无论你偏好 OpenAI、Qwen，还是其他兼容接口，都可以放进同一个本地工作空间。
+                </span>
+                <span data-lang="en">
+                  Configure your own base URL, API key, model name, and parameters. Use OpenAI, Qwen, or other compatible endpoints from one local workspace.
+                </span>
+              </p>
+              <div class="feature-shot">
+                <img
+                  src="./assets/screenshots/zh/provider-settings.png"
+                  alt="TeamAligned 中文模型 Provider 设置"
+                  width="2960"
+                  height="1662"
+                  data-lang="zh"
+                  loading="lazy"
+                />
+                <img
+                  src="./assets/screenshots/en/provider-settings.png"
+                  alt="TeamAligned English model provider settings"
+                  width="2960"
+                  height="1662"
+                  data-lang="en"
+                  loading="lazy"
+                />
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">3</div>
+              <h3>
+                <span data-lang="zh">简单扩展 Skills 与 MCP</span>
+                <span data-lang="en">Extend with Skills and MCP</span>
+              </h3>
+              <p>
+                <span data-lang="zh">
+                  通过 Skills 注入专业工作流，通过 MCP 连接更多工具。你可以安装、启用、白名单和审计这些能力，让 Agent 更贴近你的实际工作。
+                </span>
+                <span data-lang="en">
+                  Add specialist workflows through Skills and connect external tools through MCP. Install, enable, allowlist, and audit capabilities close to your real work.
+                </span>
+              </p>
+              <div class="feature-shot">
+                <img
+                  src="./assets/screenshots/zh/extensions.png"
+                  alt="TeamAligned 中文扩展页 Skills 和 MCP"
+                  width="2960"
+                  height="1662"
+                  data-lang="zh"
+                  loading="lazy"
+                />
+                <img
+                  src="./assets/screenshots/en/extensions.png"
+                  alt="TeamAligned English Extensions page for Skills and MCP"
+                  width="2960"
+                  height="1662"
+                  data-lang="en"
+                  loading="lazy"
+                />
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" aria-label="Details">
+          <div class="section-head">
+            <h2>
+              <span data-lang="zh">为可掌控的 AI 工作而设计。</span>
+              <span data-lang="en">Designed for AI work you can control.</span>
+            </h2>
+          </div>
+          <div class="mini-grid">
+            <div class="mini-panel">
+              <strong data-lang="zh">本地优先</strong>
+              <strong data-lang="en">Local-first</strong>
+              <span data-lang="zh">配置、会话与运行记录保留在你的 Mac 上，适合个人工作流和小团队试验。</span>
+              <span data-lang="en">Settings, conversations, and run records live on your Mac, fitting personal workflows and small-team experiments.</span>
+            </div>
+            <div class="mini-panel">
+              <strong data-lang="zh">可审计</strong>
+              <strong data-lang="en">Auditable</strong>
+              <span data-lang="zh">工具调用、产物、附件和运行步骤围绕会话记录，便于回看 AI 做了什么。</span>
+              <span data-lang="en">Tool calls, artifacts, attachments, and run steps are kept around the conversation so you can inspect what happened.</span>
+            </div>
+            <div class="mini-panel">
+              <strong data-lang="zh">可组合</strong>
+              <strong data-lang="en">Composable</strong>
+              <span data-lang="zh">Provider、Prompt、Skills、MCP 可以按不同 Agent 或 Team 组合使用。</span>
+              <span data-lang="en">Providers, prompts, Skills, and MCP tools can be mixed per agent or team.</span>
+            </div>
+            <div class="mini-panel">
+              <strong data-lang="zh">面向协作</strong>
+              <strong data-lang="en">Collaboration-oriented</strong>
+              <span data-lang="zh">从单个助手到 Agent 团队，让 AI 以更接近协作成员的方式参与工作。</span>
+              <span data-lang="en">Move from one assistant to an AI team that participates more like collaborators.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="download" id="download">
+          <div class="section">
+            <div>
+              <h2>
+                <span data-lang="zh">下载 TeamAligned Mac Beta。</span>
+                <span data-lang="en">Download TeamAligned for Mac Beta.</span>
+              </h2>
+              <p>
+                <span data-lang="zh">当前 beta 版本通过 GitHub Release 分发。打开 release 页面后，下载适合你 Mac 的安装包即可开始体验。</span>
+                <span data-lang="en">The beta is distributed through GitHub Releases. Open the release page and download the package for your Mac.</span>
+              </p>
+            </div>
+            <a
+              class="button primary"
+              href="https://github.com/Sud0x67/team-aligned/releases/tag/0.0.1-beta"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span data-lang="zh">前往 Release</span>
+              <span data-lang="en">Open Release</span>
+            </a>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <div class="footer-inner">
+          <span>TeamAligned</span>
+          <a href="https://github.com/Sud0x67/team-aligned" target="_blank" rel="noreferrer">github.com/Sud0x67/team-aligned</a>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      const root = document.documentElement;
+      const buttons = document.querySelectorAll("[data-set-lang]");
+
+      function readStoredLanguage() {
+        try {
+          return window.localStorage.getItem("teamaligned-lang");
+        } catch {
+          return null;
+        }
+      }
+
+      function writeStoredLanguage(language) {
+        try {
+          window.localStorage.setItem("teamaligned-lang", language);
+        } catch {
+          // file:// previews can block localStorage; the language switch still works in memory.
+        }
+      }
+
+      const storedLanguage = readStoredLanguage();
+      const browserLanguage = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+      const initialLanguage = storedLanguage === "zh" || storedLanguage === "en" ? storedLanguage : browserLanguage;
+
+      function setLanguage(language) {
+        root.dataset.lang = language;
+        root.lang = language === "zh" ? "zh-CN" : "en";
+        document.title = language === "zh"
+          ? "TeamAligned - 本地优先 AI 工作空间"
+          : "TeamAligned - Local-first AI workspace";
+        writeStoredLanguage(language);
+        buttons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.setLang === language);
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => setLanguage(button.dataset.setLang));
+      });
+
+      setLanguage(initialLanguage);
+    </script>
+  </body>
+</html>

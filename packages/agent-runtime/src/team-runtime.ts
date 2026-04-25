@@ -74,6 +74,13 @@ export type TeamExecutionPlan = {
   workItems: TeamExecutionWorkItem[];
 };
 
+export type TeamTurnIntent = "chat" | "execute";
+
+export type TeamTurnPlan = NaturalTeamSpeakerSelection & {
+  intent: TeamTurnIntent;
+  workItems: TeamExecutionWorkItem[];
+};
+
 export type MentionResolution<T extends { id: string; name: string }> = {
   tokens: string[];
   matchedMembers: T[];
@@ -81,35 +88,28 @@ export type MentionResolution<T extends { id: string; name: string }> = {
   unresolvedTokens: string[];
 };
 
-const executionPlanSchema = z.object({
-  shouldExecute: z.boolean().default(false),
-  reason: z.string().default(""),
-  activeTask: z.string().default(""),
-  nextPhase: z.string().default(""),
-  decision: z.string().default(""),
-  workItems: z
-    .array(
-      z.object({
-        ownerAgentId: z.string(),
-        summary: z.string().default(""),
-        kickoffMessage: z.string().default(""),
-        readTargets: z.array(z.string()).max(8).default([]),
-        writeTargets: z.array(z.string()).max(8).default([]),
-        dependsOnAgentIds: z.array(z.string()).max(5).default([]),
-        canRunInParallel: z.boolean().default(true),
-      }),
-    )
-    .max(TEAM_MEMBER_LIMIT * MAX_AGENT_WORK_ITEMS)
-    .default([]),
+const workItemSchema = z.object({
+  ownerAgentId: z.string(),
+  summary: z.string().default(""),
+  kickoffMessage: z.string().default(""),
+  readTargets: z.array(z.string()).max(8).default([]),
+  writeTargets: z.array(z.string()).max(8).default([]),
+  dependsOnAgentIds: z.array(z.string()).max(5).default([]),
+  canRunInParallel: z.boolean().default(true),
 });
 
-const naturalSelectionSchema = z.object({
+const teamTurnPlanSchema = z.object({
+  intent: z.enum(["chat", "execute"]).default("chat"),
   mode: z.enum(["focused", "multi_voice", "collaboration"]).default("focused"),
   speakerIds: z.array(z.string()).max(TEAM_MEMBER_LIMIT).default([]),
   reason: z.string().default(""),
   activeTask: z.string().default(""),
   nextPhase: z.string().default(""),
   decision: z.string().default(""),
+  workItems: z
+    .array(workItemSchema)
+    .max(TEAM_MEMBER_LIMIT * MAX_AGENT_WORK_ITEMS)
+    .default([]),
 });
 
 const naturalAgentReplySchema = z.object({
@@ -118,6 +118,12 @@ const naturalAgentReplySchema = z.object({
   content: z.string().default(""),
   nextSpeakerIds: z.array(z.string()).max(TEAM_MEMBER_LIMIT).default([]),
 });
+
+type RawTeamTurnPlan = z.infer<typeof teamTurnPlanSchema>;
+
+type StructuredTeamTurnPlanner = {
+  invoke(input: string): Promise<unknown> | unknown;
+};
 
 function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
@@ -209,6 +215,47 @@ function clampSpeakersForMode(input: {
   return speakers;
 }
 
+function resolveSpeakersByIds(ids: string[], members: AgentRecord[]) {
+  const memberMap = new Map(members.map((agent) => [agent.id, agent]));
+  const seen = new Set<string>();
+  const speakers: AgentRecord[] = [];
+  for (const id of ids) {
+    const agent = memberMap.get(id);
+    if (!agent || seen.has(agent.id)) continue;
+    seen.add(agent.id);
+    speakers.push(agent);
+  }
+  return speakers;
+}
+
+function ensureExplicitSpeakers(input: {
+  explicitMentionIds: string[];
+  speakers: AgentRecord[];
+  members: AgentRecord[];
+}) {
+  if (input.explicitMentionIds.length === 0) {
+    return input.speakers;
+  }
+
+  const explicit = resolveSpeakersByIds(input.explicitMentionIds, input.members);
+  const explicitIds = new Set(explicit.map((agent) => agent.id));
+  return [
+    ...explicit,
+    ...input.speakers.filter((agent) => !explicitIds.has(agent.id)),
+  ].slice(0, TEAM_MEMBER_LIMIT);
+}
+
+function fallbackModeForInput(userInput: string): NaturalTeamMode {
+  const normalized = userInput.toLowerCase();
+  if (/报数|点名|全员|所有人|大家|一起|讨论|脑暴|brainstorm|all[-\s]?hands|roll[-\s]?call|everyone|多角度|分工|协作|分别|评审|review/.test(normalized)) {
+    return "collaboration";
+  }
+  if (/对比|方案|建议|怎么看|意见|看法|multi|perspective|compare|options/.test(normalized)) {
+    return "multi_voice";
+  }
+  return "focused";
+}
+
 function selectFallbackSpeakers(input: {
   members: AgentRecord[];
   explicitMentionIds: string[];
@@ -235,6 +282,7 @@ function selectFallbackSpeakers(input: {
   }
 
   const normalized = input.userInput.toLowerCase();
+  const mode = fallbackModeForInput(input.userInput);
   const scored = input.members.map((agent) => {
     const haystack = `${agent.name} ${agent.role} ${agent.capabilities.join(" ")}`.toLowerCase();
     let score = 0;
@@ -251,9 +299,12 @@ function selectFallbackSpeakers(input: {
     return { agent, score };
   });
 
-  const complex = /大家|一起|讨论|脑暴|brainstorm|多角度|分工|协作|分别|评审|review/.test(normalized);
-  const mode: NaturalTeamMode = complex ? "collaboration" : "focused";
-  const take = complex ? Math.min(TEAM_MEMBER_LIMIT, input.members.length) : Math.min(2, input.members.length);
+  const take =
+    mode === "collaboration"
+      ? Math.min(TEAM_MEMBER_LIMIT, input.members.length)
+      : mode === "multi_voice"
+        ? Math.min(4, input.members.length)
+        : Math.min(2, input.members.length);
   return {
     mode,
     speakers: scored
@@ -261,8 +312,8 @@ function selectFallbackSpeakers(input: {
       .map((item) => item.agent)
       .slice(0, take),
     reason: byLanguage(input.responseLanguage, {
-      zh: complex ? "用户表达了多 Agent 协作意图。" : "根据角色和能力选择最相关 Agent。",
-      en: complex
+      zh: mode === "collaboration" ? "用户表达了多 Agent 协作意图。" : "根据角色和能力选择最相关 Agent。",
+      en: mode === "collaboration"
         ? "The user is asking for multi-agent collaboration."
         : "Selected the most relevant agents based on roles and capabilities.",
     }),
@@ -433,7 +484,7 @@ function pathOverlaps(left: string, right: string) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
-function isExecutionIntent(userInput: string) {
+function hasFallbackExecutionIntent(userInput: string) {
   return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建文件|新建文件|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update|设计页面|设计一个|做个页面|做一个页面|做静态网页|静态网页|原型|线框图|设计稿|页面结构|页面布局/.test(
     userInput.toLowerCase(),
   );
@@ -564,177 +615,8 @@ function extractStreamText(chunk: unknown) {
   return "";
 }
 
-export async function selectNaturalTeamSpeakers(input: {
-  provider: ProviderConfig;
-  team: TeamRecord;
-  members: AgentRecord[];
-  profile: UserProfile;
-  context: TeamContext;
-  handoff: TeamHandoffState | null;
-  history: { senderName: string; visibility: string; content: string }[];
-  userInput: string;
-  explicitMentionIds: string[];
-  mcpServers: McpCatalogRecord[];
-  responseLanguage?: RuntimeLanguage;
-}) {
-  const responseLanguage = input.responseLanguage ?? "zh";
-  const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
-  const fallback = selectFallbackSpeakers({
-    members: cappedMembers,
-    explicitMentionIds: input.explicitMentionIds,
-    activeAgentId: input.handoff?.activeAgentId ?? null,
-    userInput: input.userInput,
-    responseLanguage,
-  });
-
-  if (cappedMembers.length === 0) {
-    return {
-      mode: "focused",
-      speakers: [],
-      reason: byLanguage(responseLanguage, {
-        zh: "群组没有可用成员。",
-        en: "No available members in this team.",
-      }),
-      activeTask: "",
-      nextPhase: "",
-      decision: "",
-    } satisfies NaturalTeamSpeakerSelection;
-  }
-
-  if (input.explicitMentionIds.length > 0) {
-    return {
-      mode: fallback.mode,
-      speakers: clampSpeakersForMode({
-        mode: fallback.mode,
-        speakers: fallback.speakers,
-        members: cappedMembers,
-      }),
-      reason: fallback.reason,
-      activeTask: compact(input.userInput),
-      nextPhase: "",
-      decision: "",
-    } satisfies NaturalTeamSpeakerSelection;
-  }
-
-  try {
-    const model = createProviderModel(input.provider).withStructuredOutput(naturalSelectionSchema);
-    const result = naturalSelectionSchema.parse(
-      await model.invoke(
-        byLanguage(responseLanguage, {
-          zh: [
-            "你是 teamaligned 群聊中的不可见 system orchestrator。",
-            "你的任务不是作为群成员发言，而是选择本轮应该发言的 Agent。",
-            "请让群聊像真实人类群聊一样自然：该谁说谁说，没必要全员发言。",
-            `群组最多激活 ${TEAM_MEMBER_LIMIT} 个 Agent。`,
-            "普通问题选择 1 到 2 个 Agent；多视角问题选择 2 到 4 个 Agent；明确脑暴、分工、复杂协作选择 3 到 5 个 Agent。",
-            "如果某个 Agent 没有明显贡献，不要选择它。",
-            "",
-            "模式定义：focused / multi_voice / collaboration。",
-            "",
-            "当前用户资料：",
-            `- 姓名：${input.profile.name}`,
-            `- 简介：${input.profile.bio || "未设置"}`,
-            "",
-            "群组上下文：",
-            buildContextText(input.team, input.context, responseLanguage),
-            "",
-            "Agent roster：",
-            buildNaturalRoster(cappedMembers, responseLanguage),
-            "",
-            `当前可用 MCP 服务：${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
-            "",
-            "最近公开对话：",
-            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
-            "",
-            "handoff 状态：",
-            `- 当前接棒 Agent id：${input.handoff?.activeAgentId ?? "无"}`,
-            `- 上次发言 Agent id：${input.handoff?.lastSpeakerId ?? "无"}`,
-            `- 下一候选 Agent ids：${formatList(input.handoff?.nextAgentIds ?? [], responseLanguage)}`,
-            `- 最近接棒原因：${input.handoff?.reason || "无"}`,
-            "",
-            "用户最新输入：",
-            input.userInput,
-            "",
-            "输出要求：",
-            "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-            "- speakerIds 必须来自 roster id",
-          ],
-          en: [
-            "You are the invisible system orchestrator in TeamAligned group chat.",
-            "Your job is not to speak as a member, but to choose which agent(s) should reply this turn.",
-            "Keep the chat natural: only the right people speak, not everyone.",
-            `At most ${TEAM_MEMBER_LIMIT} agents can be active in this group.`,
-            "For normal requests choose 1-2 agents; for multi-perspective requests choose 2-4; for explicit brainstorm/division/collaboration choose 3-5.",
-            "If an agent has no clear contribution, do not select that agent.",
-            "",
-            "Mode definitions: focused / multi_voice / collaboration.",
-            "",
-            "Current user profile:",
-            `- Name: ${input.profile.name}`,
-            `- Bio: ${input.profile.bio || "not set"}`,
-            "",
-            "Group context:",
-            buildContextText(input.team, input.context, responseLanguage),
-            "",
-            "Agent roster:",
-            buildNaturalRoster(cappedMembers, responseLanguage),
-            "",
-            `Available MCP servers: ${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
-            "",
-            "Recent public messages:",
-            buildRecentHistory(selectPublicHistory(input.history), responseLanguage),
-            "",
-            "Handoff state:",
-            `- Active handoff agent id: ${input.handoff?.activeAgentId ?? "none"}`,
-            `- Last speaker agent id: ${input.handoff?.lastSpeakerId ?? "none"}`,
-            `- Next candidate agent ids: ${formatList(input.handoff?.nextAgentIds ?? [], responseLanguage)}`,
-            `- Latest handoff reason: ${input.handoff?.reason || "none"}`,
-            "",
-            "Latest user input:",
-            input.userInput,
-            "",
-            "Output requirements:",
-            "- Return only a valid JSON object. No markdown. No extra commentary.",
-            "- speakerIds must come from roster ids.",
-          ],
-        }).join("\n"),
-      ),
-    );
-
-    const memberMap = new Map(cappedMembers.map((agent) => [agent.id, agent]));
-    const rawSpeakers = result.speakerIds
-      .map((id) => memberMap.get(id))
-      .filter((item): item is AgentRecord => item !== undefined);
-    const speakers = applyHandoffPreference({
-      mode: result.mode ?? fallback.mode,
-      speakers: rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers,
-      members: cappedMembers,
-      activeAgentId: input.handoff?.activeAgentId ?? null,
-    });
-    const mode = result.mode ?? fallback.mode;
-
-    return {
-      mode,
-      speakers: clampSpeakersForMode({ mode, speakers, members: cappedMembers }),
-      reason: compact(result.reason) || fallback.reason,
-      activeTask: compact(result.activeTask ?? ""),
-      nextPhase: compact(result.nextPhase ?? ""),
-      decision: compact(result.decision ?? ""),
-    } satisfies NaturalTeamSpeakerSelection;
-  } catch {
-    return {
-      mode: fallback.mode,
-      speakers: clampSpeakersForMode({
-        mode: fallback.mode,
-        speakers: fallback.speakers,
-        members: cappedMembers,
-      }),
-      reason: fallback.reason,
-      activeTask: compact(input.userInput),
-      nextPhase: "",
-      decision: "",
-    } satisfies NaturalTeamSpeakerSelection;
-  }
+function createTeamIntentAgent(input: { provider: ProviderConfig }): StructuredTeamTurnPlanner {
+  return createProviderModel(input.provider).withStructuredOutput(teamTurnPlanSchema);
 }
 
 function buildFallbackExecutionPlan(input: {
@@ -787,7 +669,109 @@ function buildFallbackExecutionPlan(input: {
   } satisfies TeamExecutionPlan;
 }
 
-export async function planTeamExecution(input: {
+function mapExecutionWorkItems(input: {
+  rawWorkItems: RawTeamTurnPlan["workItems"];
+  members: AgentRecord[];
+  responseLanguage: RuntimeLanguage;
+}) {
+  const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
+  const ownerCounts = new Map<string, number>();
+  const workItems: TeamExecutionWorkItem[] = [];
+  for (const [index, item] of input.rawWorkItems.entries()) {
+    const owner = memberMap.get(item.ownerAgentId);
+    if (!owner) continue;
+    const currentCount = ownerCounts.get(owner.id) ?? 0;
+    if (currentCount >= MAX_AGENT_WORK_ITEMS) continue;
+    ownerCounts.set(owner.id, currentCount + 1);
+    workItems.push({
+      id: `work-${index + 1}`,
+      owner,
+      summary:
+        compact(item.summary) ||
+        byLanguage(input.responseLanguage, {
+          zh: `处理与 ${owner.role} 相关的部分`,
+          en: `Handle the part related to ${owner.role}`,
+        }),
+      kickoffMessage:
+        compact(item.kickoffMessage) ||
+        byLanguage(input.responseLanguage, {
+          zh: `我来处理和 ${owner.role} 相关的部分。`,
+          en: `I'll take the part related to ${owner.role}.`,
+        }),
+      readTargets: item.readTargets.map(normalizeTargetPath).filter(Boolean),
+      writeTargets: item.writeTargets.map(normalizeTargetPath).filter(Boolean),
+      dependsOnAgentIds: item.dependsOnAgentIds.filter((id) => memberMap.has(id)),
+      canRunInParallel: item.canRunInParallel,
+    });
+  }
+  return workItems;
+}
+
+function buildFallbackTeamTurnPlan(input: {
+  members: AgentRecord[];
+  explicitMentionIds: string[];
+  activeAgentId?: string | null;
+  userInput: string;
+  responseLanguage: RuntimeLanguage;
+}) {
+  const fallback = selectFallbackSpeakers(input);
+  const baseSpeakers =
+    input.explicitMentionIds.length > 0
+      ? ensureExplicitSpeakers({
+          explicitMentionIds: input.explicitMentionIds,
+          speakers: fallback.speakers,
+          members: input.members,
+        })
+      : applyHandoffPreference({
+          mode: fallback.mode,
+          speakers: fallback.speakers,
+          members: input.members,
+          activeAgentId: input.activeAgentId ?? null,
+        });
+  const clampedSpeakers = clampSpeakersForMode({
+    mode: fallback.mode,
+    speakers: baseSpeakers,
+    members: input.members,
+  });
+
+  if (!hasFallbackExecutionIntent(input.userInput)) {
+    return {
+      intent: "chat",
+      mode: fallback.mode,
+      speakers: clampedSpeakers,
+      reason: fallback.reason,
+      activeTask: compact(input.userInput),
+      nextPhase: "",
+      decision: "",
+      workItems: [],
+    } satisfies TeamTurnPlan;
+  }
+
+  const executionPlan = buildFallbackExecutionPlan(input);
+  const executionOwners = Array.from(
+    new Map(executionPlan.workItems.map((item) => [item.owner.id, item.owner])).values(),
+  );
+
+  return {
+    intent: "execute",
+    mode: fallback.mode,
+    speakers:
+      executionOwners.length > 0
+        ? clampSpeakersForMode({
+            mode: fallback.mode,
+            speakers: executionOwners,
+            members: input.members,
+          })
+        : clampedSpeakers,
+    reason: executionPlan.reason,
+    activeTask: executionPlan.activeTask,
+    nextPhase: executionPlan.nextPhase,
+    decision: executionPlan.decision,
+    workItems: executionPlan.workItems,
+  } satisfies TeamTurnPlan;
+}
+
+export async function planTeamTurn(input: {
   provider: ProviderConfig;
   team: TeamRecord;
   members: AgentRecord[];
@@ -798,15 +782,28 @@ export async function planTeamExecution(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
+  planner?: StructuredTeamTurnPlanner;
   responseLanguage?: RuntimeLanguage;
 }) {
   const responseLanguage = input.responseLanguage ?? "zh";
   const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
-  if (!isExecutionIntent(input.userInput)) {
-    return null;
+  if (cappedMembers.length === 0) {
+    return {
+      intent: "chat",
+      mode: "focused",
+      speakers: [],
+      reason: byLanguage(responseLanguage, {
+        zh: "群组没有可用成员。",
+        en: "No available members in this team.",
+      }),
+      activeTask: "",
+      nextPhase: "",
+      decision: "",
+      workItems: [],
+    } satisfies TeamTurnPlan;
   }
 
-  const fallback = buildFallbackExecutionPlan({
+  const fallback = buildFallbackTeamTurnPlan({
     members: cappedMembers,
     explicitMentionIds: input.explicitMentionIds,
     activeAgentId: input.handoff?.activeAgentId ?? null,
@@ -814,28 +811,35 @@ export async function planTeamExecution(input: {
     responseLanguage,
   });
 
-  if (input.explicitMentionIds.length > 0) {
-    return fallback;
-  }
-
   try {
-    const model = createProviderModel(input.provider).withStructuredOutput(executionPlanSchema);
-    const result = executionPlanSchema.parse(
-      await model.invoke(
+    const planner = input.planner ?? createTeamIntentAgent({ provider: input.provider });
+    const rawResult = await planner.invoke(
         byLanguage(responseLanguage, {
           zh: [
             "你是 teamaligned 群聊中的不可见 system orchestrator。",
-            "你的任务是判断这条用户消息是否应该进入执行模式，并把任务拆成可执行 work items。",
-            "系统支持并行和串行执行，但必须避免文件冲突和无意义并行。",
-            `群组最多 ${TEAM_MEMBER_LIMIT} 个成员，同时最多 ${MAX_PARALLEL_TEAM_EXECUTIONS} 个 work item 并行执行。`,
+            "你的任务是做群聊意图识别与回合编排：判断是 chat 还是 execute，并给出 mode / speakerIds / workItems。",
+            "系统支持并行和串行执行，但必须避免文件冲突和无意义并行。执行模式必须可落地。",
+            `群组最多激活 ${TEAM_MEMBER_LIMIT} 个 Agent，同时最多 ${MAX_PARALLEL_TEAM_EXECUTIONS} 个 work item 并行执行。`,
             "",
-            "执行模式规则：",
-            "- 只有明确要实现、修改、创建、修复、落地、写代码时才 shouldExecute=true",
+            "意图识别规则：",
+            "- 明确要实现、修改、创建、修复、落地、写代码 => intent=execute",
+            "- 讨论、评审、问答、澄清 => intent=chat",
+            "",
+            "mode 规则（无论 chat/execute 都要给出）：",
+            "- focused: 1-2 个 Agent",
+            "- multi_voice: 2-4 个 Agent",
+            "- collaboration: 3-5 个 Agent",
+            "- 如果用户显式 @，这些 Agent 必须出现在 speakerIds 或 work item owner 中",
+            "",
+            "execute 规则：",
             "- work item 应尽量让不同角色处理不同文件或不同分工",
             "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
             "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
             "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
             `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
+            "",
+            "chat 规则：",
+            "- workItems 必须为空数组",
             "",
             "当前用户资料：",
             `- 姓名：${input.profile.name}`,
@@ -859,21 +863,33 @@ export async function planTeamExecution(input: {
             "",
             "输出要求：",
             "- 你必须返回一个合法的 JSON 对象（json object），不要输出 markdown，不要输出额外解释",
-            "- ownerAgentId 必须来自 roster id",
+            "- speakerIds 与 ownerAgentId 必须来自 roster id",
           ],
           en: [
             "You are the invisible system orchestrator in TeamAligned group chat.",
-            "Decide whether this user message should enter execution mode, then split tasks into executable work items.",
+            "Your task is intent recognition plus turn orchestration: decide chat vs execute, then produce mode / speakerIds / workItems.",
             "The system supports both parallel and sequential execution, but avoid file conflicts and meaningless parallelism.",
-            `The group can have at most ${TEAM_MEMBER_LIMIT} members, and at most ${MAX_PARALLEL_TEAM_EXECUTIONS} work items can run in parallel.`,
+            `At most ${TEAM_MEMBER_LIMIT} agents can be active, and at most ${MAX_PARALLEL_TEAM_EXECUTIONS} work items can run in parallel.`,
             "",
-            "Execution mode rules:",
-            "- Set shouldExecute=true only when the user clearly asks to implement/modify/create/fix/deliver/code",
+            "Intent rules:",
+            "- Clear implement/modify/create/fix/deliver/code asks => intent=execute",
+            "- Discussion/review/Q&A/clarification => intent=chat",
+            "",
+            "Mode rules (always required):",
+            "- focused: 1-2 agents",
+            "- multi_voice: 2-4 agents",
+            "- collaboration: 3-5 agents",
+            "- If users explicitly @ mention agents, those agents must appear in speakerIds or work item owners",
+            "",
+            "Execution rules:",
             "- Work items should let different roles own different files or responsibilities",
             "- If a task depends on another agent's output, include dependsOnAgentIds",
             "- If two tasks might touch the same file, set canRunInParallel=false",
             "- Prefer workspace-relative paths for writeTargets/readTargets",
             `- Each agent can own at most ${MAX_AGENT_WORK_ITEMS} work items`,
+            "",
+            "Chat rules:",
+            "- workItems must be an empty array",
             "",
             "Current user profile:",
             `- Name: ${input.profile.name}`,
@@ -897,63 +913,143 @@ export async function planTeamExecution(input: {
             "",
             "Output requirements:",
             "- Return only a valid JSON object. No markdown. No extra commentary.",
-            "- ownerAgentId must come from roster ids.",
+            "- speakerIds and ownerAgentId must come from roster ids.",
           ],
         }).join("\n"),
-      ),
     );
+    const result = teamTurnPlanSchema.parse(rawResult);
+    const mode = result.mode ?? fallback.mode;
+    const rawSpeakers = resolveSpeakersByIds(result.speakerIds, cappedMembers);
+    const preferredSpeakers =
+      input.explicitMentionIds.length > 0
+        ? ensureExplicitSpeakers({
+            explicitMentionIds: input.explicitMentionIds,
+            speakers: rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers,
+            members: cappedMembers,
+          })
+        : applyHandoffPreference({
+            mode,
+            speakers: rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers,
+            members: cappedMembers,
+            activeAgentId: input.handoff?.activeAgentId ?? null,
+          });
+    const speakers = clampSpeakersForMode({
+      mode,
+      speakers: preferredSpeakers,
+      members: cappedMembers,
+    });
 
-    if (!result.shouldExecute || result.workItems.length === 0) {
-      return null;
-    }
+    const mappedWorkItems = mapExecutionWorkItems({
+      rawWorkItems: result.workItems ?? [],
+      members: cappedMembers,
+      responseLanguage,
+    });
 
-    const memberMap = new Map(cappedMembers.map((agent) => [agent.id, agent]));
-    const ownerCounts = new Map<string, number>();
-    const workItems: TeamExecutionWorkItem[] = [];
-    for (const [index, item] of result.workItems.entries()) {
-      const owner = memberMap.get(item.ownerAgentId);
-      if (!owner) continue;
-      const currentCount = ownerCounts.get(owner.id) ?? 0;
-      if (currentCount >= MAX_AGENT_WORK_ITEMS) continue;
-      ownerCounts.set(owner.id, currentCount + 1);
-      workItems.push({
-        id: `work-${index + 1}`,
-        owner,
-        summary:
-          compact(item.summary) ||
-          byLanguage(responseLanguage, {
-            zh: `处理与 ${owner.role} 相关的部分`,
-            en: `Handle the part related to ${owner.role}`,
-          }),
-        kickoffMessage:
-          compact(item.kickoffMessage) ||
-          byLanguage(responseLanguage, {
-            zh: `我来处理和 ${owner.role} 相关的部分。`,
-            en: `I'll take the part related to ${owner.role}.`,
-          }),
-        readTargets: item.readTargets.map(normalizeTargetPath).filter(Boolean),
-        writeTargets: item.writeTargets.map(normalizeTargetPath).filter(Boolean),
-        dependsOnAgentIds: item.dependsOnAgentIds.filter((id) => memberMap.has(id)),
-        canRunInParallel: item.canRunInParallel,
+    if (result.intent === "execute") {
+      const workItems = mappedWorkItems.length > 0 ? mappedWorkItems : fallback.workItems;
+      if (workItems.length === 0) {
+        return {
+          ...fallback,
+          intent: "chat",
+          workItems: [],
+        } satisfies TeamTurnPlan;
+      }
+
+      const workOwners = Array.from(new Map(workItems.map((item) => [item.owner.id, item.owner])).values());
+      const executeSpeakers = clampSpeakersForMode({
+        mode,
+        speakers:
+          input.explicitMentionIds.length > 0
+            ? ensureExplicitSpeakers({
+                explicitMentionIds: input.explicitMentionIds,
+                speakers: workOwners.length > 0 ? workOwners : speakers,
+                members: cappedMembers,
+              })
+            : workOwners.length > 0
+              ? workOwners
+              : speakers,
+        members: cappedMembers,
       });
-    }
 
-    if (workItems.length === 0) {
-      return fallback;
+      return {
+        intent: "execute",
+        mode,
+        speakers: executeSpeakers,
+        reason: compact(result.reason) || fallback.reason,
+        activeTask: compact(result.activeTask) || compact(input.userInput),
+        nextPhase:
+          compact(result.nextPhase) ||
+          byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
+        decision: compact(result.decision),
+        workItems,
+      } satisfies TeamTurnPlan;
     }
 
     return {
+      intent: "chat",
+      mode,
+      speakers,
       reason: compact(result.reason) || fallback.reason,
-      activeTask: compact(result.activeTask) || fallback.activeTask,
-      nextPhase:
-        compact(result.nextPhase) ||
-        byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
-      decision: compact(result.decision) || fallback.decision,
-      workItems,
-    } satisfies TeamExecutionPlan;
+      activeTask: compact(result.activeTask),
+      nextPhase: compact(result.nextPhase),
+      decision: compact(result.decision),
+      workItems: [],
+    } satisfies TeamTurnPlan;
   } catch {
     return fallback;
   }
+}
+
+export async function selectNaturalTeamSpeakers(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  members: AgentRecord[];
+  profile: UserProfile;
+  context: TeamContext;
+  handoff: TeamHandoffState | null;
+  history: { senderName: string; visibility: string; content: string }[];
+  userInput: string;
+  explicitMentionIds: string[];
+  mcpServers: McpCatalogRecord[];
+  planner?: StructuredTeamTurnPlanner;
+  responseLanguage?: RuntimeLanguage;
+}) {
+  const plan = await planTeamTurn(input);
+  return {
+    mode: plan.mode,
+    speakers: plan.speakers,
+    reason: plan.reason,
+    activeTask: plan.activeTask,
+    nextPhase: plan.nextPhase,
+    decision: plan.decision,
+  } satisfies NaturalTeamSpeakerSelection;
+}
+
+export async function planTeamExecution(input: {
+  provider: ProviderConfig;
+  team: TeamRecord;
+  members: AgentRecord[];
+  profile: UserProfile;
+  context: TeamContext;
+  handoff: TeamHandoffState | null;
+  history: { senderName: string; visibility: string; content: string }[];
+  userInput: string;
+  explicitMentionIds: string[];
+  mcpServers: McpCatalogRecord[];
+  planner?: StructuredTeamTurnPlanner;
+  responseLanguage?: RuntimeLanguage;
+}) {
+  const plan = await planTeamTurn(input);
+  if (plan.intent !== "execute" || plan.workItems.length === 0) {
+    return null;
+  }
+  return {
+    reason: plan.reason,
+    activeTask: plan.activeTask,
+    nextPhase: plan.nextPhase,
+    decision: plan.decision,
+    workItems: plan.workItems,
+  } satisfies TeamExecutionPlan;
 }
 
 function workItemsConflict(left: TeamExecutionWorkItem, right: TeamExecutionWorkItem) {
