@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { AppStorage } from "./storage.ts";
 
 function createTempRoot() {
@@ -35,6 +36,85 @@ test("init backfills starter agents and teams when only settings exist", () => {
     assert.ok(snapshot.teams.length >= 2);
     assert.ok(snapshot.conversations.some((conversation) => conversation.title === "Product Squad"));
     assert.ok(snapshot.messages["conv-agent-nova"]?.some((message) => message.senderName === "You"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("init ignores legacy app-state migration files and keeps runtime rooted in app.db/settings.json", () => {
+  const root = createTempRoot();
+  const legacyPath = join(root, "app-state.json");
+  try {
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        agents: [
+          {
+            id: "legacy-agent",
+            name: "Legacy",
+            role: "legacy",
+            status: "online",
+            color: "#000000",
+            workspacePath: "/tmp/legacy-agent",
+            avatarPath: null,
+            modelId: "qwen",
+            skillWhitelist: [],
+            mcpWhitelist: [],
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const storage = new AppStorage(root);
+    storage.init();
+    const snapshot = storage.getSnapshot();
+    assert.equal(snapshot.agents.some((agent) => agent.id === "legacy-agent"), false);
+    assert.equal(existsSync(legacyPath), true);
+    assert.equal(existsSync(`${legacyPath}.migrated`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("schema creates structured columns directly without runtime column patching", () => {
+  const root = createTempRoot();
+  const dbPath = join(root, "app.db");
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    const db = new DatabaseSync(dbPath);
+    const columns = db
+      .prepare("PRAGMA table_info(conversations)")
+      .all() as Array<{ name: string }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+    assert.ok(columnNames.has("kind"));
+    assert.ok(columnNames.has("target_id"));
+    assert.ok(columnNames.has("active_skill"));
+    assert.ok(columnNames.has("show_internal_messages"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("constructor throws clear error for incompatible legacy sqlite schema", () => {
+  const root = createTempRoot();
+  const dbPath = join(root, "app.db");
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE providers (
+        id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
+      );
+    `);
+    db.close();
+    assert.throws(
+      () => {
+        new AppStorage(root);
+      },
+      /不兼容数据库 schema：providers 缺少字段/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -144,6 +224,80 @@ test("clearConversationHistory removes conversation-scoped history and resets tr
     if (transcriptPaths.workspaceTranscriptPath) {
       assert.equal(readFileSync(transcriptPaths.workspaceTranscriptPath, "utf8"), "");
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleteAgent removes agent conversation data and detaches team members", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    const runId = "run-delete-agent-test";
+    storage.createRun({
+      id: runId,
+      conversationId: "conv-agent-nova",
+      title: "Delete test run",
+      kind: "agent_task",
+      status: "completed",
+      actorId: "agent-nova",
+      stepIndex: 1,
+      totalSteps: 1,
+      metadata: null,
+    });
+    storage.createNotification({
+      type: "agent_message",
+      title: "delete-test",
+      body: "delete-test",
+      relatedConversationId: "conv-agent-nova",
+      relatedRunId: runId,
+    });
+
+    const removed = storage.deleteAgent("agent-nova");
+    assert.equal(removed, true);
+
+    const snapshot = storage.getSnapshot();
+    assert.equal(snapshot.agents.some((agent) => agent.id === "agent-nova"), false);
+    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-agent-nova"), false);
+    assert.equal((snapshot.messages["conv-agent-nova"] ?? []).length, 0);
+    assert.equal(snapshot.runs.some((run) => run.conversationId === "conv-agent-nova"), false);
+    assert.equal(snapshot.notifications.some((notice) => notice.relatedConversationId === "conv-agent-nova"), false);
+    const researchTeam = snapshot.teams.find((team) => team.id === "team-research");
+    assert.equal(researchTeam?.memberIds.includes("agent-nova"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleteTeam removes group conversation data", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    const runId = "run-delete-team-test";
+    storage.createRun({
+      id: runId,
+      conversationId: "conv-team-product",
+      title: "Delete team run",
+      kind: "team_task",
+      status: "completed",
+      actorId: "team-product",
+      stepIndex: 1,
+      totalSteps: 1,
+      metadata: null,
+    });
+
+    const removed = storage.deleteTeam("team-product");
+    assert.equal(removed, true);
+
+    const snapshot = storage.getSnapshot();
+    assert.equal(snapshot.teams.some((team) => team.id === "team-product"), false);
+    assert.equal(snapshot.conversations.some((conversation) => conversation.id === "conv-team-product"), false);
+    assert.equal((snapshot.messages["conv-team-product"] ?? []).length, 0);
+    assert.equal(snapshot.runs.some((run) => run.conversationId === "conv-team-product"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -495,6 +495,8 @@ export interface TeamalignedApi {
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
+  deleteAgent: (agentId: string) => Promise<AppSnapshot>;
+  deleteTeam: (teamId: string) => Promise<AppSnapshot>;
   updateAgent: (payload: UpdateAgentInput) => Promise<AppSnapshot>;
   refreshSkillCatalog: () => Promise<AppSnapshot>;
   installSkill: (skillId: string) => Promise<AppSnapshot>;

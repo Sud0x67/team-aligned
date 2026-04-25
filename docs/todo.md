@@ -93,6 +93,7 @@
 - [x] `attachments / artifacts / tool_invocations / run_steps` 正式表
 - [x] `messages / conversations / runs / agents / teams / providers / notifications` 结构化列与索引
 - [x] Drizzle schema 与 migration
+- [x] 移除 legacy 目录与 `app-state.json` 自动迁移逻辑（仅使用 `~/.teamaligned`）
 
 ### 通知
 

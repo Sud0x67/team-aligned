@@ -76,6 +76,8 @@ export function AgentCard({
   onConfigureSkills,
   onConfigureMcps,
   onOpenWorkspace,
+  onOpenConversation,
+  onDelete,
 }: {
   agent: AgentRecord;
   whitelistedSkills: SkillCatalogRecord[];
@@ -95,11 +97,15 @@ export function AgentCard({
     completedTasks: string;
     tasksUnit: string;
     edit: string;
+    startConversationAction: string;
+    deleteAction: string;
   };
   onEdit: () => void;
   onConfigureSkills: () => void;
   onConfigureMcps: () => void;
   onOpenWorkspace: () => void;
+  onOpenConversation: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div className="group rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-colors hover:border-[color-mix(in_srgb,var(--primary)_30%,transparent)]">
@@ -217,11 +223,26 @@ export function AgentCard({
         <span className="truncate">{agent.workspacePath}</span>
       </button>
 
+      <button
+        onClick={onOpenConversation}
+        className="mb-4 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-3 py-2 text-[13px] text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_18%,transparent)]"
+      >
+        <MessageSquare className="h-3.5 w-3.5" />
+        {labels.startConversationAction}
+      </button>
+
       <div className="flex items-center border-t border-[var(--border)] pt-3">
         <div className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)]">
           <Zap className="h-3.5 w-3.5" />
           {labels.completedTasks} {completedRunCount} {labels.tasksUnit}
         </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="ml-auto rounded-md px-2 py-1 text-[12px] font-medium text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+        >
+          {labels.deleteAction}
+        </button>
       </div>
     </div>
   );
@@ -235,6 +256,7 @@ export function TeamCard({
   onConfigureMcps,
   onOpenWorkspace,
   onOpenConversation,
+  onDelete,
 }: {
   team: TeamRecord;
   members: AgentRecord[];
@@ -246,10 +268,12 @@ export function TeamCard({
     noAgentMcps: string;
     manageAction: string;
     startConversationAction: string;
+    deleteAction: string;
   };
   onConfigureMcps: () => void;
   onOpenWorkspace: () => void;
   onOpenConversation: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-colors hover:border-[color-mix(in_srgb,var(--primary)_30%,transparent)]">
@@ -341,6 +365,12 @@ export function TeamCard({
         >
           <MessageSquare className="h-3.5 w-3.5" />
           {labels.startConversationAction}
+        </button>
+        <button
+          onClick={onDelete}
+          className="rounded-lg border border-[color-mix(in_srgb,var(--danger)_35%,transparent)] px-3 py-2 text-[13px] text-[var(--danger)] transition hover:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"
+        >
+          {labels.deleteAction}
         </button>
       </div>
     </div>

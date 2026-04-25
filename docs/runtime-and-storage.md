@@ -76,12 +76,13 @@
 
 如果用户显式指定了 workspace 路径，则对应 Agent / Team 的工作目录会改用用户提供的位置。
 
-当前实现还保留一个很窄的旧目录兼容策略：
+当前实现不再做旧目录兼容迁移：
 
-- 启动时会从旧的 `~/teamaligned` 和 Electron `userData/teamaligned` 目录复制缺失文件到 `~/.teamaligned`
-- 复制过程不覆盖 `~/.teamaligned` 中已经存在的文件
-- 旧数据库里指向 `~/teamaligned/...` 的受管资源路径，会在加载时规范化为 `~/.teamaligned/...`
+- 运行时只使用 `~/.teamaligned` 作为唯一根目录
+- 启动不会再自动复制 `~/teamaligned` 或 Electron `userData/teamaligned` 的历史数据
+- 旧格式 `app-state.json` 不再自动导入
 - 新写入的数据一律以 `~/.teamaligned` 为根目录
+- 如果检测到旧版不兼容 SQLite schema，运行时会直接报错并提示先备份再重建 `app.db`
 
 ## 结合原型新增的本地数据对象
 
@@ -205,7 +206,7 @@ SQLite 用于承担结构化实体、索引与统计能力。
 - `npm run db:generate`
   生成新的 migration
 - `npm run db:migrate`
-  对 `~/.teamaligned/app.db` 应用 migration；如果检测到已有历史数据库，会先把当前基线标记为已应用，避免覆盖现有数据
+  对 `~/.teamaligned/app.db` 应用 migration（新版本不再包含旧库自动兼容标记逻辑）
 
 其中：
 

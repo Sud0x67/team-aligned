@@ -404,7 +404,7 @@ MCP 当前尚未完成：
 - `workspaces/**/artifacts/attachments`
 - `skills/*`
 
-当前唯一保留的兼容迁移是：启动时从旧的 `~/teamaligned` 和 Electron `userData/teamaligned` 目录补齐缺失文件到 `~/.teamaligned`，并把旧数据库中指向 `~/teamaligned/...` 的受管资源路径规范化到新根目录。新数据不再写入旧目录。
+当前运行时不再执行旧目录兼容迁移，数据根目录固定为 `~/.teamaligned`。历史 `~/teamaligned`、`userData/teamaligned` 与 `app-state.json` 不会在启动时自动导入；如果检测到旧版不兼容 schema，会直接给出重建 `app.db` 的提示。
 
 ### 历史对话存储方式
 

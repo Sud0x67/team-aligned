@@ -537,6 +537,72 @@ export class TeamalignedRuntime extends EventEmitter {
     return this.getSnapshot();
   }
 
+  async deleteAgent(agentId: string) {
+    const snapshot = this.storage.getSnapshot();
+    const responseLanguage: RuntimeLanguage = snapshot.settings.language === "en" ? "en" : "zh";
+    const agent = snapshot.agents.find((item) => item.id === agentId);
+    if (!agent) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "未找到要删除的 Agent。",
+          en: "Agent to delete was not found.",
+        }),
+      );
+    }
+
+    const conversationId = `conv-${agent.id}`;
+    const hasActiveRun = snapshot.runs.some(
+      (run) =>
+        run.conversationId === conversationId &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "该 Agent 仍有运行中的任务，请先取消任务后再删除。",
+          en: "This Agent still has an active run. Cancel it before deleting.",
+        }),
+      );
+    }
+
+    this.storage.deleteAgent(agent.id);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async deleteTeam(teamId: string) {
+    const snapshot = this.storage.getSnapshot();
+    const responseLanguage: RuntimeLanguage = snapshot.settings.language === "en" ? "en" : "zh";
+    const team = snapshot.teams.find((item) => item.id === teamId);
+    if (!team) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "未找到要删除的群组。",
+          en: "Group to delete was not found.",
+        }),
+      );
+    }
+
+    const conversationId = `conv-${team.id}`;
+    const hasActiveRun = snapshot.runs.some(
+      (run) =>
+        run.conversationId === conversationId &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error(
+        byLanguage(responseLanguage, {
+          zh: "该群组仍有运行中的任务，请先取消任务后再删除。",
+          en: "This group still has an active run. Cancel it before deleting.",
+        }),
+      );
+    }
+
+    this.storage.deleteTeam(team.id);
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
   async updateAgent(payload: UpdateAgentInput) {
     this.storage.updateAgent(payload);
     this.emitSnapshot();

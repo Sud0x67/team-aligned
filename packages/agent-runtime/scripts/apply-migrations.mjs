@@ -28,25 +28,6 @@ const migrationFiles = existsSync(migrationsDir)
       .sort((a, b) => a.localeCompare(b))
   : [];
 
-const existingTables = new Set(
-  (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() ?? []).map((row) => row.name),
-);
-
-const hasExistingRuntimeTables =
-  existingTables.has("conversations") ||
-  existingTables.has("messages") ||
-  existingTables.has("runs");
-
-if (applied.size === 0 && hasExistingRuntimeTables && migrationFiles.length > 0) {
-  for (const fileName of migrationFiles) {
-    db.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
-      .run(fileName, Date.now());
-  }
-  console.log("Detected an existing runtime database. Marked baseline Drizzle migrations as applied.");
-  console.log(`Migrations complete. Database: ${dbPath}`);
-  process.exit(0);
-}
-
 for (const fileName of migrationFiles) {
   if (applied.has(fileName)) continue;
   const sql = readFileSync(join(migrationsDir, fileName), "utf8");

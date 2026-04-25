@@ -1,5 +1,5 @@
 import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
-import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -155,85 +155,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-function hasRuntimeData(rootDir: string) {
-  return [
-    "settings.json",
-    "app.db",
-    "transcripts",
-    "workspaces",
-    "skills",
-  ].some((entry) => existsSync(join(rootDir, entry)));
-}
-
 function resolveRuntimeRoot() {
   return join(homedir(), ".teamaligned");
-}
-
-function copyMissingRuntimeEntries(sourceRoot: string, targetRoot: string) {
-  if (!existsSync(sourceRoot)) return;
-  try {
-    mkdirSync(targetRoot, { recursive: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of readdirSync(sourceRoot)) {
-    const sourcePath = join(sourceRoot, entry);
-    const targetPath = join(targetRoot, entry);
-    let sourceStat;
-    try {
-      sourceStat = lstatSync(sourcePath);
-    } catch {
-      continue;
-    }
-
-    if (sourceStat.isSymbolicLink()) {
-      continue;
-    }
-
-    if (!existsSync(targetPath)) {
-      try {
-        cpSync(sourcePath, targetPath, { recursive: true });
-      } catch {
-        continue;
-      }
-      continue;
-    }
-
-    let targetStat;
-    try {
-      targetStat = lstatSync(targetPath);
-    } catch {
-      continue;
-    }
-
-    if (targetStat.isSymbolicLink()) {
-      continue;
-    }
-
-    if (sourceStat.isDirectory() && targetStat.isDirectory()) {
-      copyMissingRuntimeEntries(sourcePath, targetPath);
-    }
-  }
-}
-
-function migrateLegacyRuntimeRoot(targetRoot: string) {
-  mkdirSync(targetRoot, { recursive: true });
-
-  const legacyRoots = [
-    join(homedir(), "teamaligned"),
-    join(app.getPath("userData"), "teamaligned"),
-  ];
-
-  for (const legacyRoot of legacyRoots) {
-    if (legacyRoot === targetRoot) {
-      continue;
-    }
-    if (!hasRuntimeData(legacyRoot)) {
-      continue;
-    }
-    copyMissingRuntimeEntries(legacyRoot, targetRoot);
-  }
 }
 
 function isPathInside(parentPath: string, childPath: string) {
@@ -305,7 +228,7 @@ function broadcastSnapshot() {
 app.whenReady().then(async () => {
   app.setName("teamaligned");
   const runtimeRoot = resolveRuntimeRoot();
-  migrateLegacyRuntimeRoot(runtimeRoot);
+  mkdirSync(runtimeRoot, { recursive: true });
   registerAssetProtocol();
   runtime = new TeamalignedRuntime(runtimeRoot);
   await runtime.init();
@@ -326,6 +249,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:create-team", async (_event, payload: CreateTeamInput) =>
     runtime?.createTeam(payload),
+  );
+  ipcMain.handle("teamaligned:delete-agent", async (_event, agentId: string) =>
+    runtime?.deleteAgent(agentId),
+  );
+  ipcMain.handle("teamaligned:delete-team", async (_event, teamId: string) =>
+    runtime?.deleteTeam(teamId),
   );
   ipcMain.handle("teamaligned:update-agent", async (_event, payload: UpdateAgentInput) =>
     runtime?.updateAgent(payload),

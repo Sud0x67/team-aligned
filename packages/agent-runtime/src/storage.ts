@@ -3,11 +3,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { nanoid } from "nanoid";
 import {
@@ -142,7 +140,6 @@ const starterSeedVersion = "2026-04-starter-v1";
 
 export class AppStorage {
   readonly rootDir: string;
-  readonly filePath: string;
   readonly configPath: string;
   readonly dbPath: string;
   readonly workspaceRoot: string;
@@ -159,7 +156,6 @@ export class AppStorage {
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
-    this.filePath = join(rootDir, "app-state.json");
     this.configPath = join(rootDir, "settings.json");
     this.dbPath = join(rootDir, "app.db");
     this.workspaceRoot = join(rootDir, "workspaces");
@@ -191,22 +187,11 @@ export class AppStorage {
   init() {
     if (this.databaseHasData()) {
       this.loadState();
-      const migratedPaths = this.normalizeManagedPaths();
       this.ensureWorkspaceLayouts();
       const seededStarter = this.ensureStarterWorkspaceIfNeeded();
-      if (migratedPaths || seededStarter) {
+      if (seededStarter) {
         this.persist();
       }
-      return;
-    }
-
-    if (existsSync(this.filePath)) {
-      this.loadLegacyState();
-      this.normalizeManagedPaths();
-      this.ensureWorkspaceLayouts();
-      this.ensureStarterWorkspaceIfNeeded();
-      this.persist();
-      this.backupLegacyState();
       return;
     }
 
@@ -435,6 +420,63 @@ export class AppStorage {
     });
     this.persist();
     return team;
+  }
+
+  deleteAgent(agentId: string) {
+    const agent = this.getAgent(agentId);
+    if (!agent) return false;
+
+    const conversationId = `conv-${agent.id}`;
+    const hasActiveRun = this.state.runs.some(
+      (run) =>
+        run.conversationId === conversationId &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error("当前 Agent 还有运行中的任务，请先取消后再删除。");
+    }
+
+    this.clearConversationHistory(conversationId);
+    this.state.agents = this.state.agents.filter((item) => item.id !== agent.id);
+    this.state.conversations = this.state.conversations.filter((conversation) => conversation.id !== conversationId);
+
+    for (const team of this.state.teams) {
+      if (!team.memberIds.includes(agent.id)) continue;
+      team.memberIds = team.memberIds.filter((memberId) => memberId !== agent.id);
+      if (!team.context.handoff) continue;
+      team.context.handoff = {
+        ...team.context.handoff,
+        activeAgentId: team.context.handoff.activeAgentId === agent.id ? null : team.context.handoff.activeAgentId,
+        lastSpeakerId: team.context.handoff.lastSpeakerId === agent.id ? null : team.context.handoff.lastSpeakerId,
+        nextAgentIds: team.context.handoff.nextAgentIds.filter((memberId) => memberId !== agent.id),
+        revision: team.context.handoff.revision + 1,
+        updatedAt: now(),
+      };
+    }
+
+    this.persist();
+    return true;
+  }
+
+  deleteTeam(teamId: string) {
+    const team = this.getTeam(teamId);
+    if (!team) return false;
+
+    const conversationId = `conv-${team.id}`;
+    const hasActiveRun = this.state.runs.some(
+      (run) =>
+        run.conversationId === conversationId &&
+        !["completed", "failed", "cancelled"].includes(run.status),
+    );
+    if (hasActiveRun) {
+      throw new Error("当前群组还有运行中的任务，请先取消后再删除。");
+    }
+
+    this.clearConversationHistory(conversationId);
+    this.state.teams = this.state.teams.filter((item) => item.id !== team.id);
+    this.state.conversations = this.state.conversations.filter((conversation) => conversation.id !== conversationId);
+    this.persist();
+    return true;
   }
 
   updateAgent(input: UpdateAgentInput) {
@@ -1112,36 +1154,87 @@ export class AppStorage {
       );
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        default_model TEXT NOT NULL,
+        supports_tool_calling INTEGER DEFAULT 1 NOT NULL,
+        supports_streaming INTEGER DEFAULT 1 NOT NULL,
+        is_active INTEGER DEFAULT 0 NOT NULL,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        avatar_path TEXT,
+        model_id TEXT NOT NULL,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS teams (
         id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        avatar_path TEXT,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        unread INTEGER DEFAULT 0 NOT NULL,
+        last_message TEXT NOT NULL,
         last_activity_at INTEGER NOT NULL,
+        active_skill TEXT,
+        pinned_mcp TEXT,
+        show_internal_messages INTEGER DEFAULT 0 NOT NULL,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        sender_kind TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        visibility TEXT NOT NULL,
+        content TEXT NOT NULL,
+        mentions_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
+        run_id TEXT,
+        has_attachments INTEGER DEFAULT 0 NOT NULL,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        step_index INTEGER DEFAULT 0 NOT NULL,
+        total_steps INTEGER DEFAULT 0 NOT NULL,
+        created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        last_error TEXT,
+        artifact_path TEXT,
+        transcript_path TEXT,
+        workspace_transcript_path TEXT,
+        memory_path TEXT,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS notifications (
         id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        read INTEGER DEFAULT 0 NOT NULL,
         created_at INTEGER NOT NULL,
+        related_conversation_id TEXT,
+        related_run_id TEXT,
         payload TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS extensions (
@@ -1218,64 +1311,7 @@ export class AppStorage {
         payload TEXT NOT NULL
       );
     `);
-    this.ensureColumn("conversations", "kind", "TEXT");
-    this.ensureColumn("conversations", "target_id", "TEXT");
-    this.ensureColumn("conversations", "title", "TEXT");
-    this.ensureColumn("conversations", "unread", "INTEGER DEFAULT 0");
-    this.ensureColumn("conversations", "last_message", "TEXT");
-    this.ensureColumn("conversations", "active_skill", "TEXT");
-    this.ensureColumn("conversations", "pinned_mcp", "TEXT");
-    this.ensureColumn("conversations", "show_internal_messages", "INTEGER DEFAULT 0");
-
-    this.ensureColumn("messages", "sender_id", "TEXT");
-    this.ensureColumn("messages", "sender_name", "TEXT");
-    this.ensureColumn("messages", "sender_kind", "TEXT");
-    this.ensureColumn("messages", "message_type", "TEXT");
-    this.ensureColumn("messages", "visibility", "TEXT");
-    this.ensureColumn("messages", "content", "TEXT");
-    this.ensureColumn("messages", "mentions_json", "TEXT");
-    this.ensureColumn("messages", "run_id", "TEXT");
-    this.ensureColumn("messages", "has_attachments", "INTEGER DEFAULT 0");
-
-    this.ensureColumn("runs", "title", "TEXT");
-    this.ensureColumn("runs", "kind", "TEXT");
-    this.ensureColumn("runs", "status", "TEXT");
-    this.ensureColumn("runs", "actor_id", "TEXT");
-    this.ensureColumn("runs", "step_index", "INTEGER DEFAULT 0");
-    this.ensureColumn("runs", "total_steps", "INTEGER DEFAULT 0");
-    this.ensureColumn("runs", "created_at", "INTEGER");
-    this.ensureColumn("runs", "last_error", "TEXT");
-    this.ensureColumn("runs", "artifact_path", "TEXT");
-    this.ensureColumn("runs", "transcript_path", "TEXT");
-    this.ensureColumn("runs", "workspace_transcript_path", "TEXT");
-    this.ensureColumn("runs", "memory_path", "TEXT");
-
-    this.ensureColumn("providers", "label", "TEXT");
-    this.ensureColumn("providers", "base_url", "TEXT");
-    this.ensureColumn("providers", "default_model", "TEXT");
-    this.ensureColumn("providers", "supports_tool_calling", "INTEGER DEFAULT 1");
-    this.ensureColumn("providers", "supports_streaming", "INTEGER DEFAULT 1");
-    this.ensureColumn("providers", "is_active", "INTEGER DEFAULT 0");
-
-    this.ensureColumn("agents", "name", "TEXT");
-    this.ensureColumn("agents", "role", "TEXT");
-    this.ensureColumn("agents", "status", "TEXT");
-    this.ensureColumn("agents", "workspace_path", "TEXT");
-    this.ensureColumn("agents", "avatar_path", "TEXT");
-    this.ensureColumn("agents", "model_id", "TEXT");
-
-    this.ensureColumn("teams", "name", "TEXT");
-    this.ensureColumn("teams", "objective", "TEXT");
-    this.ensureColumn("teams", "workspace_path", "TEXT");
-    this.ensureColumn("teams", "avatar_path", "TEXT");
-
-    this.ensureColumn("notifications", "type", "TEXT");
-    this.ensureColumn("notifications", "title", "TEXT");
-    this.ensureColumn("notifications", "body", "TEXT");
-    this.ensureColumn("notifications", "read", "INTEGER DEFAULT 0");
-    this.ensureColumn("notifications", "related_conversation_id", "TEXT");
-    this.ensureColumn("notifications", "related_run_id", "TEXT");
-
+    this.assertStructuredSchema();
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_providers_active ON providers(is_active);
       CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
@@ -1659,56 +1695,6 @@ export class AppStorage {
     this.persistSettingsFile();
   }
 
-  private loadLegacyState() {
-    const legacy = JSON.parse(readFileSync(this.filePath, "utf8")) as Partial<PersistedState>;
-    const fileConfig = this.readSettingsFile();
-    const configState =
-      fileConfig ??
-      this.createConfigStateFromDb({
-        settingsEntries: legacy.settingsEntries ?? {},
-        providers: legacy.providers ?? defaultProviders,
-      });
-    this.state = {
-      ...this.createEmptyState(),
-      ...legacy,
-      settingsEntries: configState.settingsEntries,
-      providers: configState.providers,
-      agents: (legacy.agents ?? []).map((agent) => ({
-        ...agent,
-        skillWhitelist: Array.isArray(agent.skillWhitelist)
-          ? agent.skillWhitelist
-          : defaultSkillCatalog.map((skill) => skill.id),
-        mcpWhitelist: Array.isArray((agent as AgentRecord).mcpWhitelist)
-          ? (agent as AgentRecord).mcpWhitelist
-          : defaultConnectedMcpIds,
-      })),
-      teams: (legacy.teams ?? []).map((team) => ({
-        ...team,
-        mcpWhitelist: Array.isArray((team as TeamRecord).mcpWhitelist)
-          ? (team as TeamRecord).mcpWhitelist
-          : defaultConnectedMcpIds,
-      })),
-      attachments: [],
-      artifacts: [],
-      toolInvocations: [],
-      runSteps: [],
-      promptAliases: legacy.promptAliases ?? [],
-      skillCatalog: legacy.skillCatalog ?? defaultSkillCatalog,
-      mcpCatalog: (legacy as Partial<PersistedState>).mcpCatalog ?? defaultMcpCatalog,
-      mcpConnections: (legacy as Partial<PersistedState>).mcpConnections ?? [],
-    };
-    this.persistSettingsFile();
-  }
-
-  private backupLegacyState() {
-    if (!existsSync(this.filePath)) return;
-    try {
-      renameSync(this.filePath, `${this.filePath}.migrated`);
-    } catch {
-      // Best effort backup only.
-    }
-  }
-
   private readCollection<T>(tableName: string, orderClause = "") {
     const rows = this.db
       .prepare(`SELECT payload FROM ${tableName} ${orderClause}`.trim())
@@ -1718,14 +1704,6 @@ export class AppStorage {
 
   private parseStoredPayload<T>(payload: string): T {
     return JSON.parse(payload) as T;
-  }
-
-  private preferStructuredValue<T>(value: T | null | undefined, fallback: T) {
-    return value ?? fallback;
-  }
-
-  private preferBooleanFlag(value: number | null, fallback: boolean) {
-    return value === null ? fallback : value === 1;
   }
 
   private mergeRunMetadataPaths(
@@ -1748,93 +1726,6 @@ export class AppStorage {
     };
   }
 
-  private normalizeManagedPath(value: string | null | undefined) {
-    if (!value) return value ?? null;
-
-    for (const legacyRoot of [join(homedir(), "teamaligned")]) {
-      const prefix = `${legacyRoot}/`;
-      if (value === legacyRoot) {
-        return this.rootDir;
-      }
-      if (value.startsWith(prefix)) {
-        return join(this.rootDir, value.slice(prefix.length));
-      }
-    }
-
-    return value;
-  }
-
-  private normalizeRunMetadata(metadata: RunRecord["metadata"]) {
-    if (!metadata) return metadata;
-    return {
-      ...metadata,
-      artifactPath:
-        typeof metadata.artifactPath === "string"
-          ? this.normalizeManagedPath(metadata.artifactPath)
-          : metadata.artifactPath,
-      transcriptPath:
-        typeof metadata.transcriptPath === "string"
-          ? this.normalizeManagedPath(metadata.transcriptPath)
-          : metadata.transcriptPath,
-      workspaceTranscriptPath:
-        typeof metadata.workspaceTranscriptPath === "string"
-          ? this.normalizeManagedPath(metadata.workspaceTranscriptPath)
-          : metadata.workspaceTranscriptPath,
-      memoryPath:
-        typeof metadata.memoryPath === "string"
-          ? this.normalizeManagedPath(metadata.memoryPath)
-          : metadata.memoryPath,
-    };
-  }
-
-  private normalizeManagedPaths() {
-    let changed = false;
-    const normalize = (value: string | null | undefined) => {
-      const next = this.normalizeManagedPath(value);
-      if (next !== (value ?? null)) {
-        changed = true;
-      }
-      return next;
-    };
-
-    const profileAvatarPath = this.state.settingsEntries["profile.avatarPath"];
-    if (profileAvatarPath && profileAvatarPath !== "null") {
-      this.state.settingsEntries["profile.avatarPath"] = normalize(profileAvatarPath) ?? profileAvatarPath;
-    }
-
-    this.state.agents = this.state.agents.map((agent) => ({
-      ...agent,
-      workspacePath: normalize(agent.workspacePath) ?? agent.workspacePath,
-      avatarPath: normalize(agent.avatarPath),
-    }));
-    this.state.teams = this.state.teams.map((team) => ({
-      ...team,
-      workspacePath: normalize(team.workspacePath) ?? team.workspacePath,
-      avatarPath: normalize(team.avatarPath),
-    }));
-    this.state.skillCatalog = this.state.skillCatalog.map((skill) => ({
-      ...skill,
-      installPath: normalize(skill.installPath),
-    }));
-    this.state.runs = this.state.runs.map((run) => {
-      const metadata = this.normalizeRunMetadata(run.metadata);
-      if (JSON.stringify(metadata) !== JSON.stringify(run.metadata)) {
-        changed = true;
-      }
-      return { ...run, metadata };
-    });
-    this.state.attachments = this.state.attachments.map((attachment) => ({
-      ...attachment,
-      path: normalize(attachment.path) ?? attachment.path,
-    }));
-    this.state.artifacts = this.state.artifacts.map((artifact) => ({
-      ...artifact,
-      path: normalize(artifact.path) ?? artifact.path,
-      workspacePath: normalize(artifact.workspacePath) ?? artifact.workspacePath,
-    }));
-    return changed;
-  }
-
   private readProviders() {
     const rows = this.db
       .prepare(
@@ -1844,12 +1735,12 @@ export class AppStorage {
       )
       .all() as Array<{
       id: string;
-      label: string | null;
-      base_url: string | null;
-      default_model: string | null;
-      supports_tool_calling: number | null;
-      supports_streaming: number | null;
-      is_active: number | null;
+      label: string;
+      base_url: string;
+      default_model: string;
+      supports_tool_calling: number;
+      supports_streaming: number;
+      is_active: number;
       payload: string;
     }>;
 
@@ -1857,19 +1748,13 @@ export class AppStorage {
       const payload = this.parseStoredPayload<ProviderConfig>(row.payload);
       return {
         ...payload,
-        id: (row.id || payload.id) as ProviderConfig["id"],
-        label: this.preferStructuredValue(row.label, payload.label),
-        baseUrl: this.preferStructuredValue(row.base_url, payload.baseUrl),
-        defaultModel: this.preferStructuredValue(row.default_model, payload.defaultModel),
-        supportsToolCalling: this.preferBooleanFlag(
-          row.supports_tool_calling,
-          payload.supportsToolCalling,
-        ),
-        supportsStreaming: this.preferBooleanFlag(
-          row.supports_streaming,
-          payload.supportsStreaming,
-        ),
-        isActive: this.preferBooleanFlag(row.is_active, payload.isActive),
+        id: row.id as ProviderConfig["id"],
+        label: row.label,
+        baseUrl: row.base_url,
+        defaultModel: row.default_model,
+        supportsToolCalling: row.supports_tool_calling === 1,
+        supportsStreaming: row.supports_streaming === 1,
+        isActive: row.is_active === 1,
       } satisfies ProviderConfig;
     });
   }
@@ -1883,12 +1768,12 @@ export class AppStorage {
       )
       .all() as Array<{
       id: string;
-      name: string | null;
-      role: string | null;
-      status: AgentRecord["status"] | null;
-      workspace_path: string | null;
+      name: string;
+      role: string;
+      status: AgentRecord["status"];
+      workspace_path: string;
       avatar_path: string | null;
-      model_id: string | null;
+      model_id: string;
       payload: string;
     }>;
 
@@ -1896,13 +1781,13 @@ export class AppStorage {
       const payload = this.parseStoredPayload<AgentRecord>(row.payload);
       return {
         ...payload,
-        id: row.id || payload.id,
-        name: this.preferStructuredValue(row.name, payload.name),
-        role: this.preferStructuredValue(row.role, payload.role),
-        status: this.preferStructuredValue(row.status, payload.status),
-        workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
-        avatarPath: row.avatar_path ?? payload.avatarPath ?? null,
-        modelId: row.model_id ?? payload.modelId ?? defaultProviders[0]?.defaultModel ?? "qwen-max",
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        status: row.status,
+        workspacePath: row.workspace_path,
+        avatarPath: row.avatar_path,
+        modelId: row.model_id,
       } satisfies AgentRecord;
     });
   }
@@ -1916,9 +1801,9 @@ export class AppStorage {
       )
       .all() as Array<{
       id: string;
-      name: string | null;
-      objective: string | null;
-      workspace_path: string | null;
+      name: string;
+      objective: string;
+      workspace_path: string;
       avatar_path: string | null;
       payload: string;
     }>;
@@ -1927,11 +1812,11 @@ export class AppStorage {
       const payload = this.parseStoredPayload<TeamRecord>(row.payload);
       return {
         ...payload,
-        id: row.id || payload.id,
-        name: this.preferStructuredValue(row.name, payload.name),
-        objective: this.preferStructuredValue(row.objective, payload.objective),
-        workspacePath: this.preferStructuredValue(row.workspace_path, payload.workspacePath),
-        avatarPath: row.avatar_path ?? payload.avatarPath ?? null,
+        id: row.id,
+        name: row.name,
+        objective: row.objective,
+        workspacePath: row.workspace_path,
+        avatarPath: row.avatar_path,
         memberIds: Array.from(new Set(payload.memberIds)).slice(0, teamMemberLimit),
       } satisfies TeamRecord;
     });
@@ -1940,37 +1825,31 @@ export class AppStorage {
   private readNotifications() {
     const rows = this.db
       .prepare(
-        `SELECT id, type, title, body, read, created_at, related_conversation_id, related_run_id, payload
+        `SELECT id, type, title, body, read, created_at, related_conversation_id, related_run_id
          FROM notifications
          ORDER BY created_at DESC`,
       )
       .all() as Array<{
       id: string;
-      type: NotificationRecord["type"] | null;
-      title: string | null;
-      body: string | null;
-      read: number | null;
+      type: NotificationRecord["type"];
+      title: string;
+      body: string;
+      read: number;
       created_at: number;
       related_conversation_id: string | null;
       related_run_id: string | null;
-      payload: string;
     }>;
 
     return rows.map((row) => {
-      const payload = this.parseStoredPayload<NotificationRecord>(row.payload);
       return {
-        ...payload,
-        id: row.id || payload.id,
-        type: this.preferStructuredValue(row.type, payload.type),
-        title: this.preferStructuredValue(row.title, payload.title),
-        body: this.preferStructuredValue(row.body, payload.body),
-        read: this.preferBooleanFlag(row.read, payload.read),
-        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
-        relatedConversationId: this.preferStructuredValue(
-          row.related_conversation_id,
-          payload.relatedConversationId,
-        ),
-        relatedRunId: this.preferStructuredValue(row.related_run_id, payload.relatedRunId),
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        body: row.body,
+        read: row.read === 1,
+        createdAt: row.created_at,
+        relatedConversationId: row.related_conversation_id,
+        relatedRunId: row.related_run_id,
       } satisfies NotificationRecord;
     });
   }
@@ -1978,43 +1857,36 @@ export class AppStorage {
   private readConversations() {
     const rows = this.db
       .prepare(
-        `SELECT id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages, payload
+        `SELECT id, kind, target_id, title, unread, last_message, last_activity_at, active_skill, pinned_mcp, show_internal_messages
          FROM conversations
          ORDER BY last_activity_at DESC`,
       )
       .all() as Array<{
       id: string;
-      kind: ConversationRecord["kind"] | null;
-      target_id: string | null;
-      title: string | null;
-      unread: number | null;
-      last_message: string | null;
+      kind: ConversationRecord["kind"];
+      target_id: string;
+      title: string;
+      unread: number;
+      last_message: string;
       last_activity_at: number;
       active_skill: string | null;
       pinned_mcp: string | null;
-      show_internal_messages: number | null;
-      payload: string;
+      show_internal_messages: number;
     }>;
 
     return rows.map((row) => {
-      const payload = this.parseStoredPayload<ConversationRecord>(row.payload);
       return {
-        ...payload,
-        id: row.id || payload.id,
-        kind: this.preferStructuredValue(row.kind, payload.kind),
-        targetId: this.preferStructuredValue(row.target_id, payload.targetId),
-        title: this.preferStructuredValue(row.title, payload.title),
-        unread: this.preferStructuredValue(row.unread, payload.unread),
-        lastMessage: this.preferStructuredValue(row.last_message, payload.lastMessage),
-        lastActivityAt: this.preferStructuredValue(row.last_activity_at, payload.lastActivityAt),
+        id: row.id,
+        kind: row.kind,
+        targetId: row.target_id,
+        title: row.title,
+        unread: row.unread,
+        lastMessage: row.last_message,
+        lastActivityAt: row.last_activity_at,
         meta: {
-          ...payload.meta,
-          activeSkill: this.preferStructuredValue(row.active_skill, payload.meta.activeSkill),
-          pinnedMcp: this.preferStructuredValue(row.pinned_mcp, payload.meta.pinnedMcp),
-          showInternalMessages: this.preferBooleanFlag(
-            row.show_internal_messages,
-            payload.meta.showInternalMessages,
-          ),
+          activeSkill: row.active_skill,
+          pinnedMcp: row.pinned_mcp,
+          showInternalMessages: row.show_internal_messages === 1,
         },
       } satisfies ConversationRecord;
     });
@@ -2030,13 +1902,13 @@ export class AppStorage {
       .all() as Array<{
       id: string;
       conversation_id: string;
-      sender_id: string | null;
-      sender_name: string | null;
-      sender_kind: MessageRecord["senderKind"] | null;
-      message_type: MessageRecord["messageType"] | null;
-      visibility: MessageRecord["visibility"] | null;
-      content: string | null;
-      mentions_json: string | null;
+      sender_id: string;
+      sender_name: string;
+      sender_kind: MessageRecord["senderKind"];
+      message_type: MessageRecord["messageType"];
+      visibility: MessageRecord["visibility"];
+      content: string;
+      mentions_json: string;
       created_at: number;
       run_id: string | null;
       payload: string;
@@ -2046,17 +1918,17 @@ export class AppStorage {
       const payload = this.parseStoredPayload<MessageRecord>(row.payload);
       return {
         ...payload,
-        id: row.id || payload.id,
-        conversationId: this.preferStructuredValue(row.conversation_id, payload.conversationId),
-        senderId: row.sender_id ?? payload.senderId ?? null,
-        senderName: this.preferStructuredValue(row.sender_name, payload.senderName),
-        senderKind: this.preferStructuredValue(row.sender_kind, payload.senderKind),
-        messageType: this.preferStructuredValue(row.message_type, payload.messageType),
-        visibility: this.preferStructuredValue(row.visibility, payload.visibility),
-        content: this.preferStructuredValue(row.content, payload.content),
-        mentions: row.mentions_json ? (JSON.parse(row.mentions_json) as string[]) : payload.mentions,
-        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
-        runId: row.run_id ?? payload.runId ?? null,
+        id: row.id,
+        conversationId: row.conversation_id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        senderKind: row.sender_kind,
+        messageType: row.message_type,
+        visibility: row.visibility,
+        content: row.content,
+        mentions: JSON.parse(row.mentions_json) as string[],
+        createdAt: row.created_at,
+        runId: row.run_id,
       } satisfies MessageRecord;
     });
   }
@@ -2071,13 +1943,13 @@ export class AppStorage {
       .all() as Array<{
       id: string;
       conversation_id: string;
-      title: string | null;
-      kind: RunRecord["kind"] | null;
-      status: RunRecord["status"] | null;
-      actor_id: string | null;
-      step_index: number | null;
-      total_steps: number | null;
-      created_at: number | null;
+      title: string;
+      kind: RunRecord["kind"];
+      status: RunRecord["status"];
+      actor_id: string;
+      step_index: number;
+      total_steps: number;
+      created_at: number;
       updated_at: number;
       last_error: string | null;
       artifact_path: string | null;
@@ -2096,27 +1968,94 @@ export class AppStorage {
       const normalizedMetadata = this.mergeRunMetadataPaths(metadata, row);
       return {
         ...payload,
-        id: row.id || payload.id,
-        conversationId: this.preferStructuredValue(row.conversation_id, payload.conversationId),
-        title: this.preferStructuredValue(row.title, payload.title),
-        kind: this.preferStructuredValue(row.kind, payload.kind),
-        status: this.preferStructuredValue(row.status, payload.status),
-        actorId: this.preferStructuredValue(row.actor_id, payload.actorId),
-        stepIndex: this.preferStructuredValue(row.step_index, payload.stepIndex),
-        totalSteps: this.preferStructuredValue(row.total_steps, payload.totalSteps),
-        createdAt: this.preferStructuredValue(row.created_at, payload.createdAt),
-        updatedAt: this.preferStructuredValue(row.updated_at, payload.updatedAt),
+        id: row.id,
+        conversationId: row.conversation_id,
+        title: row.title,
+        kind: row.kind,
+        status: row.status,
+        actorId: row.actor_id,
+        stepIndex: row.step_index,
+        totalSteps: row.total_steps,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
         metadata: normalizedMetadata,
       } satisfies RunRecord;
     });
   }
 
-  private ensureColumn(tableName: string, columnName: string, definition: string) {
+  private assertStructuredSchema() {
+    this.assertTableColumns("providers", [
+      "label",
+      "base_url",
+      "default_model",
+      "supports_tool_calling",
+      "supports_streaming",
+      "is_active",
+    ]);
+    this.assertTableColumns("agents", [
+      "name",
+      "role",
+      "status",
+      "workspace_path",
+      "avatar_path",
+      "model_id",
+    ]);
+    this.assertTableColumns("teams", ["name", "objective", "workspace_path", "avatar_path"]);
+    this.assertTableColumns("conversations", [
+      "kind",
+      "target_id",
+      "title",
+      "unread",
+      "last_message",
+      "active_skill",
+      "pinned_mcp",
+      "show_internal_messages",
+    ]);
+    this.assertTableColumns("messages", [
+      "sender_id",
+      "sender_name",
+      "sender_kind",
+      "message_type",
+      "visibility",
+      "content",
+      "mentions_json",
+      "run_id",
+      "has_attachments",
+    ]);
+    this.assertTableColumns("runs", [
+      "title",
+      "kind",
+      "status",
+      "actor_id",
+      "step_index",
+      "total_steps",
+      "created_at",
+      "last_error",
+      "artifact_path",
+      "transcript_path",
+      "workspace_transcript_path",
+      "memory_path",
+    ]);
+    this.assertTableColumns("notifications", [
+      "type",
+      "title",
+      "body",
+      "read",
+      "related_conversation_id",
+      "related_run_id",
+    ]);
+  }
+
+  private assertTableColumns(tableName: string, requiredColumns: string[]) {
     const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-    if (rows.some((row) => row.name === columnName)) {
+    const existingColumns = new Set(rows.map((row) => row.name));
+    const missing = requiredColumns.filter((column) => !existingColumns.has(column));
+    if (missing.length === 0) {
       return;
     }
-    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    throw new Error(
+      `检测到不兼容数据库 schema：${tableName} 缺少字段 ${missing.join(", ")}。请备份并删除 ~/.teamaligned/app.db 后重启应用。`,
+    );
   }
 
   private extractAttachmentsFromMessage(message: MessageRecord): AttachmentAssetRecord[] {

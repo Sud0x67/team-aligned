@@ -84,11 +84,11 @@ beta 阶段最忌讳的是：
 - 文件系统负责 transcript、artifact、memory、附件等内容实体
 - 不重新引入新的持久化分叉
 
-当前只保留一条必要迁移路径：
+当前不再保留自动迁移路径：
 
-- 旧目录 `~/teamaligned` / Electron `userData/teamaligned` -> 新目录 `~/.teamaligned`
-- 迁移只补缺失文件，不覆盖新目录
-- 旧绝对路径只针对 TeamAligned 受管目录做规范化，不处理用户手动指定的外部 workspace
+- 运行时只使用 `~/.teamaligned`
+- 启动不会自动导入 `~/teamaligned` / Electron `userData/teamaligned` / `app-state.json`
+- 如需保留历史数据，需由用户手动备份后迁移
 
 ## 代码修改时的建议检查项
 

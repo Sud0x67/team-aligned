@@ -17,6 +17,8 @@ Document runtime orchestration and persistence model in the current implementati
 - Formal schemas for conversations/messages/runs
 - Attachments/artifacts/tool_invocations/run_steps
 - Local path strategy under `~/.teamaligned`
+- No automatic import/migration from legacy roots (`~/teamaligned`, `userData/teamaligned`, or `app-state.json`)
+- Runtime now fails fast with a clear message when it detects an incompatible legacy SQLite schema
 
 ## Goal
 

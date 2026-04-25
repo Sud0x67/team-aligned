@@ -51,6 +51,8 @@ export function ManagePage() {
     settings,
     createAgent,
     createTeam,
+    deleteAgent,
+    deleteTeam,
     updateAgent,
     openWorkspace,
     updateAgentSkills,
@@ -233,6 +235,49 @@ export function ManagePage() {
     setSelectedMcpIds([]);
   };
 
+  const submitDeleteAgent = async (agent: AgentRecord) => {
+    const confirmed = window.confirm(
+      t.manage("deleteAgentConfirm").replace("{{name}}", agent.name),
+    );
+    if (!confirmed) return;
+    try {
+      await deleteAgent(agent.id);
+      if (editingAgent?.id === agent.id) {
+        setEditingAgent(null);
+        setShowAgentForm(false);
+      }
+      if (editingAgentSkills?.id === agent.id) {
+        setEditingAgentSkills(null);
+      }
+      if (editingAgentMcps?.id === agent.id) {
+        setEditingAgentMcps(null);
+      }
+    } catch (error) {
+      window.alert(
+        t.manage("deleteFailedPrefix") +
+          (error instanceof Error ? error.message : t.manage("deleteFailedFallback")),
+      );
+    }
+  };
+
+  const submitDeleteTeam = async (team: TeamRecord) => {
+    const confirmed = window.confirm(
+      t.manage("deleteTeamConfirm").replace("{{name}}", team.name),
+    );
+    if (!confirmed) return;
+    try {
+      await deleteTeam(team.id);
+      if (editingTeamMcps?.id === team.id) {
+        setEditingTeamMcps(null);
+      }
+    } catch (error) {
+      window.alert(
+        t.manage("deleteFailedPrefix") +
+          (error instanceof Error ? error.message : t.manage("deleteFailedFallback")),
+      );
+    }
+  };
+
   const toggleSelectedId = (id: string) => {
     setSelectedMcpIds((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
@@ -328,6 +373,8 @@ export function ManagePage() {
                       completedTasks: t.manage("completedTasks"),
                       tasksUnit: t.manage("tasksUnit"),
                       edit: t.manage("editAgent"),
+                      startConversationAction: t.manage("startConversationAction"),
+                      deleteAction: t.manage("deleteAction"),
                     }}
                     onEdit={() => openEditAgentForm(agent)}
                     onConfigureSkills={() =>
@@ -337,6 +384,8 @@ export function ManagePage() {
                       connectedMcps.length > 0 ? openAgentMcpEditor(agent) : navigate("/extensions")
                     }
                     onOpenWorkspace={() => openWorkspace(agent.workspacePath)}
+                    onOpenConversation={() => openConversation({ kind: "agent", targetId: agent.id })}
+                    onDelete={() => void submitDeleteAgent(agent)}
                   />
                 );
               })}
@@ -381,12 +430,14 @@ export function ManagePage() {
                         connectedMcps.length > 0 ? t.manage("noAgentMcps") : t.manage("noMcpsConnected"),
                       manageAction: t.manage("manageAction"),
                       startConversationAction: t.manage("startConversationAction"),
+                      deleteAction: t.manage("deleteAction"),
                     }}
                     onConfigureMcps={() =>
                       connectedMcps.length > 0 ? openTeamMcpEditor(team) : navigate("/extensions")
                     }
                     onOpenWorkspace={() => openWorkspace(team.workspacePath)}
                     onOpenConversation={() => openConversation({ kind: "team", targetId: team.id })}
+                    onDelete={() => void submitDeleteTeam(team)}
                   />
                 );
               })}
