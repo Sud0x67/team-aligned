@@ -23,6 +23,7 @@ import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 
 type TabKey = "skills" | "mcp" | "prompts";
+type SyncableCatalogTab = Extract<TabKey, "skills" | "mcp">;
 
 function serializeHeaders(headers: Record<string, string> | undefined) {
   if (!headers || Object.keys(headers).length === 0) {
@@ -68,6 +69,13 @@ function getMcpIcon(status: "disconnected" | "configured" | "connected" | "error
   return Blocks;
 }
 
+function matchesSearch(query: string, values: Array<string | null | undefined>) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+
+  return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
+}
+
 export function ExtensionsPage() {
   const {
     skillCatalog,
@@ -87,6 +95,15 @@ export function ExtensionsPage() {
   } = useAppStore();
   const t = createTranslator(settings.language);
   const [tab, setTab] = useState<TabKey>("skills");
+  const [catalogSync, setCatalogSync] = useState<{
+    tab: SyncableCatalogTab;
+    status: "syncing" | "success";
+  } | null>(null);
+  const [searchQueries, setSearchQueries] = useState<Record<TabKey, string>>({
+    skills: "",
+    mcp: "",
+    prompts: "",
+  });
   const [editingMcp, setEditingMcp] = useState<McpCatalogRecord | null>(null);
   const [mcpForm, setMcpForm] = useState<ConnectMcpInput | null>(null);
   const [customHeadersText, setCustomHeadersText] = useState("");
@@ -105,9 +122,81 @@ export function ExtensionsPage() {
     [mcpConnections],
   );
 
-  const visibleSkills = useMemo(() => skillCatalog, [skillCatalog]);
-  const visibleMcps = useMemo(() => mcpCatalog, [mcpCatalog]);
-  const visiblePrompts = useMemo(() => promptAliases, [promptAliases]);
+  const activeSearch = searchQueries[tab];
+  const visibleSkills = useMemo(
+    () =>
+      skillCatalog.filter((skill) =>
+        matchesSearch(searchQueries.skills, [
+          skill.id,
+          skill.name,
+          skill.displayName,
+          skill.description,
+          String(skill.metadata?.category ?? ""),
+          skill.version,
+        ]),
+      ),
+    [searchQueries.skills, skillCatalog],
+  );
+  const visibleMcps = useMemo(
+    () =>
+      mcpCatalog.filter((server) =>
+        matchesSearch(searchQueries.mcp, [
+          server.id,
+          server.name,
+          server.description,
+          server.transport,
+          server.authType,
+          server.riskLevel,
+          ...server.capabilities,
+          ...server.declaredTools,
+        ]),
+      ),
+    [mcpCatalog, searchQueries.mcp],
+  );
+  const visiblePrompts = useMemo(
+    () =>
+      promptAliases.filter((prompt) =>
+        matchesSearch(searchQueries.prompts, [
+          prompt.name,
+          prompt.alias,
+          prompt.description,
+          prompt.prompt,
+        ]),
+      ),
+    [promptAliases, searchQueries.prompts],
+  );
+  const currentCatalogSync = catalogSync?.tab === tab ? catalogSync.status : null;
+  const searchPlaceholder =
+    tab === "skills"
+      ? t.extensions("searchSkillsPlaceholder")
+      : tab === "mcp"
+        ? t.extensions("searchMcpPlaceholder")
+        : t.extensions("searchPromptsPlaceholder");
+
+  const syncCurrentCatalog = async () => {
+    if (tab !== "skills" && tab !== "mcp") return;
+    if (catalogSync?.status === "syncing") return;
+
+    const syncingTab = tab;
+    setCatalogSync({ tab: syncingTab, status: "syncing" });
+
+    try {
+      if (syncingTab === "skills") {
+        await refreshSkillCatalog();
+      } else {
+        await refreshMcpCatalog();
+      }
+      setCatalogSync({ tab: syncingTab, status: "success" });
+      window.setTimeout(() => {
+        setCatalogSync((current) =>
+          current?.tab === syncingTab && current.status === "success" ? null : current,
+        );
+      }, 1400);
+    } catch (error) {
+      console.error("Failed to sync extension catalog", error);
+      setCatalogSync(null);
+    }
+  };
 
   const runSkillAction = async (skillId: string, type: "install" | "remove") => {
     if (skillAction) return;
@@ -281,13 +370,47 @@ export function ExtensionsPage() {
             </button>
           ) : (
             <button
-              onClick={() => (tab === "skills" ? refreshSkillCatalog() : refreshMcpCatalog())}
-              className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2 text-[13px] font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              onClick={() => void syncCurrentCatalog()}
+              disabled={currentCatalogSync === "syncing"}
+              className={`group inline-flex min-w-[148px] items-center justify-center gap-2 rounded-full border px-4 py-2 text-[13px] font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.97] disabled:cursor-wait disabled:hover:translate-y-0 ${
+                currentCatalogSync === "success"
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 ring-2 ring-emerald-500/10"
+                  : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--muted)]"
+              }`}
+              aria-live="polite"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              {tab === "skills" ? t.extensions("syncCatalog") : t.extensions("syncMcpCatalog")}
+              {currentCatalogSync === "syncing" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : currentCatalogSync === "success" ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5 transition-transform duration-300 group-hover:rotate-180" />
+              )}
+              {currentCatalogSync === "syncing"
+                ? t.extensions("syncingCatalog")
+                : currentCatalogSync === "success"
+                  ? t.extensions("syncCatalogDone")
+                  : tab === "skills"
+                    ? t.extensions("syncCatalog")
+                    : t.extensions("syncMcpCatalog")}
             </button>
           )}
+        </div>
+
+        <div className="relative max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+          <input
+            type="text"
+            value={activeSearch}
+            onChange={(event) =>
+              setSearchQueries((current) => ({
+                ...current,
+                [tab]: event.target.value,
+              }))
+            }
+            placeholder={searchPlaceholder}
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] py-2.5 pl-10 pr-4 text-[14px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_16%,transparent)]"
+          />
         </div>
 
         {tab === "skills" ? (

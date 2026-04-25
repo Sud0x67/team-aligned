@@ -5,6 +5,7 @@ import { createTranslator } from "../../i18n";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { useAppStore } from "../../store/use-app-store";
 import { AvatarBadge } from "../avatar-badge";
+import { ChatMarkdownContent } from "./chat-markdown";
 import { getConversationVisibleMessages } from "./chat-utils";
 
 function formatTime(timestamp: number) {
@@ -294,7 +295,7 @@ export function ChatMessageThread({
                       </div>
                     ) : null}
                     {!isCommandCard ? (
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <ChatMarkdownContent content={message.content} inverted={isUser} />
                     ) : null}
                     {isStreaming ? (
                       <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
@@ -392,7 +393,7 @@ export function ChatMessageThread({
                       <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
                       <span className="animate-pulse">{t.chat("thinking")}</span>
                     </div>
-                    <p className="whitespace-pre-wrap">{pendingSystemMessage}</p>
+                    <ChatMarkdownContent content={pendingSystemMessage} />
                     {visiblePendingUpdates.length > 0 ? (
                       <div className="mt-3 space-y-1">
                         {visiblePendingUpdates.map((line, index) => (

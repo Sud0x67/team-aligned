@@ -41,6 +41,13 @@ const defaultTeamForm: TeamFormState = {
   avatarPath: null as string | null,
 };
 
+function matchesSearch(query: string, values: Array<string | null | undefined>) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+
+  return values.some((value) => value?.toLowerCase().includes(normalizedQuery));
+}
+
 export function ManagePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -67,7 +74,8 @@ export function ManagePage() {
   const t = createTranslator(settings.language);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("agents");
-  const [search, setSearch] = useState("");
+  const [agentSearch, setAgentSearch] = useState("");
+  const [teamSearch, setTeamSearch] = useState("");
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null);
@@ -93,17 +101,32 @@ export function ManagePage() {
     () =>
       [...agents]
         .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"))
-        .filter(
-          (agent) =>
-            agent.name.toLowerCase().includes(search.trim().toLowerCase()) ||
-            agent.role.toLowerCase().includes(search.trim().toLowerCase()),
+        .filter((agent) =>
+          matchesSearch(agentSearch, [
+            agent.name,
+            agent.role,
+            agent.description,
+            agent.workspacePath,
+            ...agent.capabilities,
+          ]),
         ),
-    [agents, search],
+    [agents, agentSearch],
   );
 
   const visibleTeams = useMemo(
-    () => [...teams].sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN")),
-    [teams],
+    () =>
+      [...teams]
+        .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"))
+        .filter((team) => {
+          const members = agents.filter((agent) => team.memberIds.includes(agent.id));
+          return matchesSearch(teamSearch, [
+            team.name,
+            team.description,
+            team.workspacePath,
+            ...members.flatMap((member) => [member.name, member.role]),
+          ]);
+        }),
+    [agents, teamSearch, teams],
   );
 
   const installedSkills = useMemo(
@@ -370,8 +393,8 @@ export function ManagePage() {
               <input
                 type="text"
                 placeholder={t.manage("searchAgentsPlaceholder")}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                value={agentSearch}
+                onChange={(event) => setAgentSearch(event.target.value)}
                 className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] py-2.5 pl-10 pr-4 text-[14px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_16%,transparent)]"
               />
             </div>
@@ -446,6 +469,17 @@ export function ManagePage() {
                 <Plus className="h-4 w-4" />
                 {t.manage("createTeam")}
               </button>
+            </div>
+
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+              <input
+                type="text"
+                placeholder={t.manage("searchGroupsPlaceholder")}
+                value={teamSearch}
+                onChange={(event) => setTeamSearch(event.target.value)}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] py-2.5 pl-10 pr-4 text-[14px] text-[var(--foreground)] outline-none transition focus:border-[color-mix(in_srgb,var(--primary)_35%,transparent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_16%,transparent)]"
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
