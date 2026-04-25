@@ -457,6 +457,25 @@ test("built-in assistant cannot be edited or deleted and stays skill-locked", ()
   }
 });
 
+test("built-in assistant skill is always bundled and retained across catalog replacement", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+
+    storage.replaceSkillCatalog([]);
+
+    const snapshot = storage.getSnapshot();
+    const builtinSkill = snapshot.skillCatalog.find((skill) => skill.id === TEAMALIGNED_ASSISTANT_SKILL_ID);
+    assert.ok(builtinSkill);
+    assert.equal(builtinSkill?.installed, true);
+    assert.equal(builtinSkill?.sourceRepo, "builtin://teamaligned");
+    assert.equal(builtinSkill?.installPath, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("updateTeam edits group metadata without touching member agents", () => {
   const root = createTempRoot();
   try {

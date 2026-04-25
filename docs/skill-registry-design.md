@@ -10,6 +10,12 @@
 - Agent 使用 `skillWhitelist` 控制允许加载哪些 skill
 - 当前新安装 skill 会默认加入所有 Agent 的白名单，后续再收紧为显式配置
 
+### 内置 Skill（不走远端下载）
+
+- `team-aligned-assistant` 是系统内置 Skill，随应用打包，运行时内置提供 `SKILL.md` 内容。
+- 该 Skill 不依赖 GitHub 下载，不会被移除，也不会被 catalog 同步覆盖掉。
+- 它只服务内置应用助手 Agent（`agent-teamaligned-assistant`），不对其他 Agent 自动分配。
+
 ## 当前仓库内结构
 
 - `packages/agent-runtime/src/skill-registry.ts`
