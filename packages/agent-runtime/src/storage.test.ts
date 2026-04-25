@@ -25,6 +25,19 @@ test("init seeds starter agents and teams for a brand-new workspace", () => {
   }
 });
 
+test("init leaves default provider api keys empty for first-time setup", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const snapshot = storage.getSnapshot();
+    assert.ok(snapshot.providers.length >= 2);
+    assert.equal(snapshot.providers.every((provider) => provider.apiKey === ""), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("init backfills starter agents and teams when only settings exist", () => {
   const root = createTempRoot();
   try {

@@ -93,6 +93,7 @@ type SettingsFilePayload = {
     group?: boolean;
   };
   activeProviderId?: AppSettings["activeProviderId"];
+  onboardingCompleted?: boolean;
   providers?: ProviderConfig[];
   profile?: Partial<UserProfile>;
 };
@@ -104,6 +105,13 @@ type StoredAttachmentRecord = AttachmentAssetRecord & {
   runId: string | null;
   createdAt: number;
 };
+
+const placeholderApiKeys = new Set(["sk-qwen-demo-key", "sk-openai-demo-key"]);
+
+function normalizeProviderSecrets(provider: ProviderConfig): ProviderConfig {
+  const apiKey = placeholderApiKeys.has(provider.apiKey.trim()) ? "" : provider.apiKey;
+  return { ...provider, apiKey };
+}
 
 type StoredArtifactRecord = ArtifactRecord;
 
@@ -278,6 +286,10 @@ export class AppStorage {
       activeProviderId:
         (this.state.settingsEntries["settings.activeProviderId"] as AppSettings["activeProviderId"]) ??
         defaultSettings.activeProviderId,
+      onboardingCompleted:
+        this.state.settingsEntries["settings.onboardingCompleted"] === undefined
+          ? defaultSettings.onboardingCompleted
+          : this.state.settingsEntries["settings.onboardingCompleted"] === "true",
     };
   }
 
@@ -289,6 +301,7 @@ export class AppStorage {
     this.state.settingsEntries["settings.notifyMention"] = String(merged.notifyMention);
     this.state.settingsEntries["settings.notifyGroup"] = String(merged.notifyGroup);
     this.state.settingsEntries["settings.activeProviderId"] = merged.activeProviderId;
+    this.state.settingsEntries["settings.onboardingCompleted"] = String(merged.onboardingCompleted);
     this.persist();
   }
 
@@ -1819,7 +1832,7 @@ export class AppStorage {
 
     return rows.map((row) => {
       const payload = this.parseStoredPayload<ProviderConfig>(row.payload);
-      return {
+      return normalizeProviderSecrets({
         ...payload,
         id: row.id as ProviderConfig["id"],
         label: row.label,
@@ -1828,7 +1841,7 @@ export class AppStorage {
         supportsToolCalling: row.supports_tool_calling === 1,
         supportsStreaming: row.supports_streaming === 1,
         isActive: row.is_active === 1,
-      } satisfies ProviderConfig;
+      } satisfies ProviderConfig);
     });
   }
 
@@ -2796,6 +2809,7 @@ export class AppStorage {
       "settings.notifyMention": String(settings.notifyMention),
       "settings.notifyGroup": String(settings.notifyGroup),
       "settings.activeProviderId": settings.activeProviderId,
+      "settings.onboardingCompleted": String(settings.onboardingCompleted),
       "profile.name": profile.name,
       "profile.bio": profile.bio,
       "profile.avatarPath": profile.avatarPath ?? "null",
@@ -2817,10 +2831,12 @@ export class AppStorage {
 
     return {
       settingsEntries,
-      providers: providers.map((provider) => ({
-        ...provider,
-        isActive: provider.id === activeProviderId,
-      })),
+      providers: providers.map((provider) =>
+        normalizeProviderSecrets({
+          ...provider,
+          isActive: provider.id === activeProviderId,
+        }),
+      ),
     };
   }
 
@@ -2838,6 +2854,7 @@ export class AppStorage {
         notifyMention: payload.notifications?.mention ?? defaultSettings.notifyMention,
         notifyGroup: payload.notifications?.group ?? defaultSettings.notifyGroup,
         activeProviderId: payload.activeProviderId ?? defaultSettings.activeProviderId,
+        onboardingCompleted: payload.onboardingCompleted ?? defaultSettings.onboardingCompleted,
       };
       const profile: UserProfile = {
         name: payload.profile?.name ?? defaultProfile.name,
@@ -2852,10 +2869,12 @@ export class AppStorage {
 
       return {
         settingsEntries: this.createSettingsEntries(settings, profile),
-        providers: providers.map((provider) => ({
-          ...provider,
-          isActive: provider.id === settings.activeProviderId,
-        })),
+        providers: providers.map((provider) =>
+          normalizeProviderSecrets({
+            ...provider,
+            isActive: provider.id === settings.activeProviderId,
+          }),
+        ),
       };
     } catch {
       return null;

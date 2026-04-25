@@ -104,6 +104,7 @@ export interface AppSettings {
   notifyMention: boolean;
   notifyGroup: boolean;
   activeProviderId: ProviderId;
+  onboardingCompleted: boolean;
 }
 
 export interface ProviderConfig {

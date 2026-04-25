@@ -10,6 +10,7 @@ const settings: AppSettings = {
   notifyMention: true,
   notifyGroup: true,
   activeProviderId: "qwen",
+  onboardingCompleted: true,
 };
 
 function makeNotification(): NotificationRecord {

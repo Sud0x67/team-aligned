@@ -72,6 +72,7 @@ const emptySnapshot: AppSnapshot = {
     notifyMention: true,
     notifyGroup: true,
     activeProviderId: "qwen",
+    onboardingCompleted: false,
   },
   providers: [],
   agents: [],

@@ -22,6 +22,7 @@ export const defaultSettings: AppSettings = {
   notifyMention: true,
   notifyGroup: true,
   activeProviderId: "qwen",
+  onboardingCompleted: false,
 };
 
 export const defaultProviders: ProviderConfig[] = [
@@ -29,7 +30,7 @@ export const defaultProviders: ProviderConfig[] = [
     id: "qwen",
     label: "Qwen",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    apiKey: "sk-qwen-demo-key",
+    apiKey: "",
     defaultModel: "qwen-max",
     supportsToolCalling: true,
     supportsStreaming: true,
@@ -39,7 +40,7 @@ export const defaultProviders: ProviderConfig[] = [
     id: "openai",
     label: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    apiKey: "sk-openai-demo-key",
+    apiKey: "",
     defaultModel: "gpt-5",
     supportsToolCalling: true,
     supportsStreaming: true,
