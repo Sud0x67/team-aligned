@@ -530,6 +530,7 @@ export class TeamalignedRuntime extends EventEmitter {
         }),
         "system",
       );
+      this.addTeamCancellationMessage(payload.conversationId, latest.id, responseLanguage);
     }
 
     this.emitSnapshot();
@@ -1224,6 +1225,28 @@ export class TeamalignedRuntime extends EventEmitter {
     const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
     let announcedContextLookup = false;
     const announcedToolStarts = new Set<string>();
+    const addPublicProcessMessage = (content: string, metadata: Record<string, unknown>) => {
+      this.storage.addMessage(
+        {
+          conversationId: input.conversationId,
+          senderId: input.speaker.id,
+          senderName: input.speaker.name,
+          senderKind: "agent",
+          messageType: "agent",
+          visibility: "public",
+          content,
+          mentions: [],
+          runId: input.runId,
+          metadata: {
+            teamProcess: true,
+            ...metadata,
+          },
+          createdAt: Date.now(),
+        },
+        { skipTranscript: true },
+      );
+      this.emitSnapshot();
+    };
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
       if (this.isRunTerminal(input.runId)) {
         return;
@@ -1288,23 +1311,14 @@ export class TeamalignedRuntime extends EventEmitter {
           return;
         }
         announcedToolStarts.add(dedupeKey);
-        input.onUpdate?.(
-          isLocalTool
-            ? byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 正在执行 ${toolName}`,
-                en: `${input.speaker.name} is running ${toolName}`,
-              })
-            : byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 正在通过 ${sourceName} 执行 ${toolName}`,
-                en: `${input.speaker.name} is running ${toolName} via ${sourceName}`,
-              }),
-          {
-            phase: "tool_start",
-            toolName,
-            sourceName,
-            local: isLocalTool,
-          },
-        );
+        const metadata = {
+          phase: "tool_start",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+        };
+        addPublicProcessMessage(content, metadata);
+        input.onUpdate?.(content, metadata);
         return;
       }
 
@@ -1342,45 +1356,36 @@ export class TeamalignedRuntime extends EventEmitter {
         if (!content) {
           return;
         }
-        input.onUpdate?.(
-          isLocalTool
-            ? byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 已完成 ${toolName}`,
-                en: `${input.speaker.name} completed ${toolName}`,
-              })
-            : byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 已完成 ${sourceName}.${toolName}`,
-                en: `${input.speaker.name} completed ${sourceName}.${toolName}`,
-              }),
-          {
-            phase: "tool_success",
-            toolName,
-            sourceName,
-            local: isLocalTool,
-          },
-        );
+        const metadata = {
+          phase: "tool_success",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+        };
+        addPublicProcessMessage(content, metadata);
+        input.onUpdate?.(content, metadata);
         return;
       }
 
       if (event.phase === "error") {
-        input.onUpdate?.(
-          isLocalTool
-            ? byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 在 ${toolName} 失败：${event.error}`,
-                en: `${input.speaker.name} failed on ${toolName}: ${event.error}`,
-              })
-            : byLanguage(input.responseLanguage, {
-                zh: `${input.speaker.name} 在 ${sourceName}.${toolName} 失败：${event.error}`,
-                en: `${input.speaker.name} failed on ${sourceName}.${toolName}: ${event.error}`,
-              }),
-          {
-            phase: "tool_error",
-            toolName,
-            sourceName,
-            local: isLocalTool,
-            error: event.error,
-          },
-        );
+        const content = isLocalTool
+          ? byLanguage(input.responseLanguage, {
+              zh: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`,
+              en: `${input.speaker.name}: I hit a problem during ${toolName}: ${event.error}`,
+            })
+          : byLanguage(input.responseLanguage, {
+              zh: `${input.speaker.name}：我在 ${sourceName}.${toolName} 这一步遇到了问题：${event.error}`,
+              en: `${input.speaker.name}: I hit a problem during ${sourceName}.${toolName}: ${event.error}`,
+            });
+        const metadata = {
+          phase: "tool_error",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+          error: event.error,
+        };
+        addPublicProcessMessage(content, metadata);
+        input.onUpdate?.(content, metadata);
       }
     };
   }
@@ -2228,11 +2233,14 @@ export class TeamalignedRuntime extends EventEmitter {
             members,
             context: updatedContext,
             handoff: handoffState,
-            history: this.storage.listMessages(conversation.id).map((message) => ({
-              senderName: message.senderName,
-              visibility: message.visibility,
-              content: message.content,
-            })),
+            history: this.storage
+              .listMessages(conversation.id)
+              .filter((message) => message.metadata?.teamProcess !== true)
+              .map((message) => ({
+                senderName: message.senderName,
+                visibility: message.visibility,
+                content: message.content,
+              })),
             userInput: input,
             explicitMentionIds: explicitMentions,
             mcpServers: availableMcpServers,
@@ -3743,6 +3751,40 @@ export class TeamalignedRuntime extends EventEmitter {
         revision: (team.context.handoff?.revision ?? 0) + 1,
         updatedAt: Date.now(),
       },
+    });
+  }
+
+  private addTeamCancellationMessage(
+    conversationId: string,
+    runId: string,
+    responseLanguage: RuntimeLanguage,
+  ) {
+    const conversation = this.storage.getConversation(conversationId);
+    if (!conversation || conversation.kind !== "team") {
+      return;
+    }
+    const team = this.storage.listTeams().find((item) => item.id === conversation.targetId);
+    if (!team) {
+      return;
+    }
+    this.storage.addMessage({
+      conversationId,
+      senderId: team.id,
+      senderName: team.name,
+      senderKind: "agent",
+      messageType: "agent",
+      visibility: "public",
+      content: byLanguage(responseLanguage, {
+        zh: "这一轮已经取消，我会等你的下一条指令。",
+        en: "This turn has been cancelled. I'll wait for your next instruction.",
+      }),
+      mentions: [],
+      runId,
+      metadata: {
+        teamProcess: true,
+        cancelled: true,
+      },
+      createdAt: Date.now(),
     });
   }
 

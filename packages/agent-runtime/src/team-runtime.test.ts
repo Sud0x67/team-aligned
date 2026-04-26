@@ -405,6 +405,156 @@ test("planTeamTurn enforces explicit mentions in speaker selection", async () =>
   assert.equal(result.speakers[0]?.id, "agent-designer");
 });
 
+test("planTeamTurn keeps explicit mentions as execution owners when planner omits them", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput: "@Coder 请实现第一版页面",
+    explicitMentionIds: ["agent-coder"],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "execute",
+        mode: "focused",
+        speakerIds: ["agent-designer"],
+        reason: "execute",
+        activeTask: "实现页面",
+        nextPhase: "执行中",
+        decision: "Designer 先做",
+        workItems: [
+          {
+            ownerAgentId: "agent-designer",
+            summary: "补页面结构",
+            kickoffMessage: "我先处理结构。",
+            readTargets: [],
+            writeTargets: ["src/app.tsx"],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+        ],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "execute");
+  assert.equal(result.speakers[0]?.id, "agent-coder");
+  assert.ok(result.workItems.some((item) => item.owner.id === "agent-coder"));
+});
+
+test("planTeamTurn upgrades explicit execution mentions when planner returns chat", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput: "@Coder 请直接创建一个静态页面",
+    explicitMentionIds: ["agent-coder"],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "chat",
+        mode: "focused",
+        speakerIds: ["agent-designer"],
+        reason: "chat",
+        activeTask: "",
+        nextPhase: "",
+        decision: "",
+        workItems: [],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "execute");
+  assert.equal(result.speakers[0]?.id, "agent-coder");
+  assert.equal(result.workItems[0]?.owner.id, "agent-coder");
+});
+
 test("planTeamTurn falls back safely when planner fails", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),

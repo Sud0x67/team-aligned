@@ -31,6 +31,7 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 规则：
 
 - 用户显式 `@Agent`：该 Agent 直接接棒。
+- 如果用户显式 `@Agent` 且请求属于执行型任务，该 Agent 必须成为 `execution work item` owner；即使 planner 漏掉或误判成 chat，也会用 fallback 执行计划补齐。
 - 无显式 `@`：优先延续 `activeAgentId`，再结合语义选择。
 - Agent 消息里 `@` 下一位：下一小轮由被 `@` 成员接棒。
 - 每轮结束后写回 handoff 状态，保证下一条用户消息具备连续上下文。
@@ -41,6 +42,15 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 
 - `messages`：公开聊天消息（用户可见气泡，含流式文本）
 - `updates`：运行过程更新（system run updates，用于“思考中/进行中”过程反馈）
+
+工具调用现在会同时转成短的公开过程消息，例如：
+
+- “我先看一下现有文件和上下文。”
+- “我开始把这部分改进文件里。”
+- “命令已经跑完了，我继续往下处理。”
+- “我在 read_text_file 这一步遇到了问题：...”
+
+这些消息会进入聊天主线程，但带有 `teamProcess` 元数据，并在下一轮 planner history 中被过滤，避免工具流水账污染后续意图识别。
 
 `updates` 现在覆盖：
 
@@ -96,6 +106,8 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 - 谁在继续
 - 谁在等待前置依赖
 - 谁完成了当前步骤
+- 工具调用开始、完成或失败的简短自然说明
+- 用户点击停止后，群聊主线程会明确说明本轮已取消并等待下一条指令
 
 不默认展示：
 
@@ -108,11 +120,14 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 当前代码已落地：
 
 - handoff 状态持久化与跨轮延续
+- 显式 `@` 在执行模式中的 owner 兜底修正
 - 选人时对 `activeAgentId` 的偏好
 - 受控多轮接棒（含 Agent 间 @）
 - messages/updates 双轨输出
 - execution subagent 阶段更新回传
 - 群聊过程中的工具调用自然化输出
+- 群聊停止后重置 handoff 并输出公开取消反馈
+- `/clear` 清理会话消息、run、transcript、team memory，并重置 handoff
 
 ## 后续可继续优化
 

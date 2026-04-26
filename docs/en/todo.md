@@ -27,6 +27,25 @@ Next:
 - [ ] Add stronger file-upload size/type/recovery guidance.
 - [ ] Verify Markdown rendering for code blocks, lists, tables, links, and long-scroll content.
 
+## 0.3.0-beta Group Chat Continuity Polish
+
+Goal: keep the shipped version at `0.3.0-beta` while bringing the next group-chat stability goals forward. Group chat should feel like a working team, not a stalled scheduler.
+
+Completed in this pass:
+
+- [x] Strengthened explicit `@` priority: mentioned Agents must become execution work-item owners for execution-like requests.
+- [x] Added a runtime fallback when the planner misclassifies an explicit `@Agent` execution request as chat.
+- [x] Translated tool start/success/error events into short public process messages spoken by the active Agent.
+- [x] Marked tool process messages with `teamProcess` metadata and filtered them out of the next planner history to avoid intent-recognition noise.
+- [x] Added a public group-chat cancellation message and reset handoff on cancel.
+- [x] Added smoke tests for explicit `@` execution ownership and planner-misclassification fallback.
+
+Next:
+
+- [ ] Replay real-provider group scenarios: explicit `@`, no-`@` planner routing, parallel execution, sequential dependencies, cancel, and `/clear`.
+- [ ] Keep tuning process-message density so long tasks remain visible without flooding the chat.
+- [ ] Verify group image attachments, multi-Agent context continuity, and Markdown output together.
+
 ## 0.2.1-beta Stability Goals
 
 Goal: after the `0.2.0-beta` release, improve feedback, diagnostics, and recovery paths before expanding the product surface.

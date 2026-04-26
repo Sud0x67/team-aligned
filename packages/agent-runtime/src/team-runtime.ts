@@ -485,7 +485,7 @@ function pathOverlaps(left: string, right: string) {
 }
 
 function hasFallbackExecutionIntent(userInput: string) {
-  return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建文件|新建文件|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update|设计页面|设计一个|做个页面|做一个页面|做静态网页|静态网页|原型|线框图|设计稿|页面结构|页面布局/.test(
+  return /开始做|开始改|直接改|帮我做|实现|修复|写代码|创建|新建|生成|搭建|制作|编写|改一下|落地|重构|执行|build|implement|fix|create|write|refactor|update|设计页面|设计一个|做个页面|做一个页面|做静态网页|静态网页|原型|线框图|设计稿|页面结构|页面布局/.test(
     userInput.toLowerCase(),
   );
 }
@@ -707,6 +707,64 @@ function mapExecutionWorkItems(input: {
   return workItems;
 }
 
+function ensureExplicitExecutionWorkItems(input: {
+  workItems: TeamExecutionWorkItem[];
+  fallbackWorkItems: TeamExecutionWorkItem[];
+  explicitMentionIds: string[];
+  members: AgentRecord[];
+  userInput: string;
+  responseLanguage: RuntimeLanguage;
+}) {
+  if (input.explicitMentionIds.length === 0) {
+    return input.workItems;
+  }
+
+  const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
+  const fallbackByOwnerId = new Map(input.fallbackWorkItems.map((item) => [item.owner.id, item]));
+  const workItems = input.workItems.map((item, index) => ({
+    ...item,
+    id: `work-${index + 1}`,
+  }));
+  const ownerCounts = new Map<string, number>();
+  for (const item of workItems) {
+    ownerCounts.set(item.owner.id, (ownerCounts.get(item.owner.id) ?? 0) + 1);
+  }
+
+  for (const agentId of input.explicitMentionIds) {
+    const owner = memberMap.get(agentId);
+    if (!owner || (ownerCounts.get(owner.id) ?? 0) > 0) {
+      continue;
+    }
+    const fallback = fallbackByOwnerId.get(owner.id);
+    workItems.push(
+      fallback
+        ? {
+            ...fallback,
+            id: `work-${workItems.length + 1}`,
+          }
+        : {
+            id: `work-${workItems.length + 1}`,
+            owner,
+            summary: byLanguage(input.responseLanguage, {
+              zh: `处理用户明确 @ 你的任务：${compact(input.userInput)}`,
+              en: `Handle the task the user explicitly @ mentioned you for: ${compact(input.userInput)}`,
+            }),
+            kickoffMessage: byLanguage(input.responseLanguage, {
+              zh: "我被直接 @ 了，会先开始处理这部分。",
+              en: "I was mentioned directly, so I'll start handling this part.",
+            }),
+            readTargets: [],
+            writeTargets: [],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+    );
+    ownerCounts.set(owner.id, 1);
+  }
+
+  return workItems.slice(0, TEAM_MEMBER_LIMIT * MAX_AGENT_WORK_ITEMS);
+}
+
 function buildFallbackTeamTurnPlan(input: {
   members: AgentRecord[];
   explicitMentionIds: string[];
@@ -918,6 +976,10 @@ export async function planTeamTurn(input: {
         }).join("\n"),
     );
     const result = teamTurnPlanSchema.parse(rawResult);
+    const plannerIntent =
+      result.intent === "chat" && fallback.intent === "execute" && input.explicitMentionIds.length > 0
+        ? "execute"
+        : result.intent;
     const mode = result.mode ?? fallback.mode;
     const rawSpeakers = resolveSpeakersByIds(result.speakerIds, cappedMembers);
     const preferredSpeakers =
@@ -945,8 +1007,16 @@ export async function planTeamTurn(input: {
       responseLanguage,
     });
 
-    if (result.intent === "execute") {
-      const workItems = mappedWorkItems.length > 0 ? mappedWorkItems : fallback.workItems;
+    if (plannerIntent === "execute") {
+      const candidateWorkItems = mappedWorkItems.length > 0 ? mappedWorkItems : fallback.workItems;
+      const workItems = ensureExplicitExecutionWorkItems({
+        workItems: candidateWorkItems,
+        fallbackWorkItems: fallback.workItems,
+        explicitMentionIds: input.explicitMentionIds,
+        members: cappedMembers,
+        userInput: input.userInput,
+        responseLanguage,
+      });
       if (workItems.length === 0) {
         return {
           ...fallback,
@@ -975,12 +1045,17 @@ export async function planTeamTurn(input: {
         intent: "execute",
         mode,
         speakers: executeSpeakers,
-        reason: compact(result.reason) || fallback.reason,
-        activeTask: compact(result.activeTask) || compact(input.userInput),
+        reason: plannerIntent !== result.intent ? fallback.reason : compact(result.reason) || fallback.reason,
+        activeTask:
+          plannerIntent !== result.intent
+            ? fallback.activeTask
+            : compact(result.activeTask) || compact(input.userInput),
         nextPhase:
-          compact(result.nextPhase) ||
-          byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
-        decision: compact(result.decision),
+          plannerIntent !== result.intent
+            ? fallback.nextPhase
+            : compact(result.nextPhase) ||
+              byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
+        decision: plannerIntent !== result.intent ? fallback.decision : compact(result.decision),
         workItems,
       } satisfies TeamTurnPlan;
     }
