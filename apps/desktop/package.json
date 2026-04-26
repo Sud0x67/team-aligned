@@ -1,6 +1,6 @@
 {
   "name": "@teamaligned/desktop",
-  "version": "0.1.0",
+  "version": "0.0.2-beta",
   "private": true,
   "type": "module",
   "description": "Local-first AI team chat desktop app.",
@@ -37,8 +37,8 @@
     }
   },
   "dependencies": {
-    "@teamaligned/agent-runtime": "0.1.0",
-    "@teamaligned/shared": "0.1.0",
+    "@teamaligned/agent-runtime": "0.0.2-beta",
+    "@teamaligned/shared": "0.0.2-beta",
     "lucide-react": "^0.542.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
