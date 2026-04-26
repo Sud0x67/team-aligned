@@ -11,6 +11,7 @@ import type {
   EnsureConversationInput,
   EnsureConversationResult,
   OpenConversationEvent,
+  ProviderId,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SaveAvatarAssetInput,
@@ -81,6 +82,8 @@ const api: TeamalignedApi = {
   openDiagnosticsFolder: () => ipcRenderer.invoke("teamaligned:open-diagnostics-folder"),
   openFeedbackChannel: (channel: FeedbackChannel) =>
     ipcRenderer.invoke("teamaligned:open-feedback-channel", channel),
+  openProviderKeyHelp: (providerId: ProviderId) =>
+    ipcRenderer.invoke("teamaligned:open-provider-key-help", providerId),
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),

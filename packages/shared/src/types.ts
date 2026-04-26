@@ -544,6 +544,7 @@ export interface TeamalignedApi {
   exportDiagnostics: () => Promise<DiagnosticsExportResult>;
   openDiagnosticsFolder: () => Promise<boolean>;
   openFeedbackChannel: (channel: FeedbackChannel) => Promise<boolean>;
+  openProviderKeyHelp: (providerId: ProviderId) => Promise<boolean>;
   markNotificationsRead: () => Promise<AppSnapshot>;
   markConversationRead: (conversationId: string) => Promise<AppSnapshot>;
   openNotificationSettings: () => Promise<boolean>;

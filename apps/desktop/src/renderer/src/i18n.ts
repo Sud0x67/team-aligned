@@ -81,6 +81,20 @@ const translations = {
       showApiKey: "显示 API Key",
       hideApiKey: "隐藏 API Key",
       latency: "延迟",
+      providerHelpButton: "如何配置模型 Provider",
+      providerHelpTitle: "如何填写模型配置",
+      providerHelpIntro:
+        "选择你已经开通的模型供应商，获取 API Key 后填入这里，再点击“测试连接”。",
+      providerHelpStepProvider: "选择百炼或 OpenAI。",
+      providerHelpStepKey: "打开官方页面创建 API Key，并妥善保存。",
+      providerHelpStepModel: "填写模型名称，例如 qwen-max、qwen-plus 或 gpt-4.1-mini。",
+      providerHelpStepTest: "点击测试连接，成功后再完成设置。",
+      providerHelpDashScope: "百炼 API Key 获取指南",
+      providerHelpDashScopeDesc: "查看阿里云百炼官方文档，了解创建 API Key 和 Base URL。",
+      providerHelpOpenAI: "OpenAI API Keys",
+      providerHelpOpenAIDesc: "打开 OpenAI Platform API Keys 页面创建或管理密钥。",
+      providerHelpSafety: "安全提醒：API Key 只保存在本机，不要在截图、Issue 或邮件中直接公开。",
+      providerHelpOpenFailed: "未能打开帮助页面，请稍后重试或手动访问官方 API Key 页面。",
     },
     chat: {
       emptyTitle: "还没有选择会话",
@@ -577,6 +591,23 @@ const translations = {
       showApiKey: "Show API Key",
       hideApiKey: "Hide API Key",
       latency: "Latency",
+      providerHelpButton: "How to configure the model provider",
+      providerHelpTitle: "How to fill in model configuration",
+      providerHelpIntro:
+        "Choose a provider you have access to, create an API Key, paste it here, and then test the connection.",
+      providerHelpStepProvider: "Choose DashScope or OpenAI.",
+      providerHelpStepKey: "Open the official page, create an API Key, and store it safely.",
+      providerHelpStepModel: "Enter a model name, such as qwen-max, qwen-plus, or gpt-4.1-mini.",
+      providerHelpStepTest: "Click Test connection, then finish setup after it succeeds.",
+      providerHelpDashScope: "DashScope API Key guide",
+      providerHelpDashScopeDesc:
+        "Read Alibaba Cloud Model Studio docs for API Key and Base URL setup.",
+      providerHelpOpenAI: "OpenAI API Keys",
+      providerHelpOpenAIDesc: "Open the OpenAI Platform API Keys page to create or manage keys.",
+      providerHelpSafety:
+        "Security note: API Keys are stored locally. Do not expose them in screenshots, issues, or emails.",
+      providerHelpOpenFailed:
+        "Could not open the help page. Please try again later or visit the official API Key page manually.",
     },
     chat: {
       emptyTitle: "No conversation selected yet",

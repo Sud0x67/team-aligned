@@ -12,6 +12,7 @@ import type {
   EnsureConversationInput,
   FeedbackChannel,
   NotificationRecord,
+  ProviderId,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SavePromptAliasInput,
@@ -33,6 +34,10 @@ const isNotificationDebug = isDev || process.env.TA_NOTIFY_DEBUG === "1";
 const notificationDebugLogPath = join(homedir(), ".teamaligned", "logs", "notification-dispatch.log");
 const feedbackIssueUrl = "https://github.com/Sud0x67/team-aligned/issues/new";
 const feedbackEmail = "jokeroller@163.com";
+const providerKeyHelpUrls: Record<ProviderId, string> = {
+  openai: "https://platform.openai.com/api-keys",
+  qwen: "https://help.aliyun.com/zh/model-studio/get-api-key",
+};
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
@@ -331,6 +336,18 @@ async function openFeedbackChannel(channel: FeedbackChannel) {
   }
 }
 
+async function openProviderKeyHelp(providerId: ProviderId) {
+  const url = providerKeyHelpUrls[providerId];
+  if (!url) return false;
+
+  try {
+    await shell.openExternal(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isPathInside(parentPath: string, childPath: string) {
   const relativePath = relative(resolve(parentPath), resolve(childPath));
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
@@ -526,6 +543,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("teamaligned:open-feedback-channel", async (_event, channel: FeedbackChannel) =>
     openFeedbackChannel(channel),
+  );
+  ipcMain.handle("teamaligned:open-provider-key-help", async (_event, providerId: ProviderId) =>
+    openProviderKeyHelp(providerId),
   );
   ipcMain.handle("teamaligned:mark-notifications-read", async () => runtime?.markNotificationsRead());
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>

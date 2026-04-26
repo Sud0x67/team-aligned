@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Eye, EyeOff, Loader2, Sparkles } from "lucide-react";
+import { AlertCircle, Check, ExternalLink, Eye, EyeOff, HelpCircle, Loader2, Sparkles } from "lucide-react";
 import type { ProviderConfig, UserProfile } from "@shared";
 import { createTranslator } from "../i18n";
 import { useAppStore } from "../store/use-app-store";
@@ -44,6 +44,7 @@ export function OnboardingModal() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
@@ -155,6 +156,16 @@ export function OnboardingModal() {
     }
   };
 
+  const handleOpenProviderHelp = async (providerId: ProviderConfig["id"]) => {
+    const ok = await window.teamaligned.openProviderKeyHelp(providerId);
+    if (!ok) {
+      setMessage({
+        type: "error",
+        text: t.onboarding("providerHelpOpenFailed"),
+      });
+    }
+  };
+
   const handleFinish = async () => {
     if (!selectedProvider || saving) return;
     const issues = validate();
@@ -199,7 +210,17 @@ export function OnboardingModal() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-sm">
       <div className="max-h-full w-full max-w-4xl overflow-y-auto rounded-[32px] border border-[var(--border)] bg-[var(--card)] shadow-2xl">
-        <div className="border-b border-[var(--border)] px-7 py-6">
+        <div className="relative border-b border-[var(--border)] px-7 py-6 pr-20">
+          <button
+            type="button"
+            aria-label={t.onboarding("providerHelpButton")}
+            aria-expanded={helpOpen}
+            title={t.onboarding("providerHelpButton")}
+            onClick={() => setHelpOpen((current) => !current)}
+            className="absolute right-7 top-6 grid h-11 w-11 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel)] text-[var(--muted-foreground)] shadow-sm transition hover:border-[color-mix(in_srgb,var(--primary)_26%,transparent)] hover:bg-[var(--accent)] hover:text-[var(--primary)]"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
           <div className="flex items-start gap-4">
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] text-[var(--primary)]">
               <Sparkles className="h-6 w-6" />
@@ -216,6 +237,57 @@ export function OnboardingModal() {
               </p>
             </div>
           </div>
+          {helpOpen ? (
+            <div className="mt-5 rounded-[24px] border border-[color-mix(in_srgb,var(--primary)_18%,var(--border))] bg-[var(--panel)] p-4 shadow-sm">
+              <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--foreground)]">
+                    {t.onboarding("providerHelpTitle")}
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
+                    {t.onboarding("providerHelpIntro")}
+                  </p>
+                  <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-6 text-[var(--muted-foreground)]">
+                    <li>{t.onboarding("providerHelpStepProvider")}</li>
+                    <li>{t.onboarding("providerHelpStepKey")}</li>
+                    <li>{t.onboarding("providerHelpStepModel")}</li>
+                    <li>{t.onboarding("providerHelpStepTest")}</li>
+                  </ol>
+                </div>
+                <div className="grid gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenProviderHelp("qwen")}
+                    className="rounded-[18px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-left transition hover:border-[color-mix(in_srgb,var(--primary)_26%,transparent)] hover:bg-[var(--accent)]"
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm font-semibold text-[var(--foreground)]">
+                      {t.onboarding("providerHelpDashScope")}
+                      <ExternalLink className="h-4 w-4 text-[var(--primary)]" />
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--muted-foreground)]">
+                      {t.onboarding("providerHelpDashScopeDesc")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenProviderHelp("openai")}
+                    className="rounded-[18px] border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-3 text-left transition hover:border-[color-mix(in_srgb,var(--primary)_26%,transparent)] hover:bg-[var(--accent)]"
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm font-semibold text-[var(--foreground)]">
+                      {t.onboarding("providerHelpOpenAI")}
+                      <ExternalLink className="h-4 w-4 text-[var(--primary)]" />
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--muted-foreground)]">
+                      {t.onboarding("providerHelpOpenAIDesc")}
+                    </span>
+                  </button>
+                </div>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">
+                {t.onboarding("providerHelpSafety")}
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="grid gap-5 px-7 py-6 lg:grid-cols-[0.9fr_1.1fr]">
