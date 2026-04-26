@@ -33,7 +33,27 @@
       ]
     },
     "dmg": {
-      "icon": "build/icon.icns"
+      "icon": null,
+      "backgroundColor": "#f5f5f7",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "iconSize": 96,
+      "iconTextSize": 13,
+      "contents": [
+        {
+          "x": 170,
+          "y": 230,
+          "type": "file"
+        },
+        {
+          "x": 390,
+          "y": 230,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   },
   "dependencies": {
