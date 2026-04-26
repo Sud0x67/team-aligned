@@ -8,6 +8,7 @@ import type {
   McpToolRecord,
 } from "@teamaligned/shared";
 import { resolveWorkspaceAwareArgs } from "./mcp-registry.ts";
+import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 
 const MCP_CONNECT_TIMEOUT_MS = 15_000;
 const MCP_TOOL_TIMEOUT_MS = 30_000;
@@ -16,23 +17,58 @@ function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
 }
 
-function normalizeMcpError(catalog: McpCatalogRecord, error: unknown) {
+export function normalizeMcpError(
+  catalog: Pick<McpCatalogRecord, "slug" | "name" | "transport">,
+  error: unknown,
+  language: RuntimeLanguage = "zh",
+) {
   const message = error instanceof Error ? error.message : String(error);
 
   if (/unauthorized|401/i.test(message)) {
     if (catalog.slug === "figma") {
-      return "Figma 远端 MCP 返回未授权。请确认当前客户端是否在 Figma 允许接入的客户端列表中，或改用本地桌面版 MCP。";
+      return byLanguage(language, {
+        zh: "Figma 远端 MCP 返回未授权。请确认当前客户端是否在 Figma 允许接入的客户端列表中，或改用本地桌面版 MCP。",
+        en: "The Figma remote MCP returned unauthorized. Check whether this client is allowed by Figma, or use the local desktop MCP instead.",
+      });
     }
 
-    return "远端 MCP 返回未授权。请检查请求头、Token 或服务端接入权限。";
+    return byLanguage(language, {
+      zh: "远端 MCP 返回未授权。请检查请求头、Token 或服务端接入权限。",
+      en: "The remote MCP returned unauthorized. Check request headers, token, or server access permissions.",
+    });
   }
 
   if (/forbidden|403/i.test(message)) {
-    return "远端 MCP 拒绝了当前请求。请检查鉴权信息或服务端的客户端接入限制。";
+    return byLanguage(language, {
+      zh: "远端 MCP 拒绝了当前请求。请检查鉴权信息或服务端的客户端接入限制。",
+      en: "The remote MCP rejected the request. Check authentication or server-side client access restrictions.",
+    });
   }
 
-  if (/timeout|aborted|abort/i.test(message)) {
-    return "远端 MCP 连接超时。请检查 URL 是否可访问，或稍后重试。";
+  if (/timeout|timed out|aborted|abort|超时/i.test(message)) {
+    return catalog.transport === "stdio"
+      ? byLanguage(language, {
+          zh: "MCP 连接超时。请确认本地命令可以独立启动；如果使用 npx，首次下载依赖可能较慢，也可以先在终端预热一次。",
+          en: "MCP connection timed out. Make sure the local command can start independently. If it uses npx, the first dependency download may be slow; try warming it up in a terminal first.",
+        })
+      : byLanguage(language, {
+          zh: "远端 MCP 连接超时。请检查 URL 是否可访问、鉴权是否正确，或稍后重试。",
+          en: "Remote MCP connection timed out. Check URL reachability and authentication, then retry later.",
+        });
+  }
+
+  if (/enotfound|econnrefused|fetch failed|network|dns/i.test(message)) {
+    return byLanguage(language, {
+      zh: "无法连接到 MCP 服务。请检查 URL、网络、代理或本地服务是否已启动。",
+      en: "Cannot connect to the MCP service. Check the URL, network/proxy settings, or whether the local service is running.",
+    });
+  }
+
+  if (/enoent|command not found|spawn .* not found/i.test(message)) {
+    return byLanguage(language, {
+      zh: "本机缺少 MCP 启动命令。请先安装对应命令，或检查配置中的 command。",
+      en: "The MCP launch command is missing on this machine. Install the command first or check the configured command.",
+    });
   }
 
   return message;
@@ -54,31 +90,50 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function getRequiredConfigError(catalog: McpCatalogRecord, connection: McpConnectionRecord) {
+function getRequiredConfigError(
+  catalog: McpCatalogRecord,
+  connection: McpConnectionRecord,
+  language: RuntimeLanguage,
+) {
   if (catalog.authType === "env") {
     const missing = catalog.authFields.filter((field) => field.required && !connection.envEntries[field.key]?.trim());
     if (missing.length > 0) {
-      return `缺少必填环境变量：${missing.map((field) => field.key).join("、")}`;
+      return byLanguage(language, {
+        zh: `缺少必填环境变量：${missing.map((field) => field.key).join("、")}`,
+        en: `Missing required environment variables: ${missing.map((field) => field.key).join(", ")}`,
+      });
     }
   }
 
   if (catalog.authType === "header") {
     const missing = catalog.authFields.filter((field) => field.required && !connection.headers[field.key]?.trim());
     if (missing.length > 0) {
-      return `缺少必填请求头：${missing.map((field) => field.key).join("、")}`;
+      return byLanguage(language, {
+        zh: `缺少必填请求头：${missing.map((field) => field.key).join("、")}`,
+        en: `Missing required request headers: ${missing.map((field) => field.key).join(", ")}`,
+      });
     }
   }
 
   if (catalog.transport === "stdio" && !connection.command?.trim()) {
-    return "缺少本地启动命令。";
+    return byLanguage(language, {
+      zh: "缺少本地启动命令。",
+      en: "Missing local launch command.",
+    });
   }
 
   if (catalog.transport === "http" && !connection.url?.trim()) {
-    return "缺少远端 MCP URL。";
+    return byLanguage(language, {
+      zh: "缺少远端 MCP URL。",
+      en: "Missing remote MCP URL.",
+    });
   }
 
   if (catalog.transport === "http" && connection.url && !/^https?:\/\//i.test(connection.url)) {
-    return "远端 MCP URL 必须以 http:// 或 https:// 开头。";
+    return byLanguage(language, {
+      zh: "远端 MCP URL 必须以 http:// 或 https:// 开头。",
+      en: "Remote MCP URL must start with http:// or https://.",
+    });
   }
 
   return null;
@@ -174,8 +229,10 @@ export async function checkMcpConnection(input: {
   catalog: McpCatalogRecord;
   connection: McpConnectionRecord;
   workspacePath: string;
+  responseLanguage?: RuntimeLanguage;
 }) {
-  const requiredConfigError = getRequiredConfigError(input.catalog, input.connection);
+  const responseLanguage = input.responseLanguage ?? "zh";
+  const requiredConfigError = getRequiredConfigError(input.catalog, input.connection, responseLanguage);
   if (requiredConfigError) {
     return {
       ...input.connection,
@@ -206,7 +263,7 @@ export async function checkMcpConnection(input: {
       enabled: false,
       status: "error" as const,
       lastCheckedAt: Date.now(),
-      lastError: normalizeMcpError(input.catalog, error),
+      lastError: normalizeMcpError(input.catalog, error, responseLanguage),
     };
   }
 }

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { McpCatalogRecord, McpConnectionRecord, McpToolRecord } from "@teamaligned/shared";
+import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 
 type RemoteMcpCatalog = {
   generatedAt?: string;
@@ -178,14 +179,17 @@ export function buildMcpConnection(catalog: McpCatalogRecord): McpConnectionReco
   };
 }
 
-export function validateLocalMcpLauncher(catalog: McpCatalogRecord) {
+export function validateLocalMcpLauncher(catalog: McpCatalogRecord, language: RuntimeLanguage = "zh") {
   if (catalog.transport !== "stdio" || !catalog.launcherCommand) {
     return null;
   }
 
   const result = spawnSync("which", [catalog.launcherCommand], { encoding: "utf8" });
   if (result.status !== 0) {
-    return `本机缺少启动命令：${catalog.launcherCommand}`;
+    return byLanguage(language, {
+      zh: `本机缺少启动命令：${catalog.launcherCommand}`,
+      en: `Missing local launch command: ${catalog.launcherCommand}`,
+    });
   }
 
   return null;

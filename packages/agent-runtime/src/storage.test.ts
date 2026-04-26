@@ -369,6 +369,100 @@ test("clearConversationHistory resets team context and team memory files for gro
   }
 });
 
+test("markNotificationsRead clears notification center items", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const initialCount = storage.getSnapshot().notifications.length;
+
+    storage.createNotification({
+      type: "agent_message",
+      title: "Agent replied",
+      body: "Done",
+      relatedConversationId: TEAMALIGNED_ASSISTANT_CONVERSATION_ID,
+      relatedRunId: null,
+    });
+    storage.createNotification({
+      type: "group_message",
+      title: "Group update",
+      body: "Coder is working",
+      relatedConversationId: "conv-team-product",
+      relatedRunId: "run-notice",
+    });
+
+    assert.equal(storage.getSnapshot().notifications.length, initialCount + 2);
+
+    storage.markNotificationsRead();
+
+    assert.equal(storage.getSnapshot().notifications.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveAttachmentAsset rejects invalid, empty, and oversized uploads with clear errors", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const conversationId = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+
+    assert.throws(
+      () =>
+        storage.saveAttachmentAsset({
+          conversationId,
+          dataUrl: "not-a-data-url",
+          fileName: "bad.txt",
+        }),
+      /附件格式无效/,
+    );
+    assert.throws(
+      () =>
+        storage.saveAttachmentAsset({
+          conversationId,
+          dataUrl: "data:text/plain;base64,",
+          fileName: "empty.txt",
+        }),
+      /附件为空/,
+    );
+    assert.throws(
+      () =>
+        storage.saveAttachmentAsset({
+          conversationId,
+          dataUrl: `data:text/plain;base64,${Buffer.alloc(20 * 1024 * 1024 + 1).toString("base64")}`,
+          fileName: "large.txt",
+        }),
+      /20 MB/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveAttachmentAsset stores valid files under conversation attachment directory", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const conversationId = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+
+    const attachment = storage.saveAttachmentAsset({
+      conversationId,
+      dataUrl: `data:text/plain;base64,${Buffer.from("hello").toString("base64")}`,
+      fileName: "hello.txt",
+    });
+
+    assert.equal(attachment.name, "hello.txt");
+    assert.equal(attachment.mimeType, "text/plain");
+    assert.equal(attachment.sizeBytes, 5);
+    assert.ok(existsSync(attachment.path));
+    assert.equal(attachment.path.includes(join("artifacts", "attachments")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("deleteAgent removes agent conversation data and detaches team members", () => {
   const root = createTempRoot();
   try {

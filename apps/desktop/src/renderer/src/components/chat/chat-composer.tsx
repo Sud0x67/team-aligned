@@ -254,6 +254,14 @@ export function ChatComposer({
         )
         .map((result) => result.value);
       const failedCount = results.length - succeeded.length;
+      const firstFailureReason = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) =>
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason ?? ""),
+        )
+        .find((message) => message.trim().length > 0);
       const skippedCount = failedCount + rejectedBySize + rejectedByCount;
 
       if (succeeded.length > 0) {
@@ -265,7 +273,9 @@ export function ChatComposer({
           tone: "error",
           message:
             succeeded.length === 0
-              ? t.chat("attachmentUploadFailed")
+              ? firstFailureReason
+                ? t.chat("attachmentUploadFailedWithReason").replace("{{reason}}", firstFailureReason)
+                : t.chat("attachmentUploadFailed")
               : `${t.chat("attachmentUploadPartial")} ${succeeded.length} / ${files.length}`,
         });
         return;

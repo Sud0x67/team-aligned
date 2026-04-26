@@ -76,12 +76,21 @@ export function ChatPage() {
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
     return conversations.filter(
-      (conversation) =>
-        query.length === 0 ||
-        conversation.title.toLowerCase().includes(query) ||
-        conversation.lastMessage.toLowerCase().includes(query),
+      (conversation) => {
+        if (query.length === 0) return true;
+        const conversationMessages = messages[conversation.id] ?? [];
+        return (
+          conversation.title.toLowerCase().includes(query) ||
+          conversation.lastMessage.toLowerCase().includes(query) ||
+          conversationMessages.some(
+            (message) =>
+              message.visibility === "public" &&
+              `${message.senderName} ${message.content}`.toLowerCase().includes(query),
+          )
+        );
+      },
     );
-  }, [conversations, search]);
+  }, [conversations, messages, search]);
 
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ?? null;

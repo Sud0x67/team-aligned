@@ -906,10 +906,13 @@ export class TeamalignedRuntime extends EventEmitter {
       enabled: payload.enabled ?? baseConnection.enabled,
     };
 
-    const launcherIssue = validateLocalMcpLauncher({
-      ...server,
-      launcherCommand: connection.command,
-    });
+    const launcherIssue = validateLocalMcpLauncher(
+      {
+        ...server,
+        launcherCommand: connection.command,
+      },
+      responseLanguage,
+    );
     const checkedConnection = launcherIssue
       ? {
           ...connection,
@@ -922,6 +925,7 @@ export class TeamalignedRuntime extends EventEmitter {
           catalog: server,
           connection,
           workspacePath: connection.cwd || this.storage.workspaceRoot,
+          responseLanguage,
         });
 
     this.storage.upsertMcpConnection(checkedConnection);
@@ -936,8 +940,8 @@ export class TeamalignedRuntime extends EventEmitter {
       body:
         checkedConnection.status === "connected"
           ? byLanguage(responseLanguage, {
-              zh: `${server.name} 已连接成功，并发现 ${checkedConnection.discoveredTools.length} 个工具。`,
-              en: `${server.name} connected successfully, discovered ${checkedConnection.discoveredTools.length} tools.`,
+              zh: `${server.name} 已连接成功，并发现 ${checkedConnection.discoveredTools.length} 个工具。下一步可以在 Agent 编辑里分配这个 MCP，或在聊天中输入 /mcp 查看可用能力。`,
+              en: `${server.name} connected successfully, discovered ${checkedConnection.discoveredTools.length} tools. Next, assign this MCP in Agent editing, or type /mcp in chat to view available capabilities.`,
             })
           : checkedConnection.status === "configured"
             ? getMcpConfiguredHint(server, responseLanguage)
@@ -976,6 +980,7 @@ export class TeamalignedRuntime extends EventEmitter {
       catalog: server,
       connection,
       workspacePath: connection.cwd || this.storage.workspaceRoot,
+      responseLanguage,
     });
     this.storage.upsertMcpConnection(checked);
     this.createAppNotification({
@@ -987,8 +992,8 @@ export class TeamalignedRuntime extends EventEmitter {
       body:
         checked.status === "connected"
           ? byLanguage(responseLanguage, {
-              zh: `${server.name} 当前可用，已发现 ${checked.discoveredTools.length} 个工具。`,
-              en: `${server.name} is available, discovered ${checked.discoveredTools.length} tools.`,
+              zh: `${server.name} 当前可用，已发现 ${checked.discoveredTools.length} 个工具。可在 Agent 编辑里分配，或在聊天中输入 /mcp 查看。`,
+              en: `${server.name} is available, discovered ${checked.discoveredTools.length} tools. Assign it in Agent editing, or type /mcp in chat to view it.`,
             })
           : byLanguage(responseLanguage, {
               zh: `${server.name} 检测失败：${checked.lastError ?? "未知错误"}`,

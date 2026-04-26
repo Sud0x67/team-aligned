@@ -115,6 +115,8 @@ type StoredAttachmentRecord = AttachmentAssetRecord & {
   createdAt: number;
 };
 
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
 const placeholderApiKeys = new Set(["sk-qwen-demo-key", "sk-openai-demo-key"]);
 
 function normalizeProviderSecrets(provider: ProviderConfig): ProviderConfig {
@@ -2642,7 +2644,7 @@ export class AppStorage {
   }
 
   saveAttachmentAsset(input: { conversationId: string; dataUrl: string; fileName: string }): AttachmentAssetRecord {
-    const parsed = input.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    const parsed = input.dataUrl.match(/^data:([^;]+);base64,(.*)$/);
     if (!parsed) {
       throw new Error(
         this.byLanguage({
@@ -2684,6 +2686,24 @@ export class AppStorage {
     const attachmentsPath = this.getConversationAttachmentsPath(input.conversationId);
     const filePath = join(attachmentsPath, fileName);
     const buffer = Buffer.from(base64Payload, "base64");
+
+    if (buffer.byteLength === 0) {
+      throw new Error(
+        this.byLanguage({
+          zh: "附件为空，请重新选择文件。",
+          en: "Attachment is empty. Please choose the file again.",
+        }),
+      );
+    }
+
+    if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        this.byLanguage({
+          zh: "单个附件不能超过 20 MB，请压缩或拆分后再上传。",
+          en: "Each attachment must be under 20 MB. Compress or split it before uploading.",
+        }),
+      );
+    }
 
     writeFileSync(filePath, buffer);
 

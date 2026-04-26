@@ -1,132 +1,5 @@
 import type { ReactNode } from "react";
-
-type MarkdownBlock =
-  | { type: "paragraph"; text: string }
-  | { type: "heading"; depth: number; text: string }
-  | { type: "unordered-list"; items: string[] }
-  | { type: "ordered-list"; items: string[] }
-  | { type: "blockquote"; text: string }
-  | { type: "code"; language: string | null; text: string }
-  | { type: "hr" };
-
-function isFence(line: string) {
-  return line.trim().startsWith("```");
-}
-
-function isHorizontalRule(line: string) {
-  return /^(\s*)(-{3,}|\*{3,}|_{3,})(\s*)$/.test(line);
-}
-
-function isHeading(line: string) {
-  return /^(#{1,6})\s+(.+)$/.test(line);
-}
-
-function isUnorderedListItem(line: string) {
-  return /^\s*[-*+]\s+.+$/.test(line);
-}
-
-function isOrderedListItem(line: string) {
-  return /^\s*\d+[.)]\s+.+$/.test(line);
-}
-
-function isBlockquote(line: string) {
-  return /^\s*>\s?.*$/.test(line);
-}
-
-function isBlockStart(line: string) {
-  return (
-    isFence(line) ||
-    isHorizontalRule(line) ||
-    isHeading(line) ||
-    isUnorderedListItem(line) ||
-    isOrderedListItem(line) ||
-    isBlockquote(line)
-  );
-}
-
-function parseMarkdown(content: string): MarkdownBlock[] {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const blocks: MarkdownBlock[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-
-    if (isFence(line)) {
-      const language = line.trim().slice(3).trim() || null;
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !isFence(lines[index] ?? "")) {
-        codeLines.push(lines[index] ?? "");
-        index += 1;
-      }
-      if (index < lines.length) index += 1;
-      blocks.push({ type: "code", language, text: codeLines.join("\n") });
-      continue;
-    }
-
-    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (headingMatch) {
-      blocks.push({
-        type: "heading",
-        depth: headingMatch[1].length,
-        text: headingMatch[2],
-      });
-      index += 1;
-      continue;
-    }
-
-    if (isHorizontalRule(line)) {
-      blocks.push({ type: "hr" });
-      index += 1;
-      continue;
-    }
-
-    if (isUnorderedListItem(line)) {
-      const items: string[] = [];
-      while (index < lines.length && isUnorderedListItem(lines[index] ?? "")) {
-        items.push((lines[index] ?? "").replace(/^\s*[-*+]\s+/, ""));
-        index += 1;
-      }
-      blocks.push({ type: "unordered-list", items });
-      continue;
-    }
-
-    if (isOrderedListItem(line)) {
-      const items: string[] = [];
-      while (index < lines.length && isOrderedListItem(lines[index] ?? "")) {
-        items.push((lines[index] ?? "").replace(/^\s*\d+[.)]\s+/, ""));
-        index += 1;
-      }
-      blocks.push({ type: "ordered-list", items });
-      continue;
-    }
-
-    if (isBlockquote(line)) {
-      const quoteLines: string[] = [];
-      while (index < lines.length && isBlockquote(lines[index] ?? "")) {
-        quoteLines.push((lines[index] ?? "").replace(/^\s*>\s?/, ""));
-        index += 1;
-      }
-      blocks.push({ type: "blockquote", text: quoteLines.join("\n") });
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (index < lines.length && (lines[index] ?? "").trim() && !isBlockStart(lines[index] ?? "")) {
-      paragraphLines.push(lines[index] ?? "");
-      index += 1;
-    }
-    blocks.push({ type: "paragraph", text: paragraphLines.join("\n") });
-  }
-
-  return blocks;
-}
+import { parseChatMarkdown } from "./chat-markdown-parser";
 
 function safeHref(value: string) {
   try {
@@ -212,7 +85,7 @@ export function ChatMarkdownContent({
   content: string;
   inverted?: boolean;
 }) {
-  const blocks = parseMarkdown(content);
+  const blocks = parseChatMarkdown(content);
   if (blocks.length === 0) return null;
 
   return (
@@ -280,6 +153,45 @@ export function ChatMarkdownContent({
               >
                 <code>{block.text}</code>
               </pre>
+            </div>
+          );
+        }
+
+        if (block.type === "table") {
+          return (
+            <div key={index} className="max-w-full overflow-x-auto rounded-xl border border-[var(--border)]">
+              <table className="min-w-full border-collapse text-left text-[0.92em]">
+                <thead className={inverted ? "bg-white/10" : "bg-[var(--card)]"}>
+                  <tr>
+                    {block.headers.map((header, headerIndex) => (
+                      <th
+                        key={headerIndex}
+                        className={`border-b px-3 py-2 font-semibold ${
+                          inverted ? "border-white/20 text-white" : "border-[var(--border)] text-[var(--foreground)]"
+                        }`}
+                      >
+                        {renderInlineText(header, `table-${index}-h-${headerIndex}`, inverted)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {block.headers.map((_, cellIndex) => (
+                        <td
+                          key={cellIndex}
+                          className={`border-t px-3 py-2 align-top ${
+                            inverted ? "border-white/15 text-white/90" : "border-[var(--border)] text-[var(--foreground)]"
+                          }`}
+                        >
+                          {renderInlineText(row[cellIndex] ?? "", `table-${index}-${rowIndex}-${cellIndex}`, inverted)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           );
         }

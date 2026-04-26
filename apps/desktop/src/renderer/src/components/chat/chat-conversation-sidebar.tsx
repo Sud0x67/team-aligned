@@ -172,9 +172,16 @@ export function ChatConversationSidebar({
           <div className="space-y-2 text-xs leading-5">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[var(--muted-foreground)]">{t.chat("activeSkill")}</span>
-              <span className="max-w-[160px] truncate rounded-full bg-[var(--muted)] px-2.5 py-1 font-medium text-[var(--foreground)]">
-                {activeSkillLabel ?? t.chat("none")}
-              </span>
+              {activeSkillLabel ? (
+                <span className="inline-flex max-w-[170px] items-center gap-1.5 truncate rounded-full bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] px-2.5 py-1 font-medium text-[var(--primary)]">
+                  <Check className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{activeSkillLabel}</span>
+                </span>
+              ) : (
+                <span className="max-w-[160px] truncate rounded-full bg-[var(--muted)] px-2.5 py-1 font-medium text-[var(--foreground)]">
+                  {t.chat("none")}
+                </span>
+              )}
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[var(--muted-foreground)]">{t.chat("pinnedMcp")}</span>

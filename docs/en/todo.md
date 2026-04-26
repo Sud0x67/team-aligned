@@ -17,15 +17,17 @@ Completed in this pass:
 - [x] Added a direct-chat “Retry last message” action for failed, cancelled, or unsatisfying replies.
 - [x] Persisted user-message `rawInput` so retrying an attachment/image message does not reuse display-only attachment copy as model input.
 - [x] Added attachment count and per-file size guards to prevent oversized uploads from freezing the composer.
+- [x] Added runtime-side attachment rejection for invalid data URLs, empty files, and files over 20 MB, plus clearer upload failure reasons in the composer.
 - [x] Refined the built-in TeamAligned Guide copy around Provider setup, direct chat, attachments, Slash commands, retry, and `/clear`.
 - [x] Updated the built-in `team-aligned-assistant` Skill guidance for direct chat and the right info panel.
+- [x] Expanded conversation search to local public message content for a minimal local full-text search entry.
+- [x] Added Markdown table parsing and smoke coverage for headings, lists, tables, and code blocks.
 
 Next:
 
 - [ ] Re-test streaming, cancel, retry, and `/clear` combinations against real providers.
 - [ ] Continue improving image-attachment understanding across provider capability differences and failure states.
-- [ ] Add stronger file-upload size/type/recovery guidance.
-- [ ] Verify Markdown rendering for code blocks, lists, tables, links, and long-scroll content.
+- [ ] Continue verifying Markdown link safety and long-scroll content behavior.
 
 ## 0.3.0-beta Group Chat Continuity Polish
 
@@ -63,9 +65,17 @@ Completed in this pass:
 Next:
 
 - [ ] Continue unifying recovery hints for provider config failures, direct chat failures, and group failures.
-- [ ] Continue unifying recovery hints for MCP connection failures, health check failures, and tool timeouts.
+- [x] Added bilingual MCP connection/health/timeout recovery hints and smoke-test coverage.
 - [ ] Re-run real-device validation for notification permission and missing-banner guidance.
 - [ ] Before release, re-run `beta:check`, macOS DMG/ZIP builds, and installer experience checks.
+
+## Additional Completed Hardening
+
+- [x] Notification Center “mark as read” now has regression coverage and clears notification entries.
+- [x] Active Skill state is more visible in the right conversation info panel.
+- [x] MCP connected/health-check success messages now tell users the next action: assign MCP in Agent editing or type `/mcp` in chat.
+- [x] Attachment upload persistence now has smoke coverage for invalid, empty, oversized, and valid files.
+- [x] Smoke tests now cover shared command parsing, chat Markdown parsing, runtime/provider/MCP behavior, group orchestration, language helpers, and storage behavior.
 
 ## Priority Direction
 
