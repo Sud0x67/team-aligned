@@ -929,10 +929,21 @@ export class AppStorage {
           title: team.name,
           summary: team.description,
         });
+        const language = this.getLanguage();
+        const previousHandoffRevision = team.context.handoff?.revision ?? 0;
         team.context = {
-          ...team.context,
+          phase: this.byLanguage(
+            {
+              zh: "等待新任务",
+              en: "Waiting for next task",
+            },
+            language,
+          ),
+          constraints: [],
           activeTasks: [],
           recentDecisions: [],
+          pinnedArtifacts: [],
+          workspaceSummary: "",
           handoff: {
             activeAgentId: null,
             lastSpeakerId: null,
@@ -942,13 +953,12 @@ export class AppStorage {
                 zh: "会话已通过 /clear 重置",
                 en: "Conversation reset via /clear",
               },
-              this.getLanguage(),
+              language,
             ),
-            revision: (team.context.handoff?.revision ?? 0) + 1,
+            revision: previousHandoffRevision + 1,
             updatedAt: now(),
           },
         };
-        const language = this.getLanguage();
         writeFileSync(
           layout.memoryFilePath,
           this.byLanguage(

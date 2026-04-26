@@ -322,8 +322,12 @@ test("clearConversationHistory resets team context and team memory files for gro
 
     storage.updateTeamContext(team.id, {
       ...team.context,
+      phase: "执行中",
+      constraints: ["限制 A"],
       activeTasks: ["旧任务 A", "旧任务 B"],
       recentDecisions: ["旧决策 A"],
+      pinnedArtifacts: ["docs/legacy.md"],
+      workspaceSummary: "旧摘要",
       handoff: {
         activeAgentId: team.memberIds[0] ?? null,
         lastSpeakerId: team.memberIds[1] ?? null,
@@ -341,8 +345,12 @@ test("clearConversationHistory resets team context and team memory files for gro
     const nextSnapshot = storage.getSnapshot();
     const nextTeam = nextSnapshot.teams.find((item) => item.id === team.id);
     assert.ok(nextTeam);
+    assert.equal(nextTeam.context.phase, "等待新任务");
+    assert.equal(nextTeam.context.constraints.length, 0);
     assert.equal(nextTeam.context.activeTasks.length, 0);
     assert.equal(nextTeam.context.recentDecisions.length, 0);
+    assert.equal(nextTeam.context.pinnedArtifacts.length, 0);
+    assert.equal(nextTeam.context.workspaceSummary, "");
     assert.equal(nextTeam.context.handoff?.activeAgentId ?? null, null);
     assert.equal(nextTeam.context.handoff?.lastSpeakerId ?? null, null);
     assert.equal(nextTeam.context.handoff?.nextAgentIds.length ?? 0, 0);

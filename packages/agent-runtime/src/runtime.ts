@@ -515,12 +515,11 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     if (payload.action === "cancel") {
-      if (controller?.timer) clearTimeout(controller.timer);
-      if (controller?.childProcess) controller.childProcess.kill("SIGTERM");
-      this.activeRuns.delete(latest.id);
+      this.stopRunController(latest.id);
       this.finalizeStreamingMessagesForRun(payload.conversationId, latest.id, "cancelled");
       this.storage.updateRun(latest.id, { status: "cancelled" });
       this.storage.cancelPendingRunSteps(latest.id);
+      this.resetTeamHandoffAfterCancellation(payload.conversationId, responseLanguage);
       this.addRunMessage(
         payload.conversationId,
         latest.id,
@@ -1546,35 +1545,19 @@ export class TeamalignedRuntime extends EventEmitter {
     responseLanguage: RuntimeLanguage,
   ) {
     if (commandName === "clear") {
-      if (args.length > 0) {
-        this.addSlashFeedbackMessage(conversation, {
-          title: byLanguage(responseLanguage, { zh: "命令参数无效", en: "Invalid command arguments" }),
-          body: byLanguage(responseLanguage, {
-            zh: "用法：/clear",
-            en: "Usage: /clear",
-          }),
-          tone: "warning",
-        });
-        return;
-      }
-
-      const activeRun = this.storage
+      const nonTerminalRuns = this.storage
         .listRuns()
-        .find(
+        .filter(
           (run) =>
             run.conversationId === conversation.id &&
             !["completed", "failed", "cancelled"].includes(run.status),
         );
-      if (activeRun) {
-        this.addSlashFeedbackMessage(conversation, {
-          title: byLanguage(responseLanguage, { zh: "无法清空会话", en: "Cannot clear conversation yet" }),
-          body: byLanguage(responseLanguage, {
-            zh: "当前有任务仍在运行。请先取消运行，再执行 /clear。",
-            en: "A run is still active. Cancel it first, then run /clear.",
-          }),
-          tone: "warning",
-        });
-        return;
+      for (const run of nonTerminalRuns) {
+        this.stopRunController(run.id);
+        this.finalizeStreamingMessagesForRun(conversation.id, run.id, "cancelled");
+        this.storage.updateRun(run.id, { status: "cancelled" });
+        this.storage.cancelPendingRunSteps(run.id);
+        this.resetTeamHandoffAfterCancellation(conversation.id, responseLanguage);
       }
 
       const removed = this.storage.clearConversationHistory(conversation.id);
@@ -1602,6 +1585,22 @@ export class TeamalignedRuntime extends EventEmitter {
             zh: `工具调用：${removed.removedToolInvocations} 条`,
             en: `Tool invocations: ${removed.removedToolInvocations}`,
           }),
+          ...(nonTerminalRuns.length > 0
+            ? [
+                byLanguage(responseLanguage, {
+                  zh: `已同时终止进行中的任务：${nonTerminalRuns.length} 条`,
+                  en: `Also cancelled in-progress runs: ${nonTerminalRuns.length}`,
+                }),
+              ]
+            : []),
+          ...(args.length > 0
+            ? [
+                byLanguage(responseLanguage, {
+                  zh: `已忽略附加参数：${args.join(" ")}`,
+                  en: `Ignored extra arguments: ${args.join(" ")}`,
+                }),
+              ]
+            : []),
         ],
         tone: "success",
       });
@@ -3699,6 +3698,50 @@ export class TeamalignedRuntime extends EventEmitter {
       actorId: input.actorId ?? null,
       actorName: input.actorName ?? null,
       ...(input.metadata ?? {}),
+    });
+  }
+
+  private stopRunController(runId: string) {
+    const controller = this.activeRuns.get(runId);
+    if (!controller) {
+      return;
+    }
+    if (controller.timer) {
+      clearTimeout(controller.timer);
+      controller.timer = null;
+    }
+    if (controller.childProcess) {
+      controller.childProcess.kill("SIGTERM");
+      controller.childProcess = null;
+    }
+    this.activeRuns.delete(runId);
+  }
+
+  private resetTeamHandoffAfterCancellation(
+    conversationId: string,
+    responseLanguage: RuntimeLanguage,
+  ) {
+    const conversation = this.storage.getConversation(conversationId);
+    if (!conversation || conversation.kind !== "team") {
+      return;
+    }
+    const team = this.storage.listTeams().find((item) => item.id === conversation.targetId);
+    if (!team) {
+      return;
+    }
+    this.storage.updateTeamContext(team.id, {
+      ...team.context,
+      handoff: {
+        activeAgentId: null,
+        lastSpeakerId: team.context.handoff?.lastSpeakerId ?? null,
+        nextAgentIds: [],
+        reason: byLanguage(responseLanguage, {
+          zh: "上一轮已取消，等待新的指令。",
+          en: "Previous turn cancelled, waiting for new instruction.",
+        }),
+        revision: (team.context.handoff?.revision ?? 0) + 1,
+        updatedAt: Date.now(),
+      },
     });
   }
 
