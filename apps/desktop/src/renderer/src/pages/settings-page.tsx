@@ -2,12 +2,16 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Check,
+  Bug,
   Circle,
   CircleDot,
   Eye,
   EyeOff,
   ExternalLink,
+  FileDown,
+  FolderOpen,
   Languages,
+  Mail,
   AlertCircle,
   LoaderCircle,
   MoonStar,
@@ -102,6 +106,8 @@ export function SettingsPage() {
   const [testState, setTestState] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [providerMessage, setProviderMessage] = useState<string | null>(null);
   const [notificationHelpMessage, setNotificationHelpMessage] = useState<string | null>(null);
+  const [supportState, setSupportState] = useState<"idle" | "exporting" | "success" | "error">("idle");
+  const [supportMessage, setSupportMessage] = useState<string | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(
     providers.find((provider) => provider.isActive)?.id ?? providers[0]?.id ?? "openai",
   );
@@ -245,6 +251,43 @@ export function SettingsPage() {
     );
   };
 
+  const handleOpenFeedback = async (channel: "github" | "email") => {
+    const ok = await window.teamaligned.openFeedbackChannel(channel);
+    setSupportState(ok ? "success" : "error");
+    setSupportMessage(
+      ok
+        ? channel === "github"
+          ? t.settings("githubIssueOpened")
+          : t.settings("emailSupportOpened")
+        : t.settings("openSupportFailed"),
+    );
+  };
+
+  const handleExportDiagnostics = async () => {
+    if (supportState === "exporting") return;
+
+    setSupportState("exporting");
+    setSupportMessage(null);
+    try {
+      const result = await window.teamaligned.exportDiagnostics();
+      setSupportState("success");
+      setSupportMessage(`${t.settings("diagnosticsExported")}\n${result.filePath}`);
+    } catch (error) {
+      setSupportState("error");
+      setSupportMessage(
+        `${t.settings("diagnosticsExportFailed")}\n${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
+
+  const handleOpenDiagnosticsFolder = async () => {
+    const ok = await window.teamaligned.openDiagnosticsFolder();
+    setSupportState(ok ? "success" : "error");
+    setSupportMessage(ok ? t.settings("diagnosticsFolderOpened") : t.settings("diagnosticsFolderOpenFailed"));
+  };
+
   return (
     <PageShell title={t.settings("title")} showHeader={false}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -321,6 +364,69 @@ export function SettingsPage() {
                   </p>
                 ) : null}
               </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard title={t.settings("support")}>
+            <div className="rounded-[28px] border border-[var(--border)] bg-[var(--panel)] p-4">
+              <p className="text-sm leading-7 text-[var(--muted-foreground)]">
+                {t.settings("supportDesc")}
+              </p>
+              <p className="mt-2 text-xs leading-6 text-[var(--muted-foreground)]">
+                {t.settings("diagnosticsPrivacyHint")}
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => void handleOpenFeedback("github")}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm font-semibold text-[var(--foreground)] transition hover:border-[color-mix(in_srgb,var(--primary)_24%,transparent)] hover:bg-[var(--accent)]"
+                >
+                  <Bug className="h-4 w-4" />
+                  {t.settings("openGithubIssue")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenFeedback("email")}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm font-semibold text-[var(--foreground)] transition hover:border-[color-mix(in_srgb,var(--primary)_24%,transparent)] hover:bg-[var(--accent)]"
+                >
+                  <Mail className="h-4 w-4" />
+                  {t.settings("emailSupport")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportDiagnostics()}
+                  disabled={supportState === "exporting"}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {supportState === "exporting" ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {supportState === "exporting"
+                    ? t.settings("exportingDiagnostics")
+                    : t.settings("exportDiagnostics")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenDiagnosticsFolder()}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2.5 text-sm font-semibold text-[var(--foreground)] transition hover:border-[color-mix(in_srgb,var(--primary)_24%,transparent)] hover:bg-[var(--accent)]"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  {t.settings("openDiagnosticsFolder")}
+                </button>
+              </div>
+              {supportMessage ? (
+                <div
+                  className={`mt-4 max-h-[128px] overflow-y-auto rounded-[20px] border px-4 py-3 text-sm leading-7 ${
+                    supportState === "error"
+                      ? "border-rose-500/20 bg-rose-500/5 text-rose-700"
+                      : "border-emerald-500/20 bg-emerald-500/5 text-emerald-700"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{supportMessage}</p>
+                </div>
+              ) : null}
             </div>
           </SectionCard>
         </div>

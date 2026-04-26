@@ -6,6 +6,8 @@ import type {
   ConversationExportResult,
   CreateAgentInput,
   CreateTeamInput,
+  DiagnosticsExportResult,
+  FeedbackChannel,
   EnsureConversationInput,
   EnsureConversationResult,
   OpenConversationEvent,
@@ -74,6 +76,11 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:save-attachment-asset", payload),
   exportConversationData: (conversationId: string): Promise<ConversationExportResult> =>
     ipcRenderer.invoke("teamaligned:export-conversation-data", conversationId),
+  exportDiagnostics: (): Promise<DiagnosticsExportResult> =>
+    ipcRenderer.invoke("teamaligned:export-diagnostics"),
+  openDiagnosticsFolder: () => ipcRenderer.invoke("teamaligned:open-diagnostics-folder"),
+  openFeedbackChannel: (channel: FeedbackChannel) =>
+    ipcRenderer.invoke("teamaligned:open-feedback-channel", channel),
   markNotificationsRead: () => ipcRenderer.invoke("teamaligned:mark-notifications-read"),
   markConversationRead: (conversationId: string) =>
     ipcRenderer.invoke("teamaligned:mark-conversation-read", conversationId),

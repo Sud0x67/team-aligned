@@ -462,6 +462,23 @@ const translations = {
       validationApiKeyRequiredOpenAI: "请填写真实的 OpenAI API Key。",
       validationToolCallingRequired: "当前 provider 未开启工具调用，DeepAgents 无法正常工作。",
       saveFailedFallback: "保存失败，请稍后重试。",
+      support: "帮助与反馈",
+      supportDesc:
+        "如果遇到问题，可以直接到 GitHub 提交 Issue，或发邮件给维护者。导出的诊断信息可以帮助我们更快定位问题。",
+      diagnosticsPrivacyHint:
+        "诊断文件会包含应用版本、系统信息、运行状态摘要和最近通知日志，不会导出 API Key、MCP 环境变量值或请求头值。",
+      openGithubIssue: "提交 GitHub Issue",
+      githubIssueOpened: "已打开 GitHub Issue 页面，请补充问题描述并附上诊断文件。",
+      emailSupport: "发送邮件",
+      emailSupportOpened: "已打开邮件客户端，请补充问题描述并附上诊断文件。",
+      openSupportFailed: "未能打开反馈入口，请手动访问 GitHub Issue 页面或发送邮件到 jokeroller@163.com。",
+      exportDiagnostics: "导出诊断信息",
+      exportingDiagnostics: "导出中",
+      diagnosticsExported: "诊断文件已导出：",
+      diagnosticsExportFailed: "诊断信息导出失败：",
+      openDiagnosticsFolder: "打开诊断目录",
+      diagnosticsFolderOpened: "已打开诊断目录。",
+      diagnosticsFolderOpenFailed: "未能打开诊断目录，请稍后重试。",
     },
     profile: {
       title: "个人信息",
@@ -948,6 +965,24 @@ const translations = {
       validationToolCallingRequired:
         "Tool calling is disabled for this provider. DeepAgents cannot work correctly.",
       saveFailedFallback: "Save failed. Please try again later.",
+      support: "Help and feedback",
+      supportDesc:
+        "If something goes wrong, open a GitHub Issue or email the maintainer. Exporting diagnostics helps us understand the local runtime faster.",
+      diagnosticsPrivacyHint:
+        "Diagnostics include app version, system info, runtime summaries, and recent notification logs. API Keys, MCP environment values, and request header values are not exported.",
+      openGithubIssue: "Open GitHub Issue",
+      githubIssueOpened: "GitHub Issue opened. Please describe the problem and attach the diagnostics file.",
+      emailSupport: "Email support",
+      emailSupportOpened: "Email client opened. Please describe the problem and attach the diagnostics file.",
+      openSupportFailed:
+        "Could not open the feedback channel. Please visit GitHub Issues manually or email jokeroller@163.com.",
+      exportDiagnostics: "Export diagnostics",
+      exportingDiagnostics: "Exporting",
+      diagnosticsExported: "Diagnostics exported:",
+      diagnosticsExportFailed: "Failed to export diagnostics:",
+      openDiagnosticsFolder: "Open diagnostics folder",
+      diagnosticsFolderOpened: "Diagnostics folder opened.",
+      diagnosticsFolderOpenFailed: "Could not open the diagnostics folder. Please try again later.",
     },
     profile: {
       title: "Profile",

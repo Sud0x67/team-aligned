@@ -1,6 +1,6 @@
 import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
-import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { arch, homedir, platform, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { TeamalignedRuntime } from "@runtime";
@@ -10,6 +10,7 @@ import type {
   CreateAgentInput,
   CreateTeamInput,
   EnsureConversationInput,
+  FeedbackChannel,
   NotificationRecord,
   RunControlPayload,
   SaveAttachmentAssetInput,
@@ -30,6 +31,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const isNotificationDebug = isDev || process.env.TA_NOTIFY_DEBUG === "1";
 const notificationDebugLogPath = join(homedir(), ".teamaligned", "logs", "notification-dispatch.log");
+const feedbackIssueUrl = "https://github.com/Sud0x67/team-aligned/issues/new";
+const feedbackEmail = "jokeroller@163.com";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
@@ -158,6 +161,174 @@ protocol.registerSchemesAsPrivileged([
 
 function resolveRuntimeRoot() {
   return join(homedir(), ".teamaligned");
+}
+
+function resolveDiagnosticsDir() {
+  return join(resolveRuntimeRoot(), "diagnostics");
+}
+
+function readTextTail(filePath: string, maxChars = 32_000) {
+  if (!existsSync(filePath)) return null;
+
+  const content = readFileSync(filePath, "utf8");
+  if (content.length <= maxChars) return content;
+  return `[truncated to last ${maxChars} chars]\n${content.slice(-maxChars)}`;
+}
+
+function getDiagnosticsSnapshot() {
+  const snapshot = runtime?.getSnapshot();
+  const activeProvider = snapshot?.providers.find((provider) => provider.isActive);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: app.getName(),
+      version: app.getVersion(),
+      packaged: app.isPackaged,
+      dev: isDev,
+    },
+    system: {
+      platform: platform(),
+      release: release(),
+      arch: arch(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+    },
+    paths: {
+      runtimeRoot: resolveRuntimeRoot(),
+      diagnosticsDir: resolveDiagnosticsDir(),
+      notificationDebugLogPath,
+    },
+    settings: snapshot
+      ? {
+          language: snapshot.settings.language,
+          theme: snapshot.settings.theme,
+          activeProviderId: snapshot.settings.activeProviderId,
+          onboardingCompleted: snapshot.settings.onboardingCompleted,
+          notifications: {
+            agentMessages: snapshot.settings.notifyAgentComplete,
+            mentions: snapshot.settings.notifyMention,
+            groupMessages: snapshot.settings.notifyGroup,
+          },
+        }
+      : null,
+    profile: snapshot
+      ? {
+          hasName: snapshot.profile.name.trim().length > 0,
+          hasBio: snapshot.profile.bio.trim().length > 0,
+          hasAvatar: Boolean(snapshot.profile.avatarPath),
+        }
+      : null,
+    activeProvider: activeProvider
+      ? {
+          id: activeProvider.id,
+          label: activeProvider.label,
+          baseUrl: activeProvider.baseUrl,
+          defaultModel: activeProvider.defaultModel,
+          supportsToolCalling: activeProvider.supportsToolCalling,
+          supportsStreaming: activeProvider.supportsStreaming,
+          apiKeyConfigured: activeProvider.apiKey.trim().length > 0,
+        }
+      : null,
+    counts: snapshot
+      ? {
+          agents: snapshot.agents.length,
+          teams: snapshot.teams.length,
+          conversations: snapshot.conversations.length,
+          runs: snapshot.runs.length,
+          attachments: snapshot.attachments.length,
+          artifacts: snapshot.artifacts.length,
+          toolInvocations: snapshot.toolInvocations.length,
+          notifications: snapshot.notifications.length,
+        }
+      : null,
+    mcpConnections: (snapshot?.mcpConnections ?? []).map((connection) => ({
+      serverId: connection.serverId,
+      enabled: connection.enabled,
+      transport: connection.transport,
+      status: connection.status,
+      lastCheckedAt: connection.lastCheckedAt,
+      lastError: connection.lastError,
+      discoveredToolCount: connection.discoveredTools.length,
+      hasCommand: Boolean(connection.command),
+      hasUrl: Boolean(connection.url),
+      hasCwd: Boolean(connection.cwd),
+      envKeyCount: Object.keys(connection.envEntries).length,
+      headerKeyCount: Object.keys(connection.headers).length,
+    })),
+    recentRuns: (snapshot?.runs ?? []).slice(-12).map((run) => ({
+      id: run.id,
+      conversationId: run.conversationId,
+      kind: run.kind,
+      status: run.status,
+      title: run.title,
+      stepIndex: run.stepIndex,
+      totalSteps: run.totalSteps,
+      updatedAt: run.updatedAt,
+    })),
+    recentNotifications: (snapshot?.notifications ?? []).slice(-12).map((notification) => ({
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      read: notification.read,
+      createdAt: notification.createdAt,
+      hasConversation: Boolean(notification.relatedConversationId),
+      hasRun: Boolean(notification.relatedRunId),
+    })),
+    notificationDebugLogTail: readTextTail(notificationDebugLogPath),
+  };
+}
+
+function buildFeedbackBody() {
+  const snapshot = runtime?.getSnapshot();
+  const activeProvider = snapshot?.providers.find((provider) => provider.isActive);
+  return [
+    "Please describe what happened:",
+    "",
+    "Steps to reproduce:",
+    "1. ",
+    "",
+    "Expected result:",
+    "",
+    "Actual result:",
+    "",
+    "Environment:",
+    `- TeamAligned: ${app.getVersion()}`,
+    `- Platform: ${platform()} ${release()} ${arch()}`,
+    `- Provider: ${activeProvider?.id ?? snapshot?.settings.activeProviderId ?? "unknown"}`,
+    "",
+    "If possible, attach the diagnostics JSON exported from Settings -> Help and feedback.",
+  ].join("\n");
+}
+
+async function openFeedbackChannel(channel: FeedbackChannel) {
+  const body = buildFeedbackBody();
+  const subject = `TeamAligned feedback ${app.getVersion()}`;
+  const query = new URLSearchParams({
+    title: subject,
+    body,
+  });
+
+  try {
+    if (channel === "github") {
+      await shell.openExternal(`${feedbackIssueUrl}?${query.toString()}`);
+      return true;
+    }
+
+    if (channel === "email") {
+      const mailQuery = new URLSearchParams({
+        subject,
+        body,
+      });
+      await shell.openExternal(`mailto:${feedbackEmail}?${mailQuery.toString()}`);
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function isPathInside(parentPath: string, childPath: string) {
@@ -331,6 +502,30 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:export-conversation-data", async (_event, conversationId: string) =>
     runtime?.exportConversationData(conversationId),
+  );
+  ipcMain.handle("teamaligned:export-diagnostics", async () => {
+    const diagnosticsDir = resolveDiagnosticsDir();
+    mkdirSync(diagnosticsDir, { recursive: true });
+    const safeTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filePath = join(diagnosticsDir, `teamaligned-diagnostics-${safeTimestamp}.json`);
+    const exportedAt = Date.now();
+    writeFileSync(filePath, JSON.stringify(getDiagnosticsSnapshot(), null, 2), "utf8");
+    shell.showItemInFolder(filePath);
+    return { filePath, exportedAt };
+  });
+  ipcMain.handle("teamaligned:open-diagnostics-folder", async () => {
+    try {
+      const diagnosticsDir = resolveDiagnosticsDir();
+      mkdirSync(diagnosticsDir, { recursive: true });
+      mkdirSync(dirname(notificationDebugLogPath), { recursive: true });
+      const error = await shell.openPath(diagnosticsDir);
+      return error.length === 0;
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle("teamaligned:open-feedback-channel", async (_event, channel: FeedbackChannel) =>
+    openFeedbackChannel(channel),
   );
   ipcMain.handle("teamaligned:mark-notifications-read", async () => runtime?.markNotificationsRead());
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
