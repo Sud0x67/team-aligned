@@ -4,56 +4,13 @@ import {
   Box,
   ChevronRight,
   FolderOpen,
-  Hammer,
   Info,
   LoaderCircle,
+  RotateCcw,
 } from "lucide-react";
-import type {
-  ConversationKind,
-  RunRecord,
-  RunStatus,
-  ToolInvocationRecord,
-} from "@shared";
+import type { ConversationKind } from "@shared";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
-
-function getRunStatusLabel(t: ReturnType<typeof createTranslator>, status: RunStatus | null) {
-  if (!status) return t.chat("runStatusIdle");
-  switch (status) {
-    case "queued":
-      return t.chat("runStatusQueued");
-    case "running":
-      return t.chat("runStatusRunning");
-    case "pausing":
-      return t.chat("runStatusPausing");
-    case "paused":
-      return t.chat("runStatusPaused");
-    case "resuming":
-      return t.chat("runStatusResuming");
-    case "completed":
-      return t.chat("runStatusCompleted");
-    case "failed":
-      return t.chat("runStatusFailed");
-    case "cancelled":
-      return t.chat("runStatusCancelled");
-  }
-}
-
-function getRunStatusTone(status: RunStatus | null) {
-  switch (status) {
-    case "running":
-    case "resuming":
-      return "bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] text-[var(--primary)]";
-    case "completed":
-      return "bg-emerald-500/10 text-emerald-600";
-    case "failed":
-      return "bg-rose-500/10 text-rose-600";
-    case "cancelled":
-      return "bg-slate-500/10 text-slate-600";
-    default:
-      return "bg-[var(--muted)] text-[var(--muted-foreground)]";
-  }
-}
 
 function trimMiddle(value: string, max = 42) {
   if (value.length <= max) return value;
@@ -70,11 +27,12 @@ export function ChatConversationSidebar({
   workspacePath,
   activeSkillLabel,
   pinnedMcpLabel,
-  run,
-  toolInvocations,
   onOpenWorkspace,
   onExportConversation,
   exportState,
+  canRetryLastMessage,
+  retryingLastMessage,
+  onRetryLastMessage,
 }: {
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
@@ -83,20 +41,18 @@ export function ChatConversationSidebar({
   workspacePath: string | null;
   activeSkillLabel: string | null;
   pinnedMcpLabel: string | null;
-  run: RunRecord | null;
-  toolInvocations: ToolInvocationRecord[];
   onOpenWorkspace: (workspacePath: string) => void;
   onExportConversation: () => Promise<void>;
   exportState: {
     status: "idle" | "exporting" | "success" | "error";
     message: string | null;
   };
+  canRetryLastMessage: boolean;
+  retryingLastMessage: boolean;
+  onRetryLastMessage: () => Promise<void>;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
-  const recentToolInvocations = [...toolInvocations]
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 3);
 
   if (!expanded) {
     return (
@@ -209,58 +165,57 @@ export function ChatConversationSidebar({
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
           <div className="mb-3 flex items-center gap-2">
             <Box className="h-4 w-4 text-[var(--primary)]" />
-            <p className="text-sm font-semibold text-[var(--foreground)]">{t.chat("context")}</p>
+            <p className="text-sm font-semibold text-[var(--foreground)]">
+              {t.chat("currentCapabilities")}
+            </p>
           </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[var(--muted-foreground)]">{t.chat("conversationKind")}</span>
-              <span className="font-medium text-[var(--foreground)]">
-                {conversationKind === "agent" ? t.chat("directChat") : t.chat("teamChat")}
-              </span>
-            </div>
+          <div className="space-y-2 text-xs leading-5">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[var(--muted-foreground)]">{t.chat("activeSkill")}</span>
-              <span className="truncate font-medium text-[var(--foreground)]">
+              <span className="max-w-[160px] truncate rounded-full bg-[var(--muted)] px-2.5 py-1 font-medium text-[var(--foreground)]">
                 {activeSkillLabel ?? t.chat("none")}
               </span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[var(--muted-foreground)]">{t.chat("pinnedMcp")}</span>
-              <span className="truncate font-medium text-[var(--foreground)]">
+              <span className="max-w-[160px] truncate rounded-full bg-[var(--muted)] px-2.5 py-1 font-medium text-[var(--foreground)]">
                 {pinnedMcpLabel ?? t.chat("none")}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[var(--muted-foreground)]">{t.chat("runState")}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${getRunStatusTone(run?.status ?? null)}`}>
-                {getRunStatusLabel(t, run?.status ?? null)}
-              </span>
-            </div>
           </div>
+          <p className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">
+            {conversationKind === "agent"
+              ? t.chat("directCapabilitiesHint")
+              : t.chat("teamCapabilitiesHint")}
+          </p>
         </section>
 
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Hammer className="h-4 w-4 text-[var(--primary)]" />
-            <p className="text-sm font-semibold text-[var(--foreground)]">{t.chat("recentToolCalls")}</p>
-          </div>
-          {recentToolInvocations.length > 0 ? (
-            <div className="space-y-2">
-              {recentToolInvocations.map((invocation) => (
-                <div key={invocation.id} className="rounded-xl border border-[var(--border)] px-3 py-2">
-                  <p className="truncate text-xs font-medium text-[var(--foreground)]">
-                    {invocation.serverName}
-                  </p>
-                  <p className="mt-1 truncate text-[11px] text-[var(--muted-foreground)]">
-                    {invocation.toolName}
-                  </p>
-                </div>
-              ))}
+        {conversationKind === "agent" ? (
+          <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-[var(--primary)]" />
+              <p className="text-sm font-semibold text-[var(--foreground)]">
+                {t.chat("retryLastMessage")}
+              </p>
             </div>
-          ) : (
-            <p className="text-xs text-[var(--muted-foreground)]">{t.chat("noToolCalls")}</p>
-          )}
-        </section>
+            <p className="mb-3 text-xs leading-5 text-[var(--muted-foreground)]">
+              {t.chat("retryLastMessageDesc")}
+            </p>
+            <button
+              type="button"
+              onClick={() => void onRetryLastMessage()}
+              disabled={!canRetryLastMessage || retryingLastMessage}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--foreground)] px-3 py-2.5 text-xs font-semibold text-[var(--background)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--muted)] disabled:text-[var(--muted-foreground)]"
+            >
+              {retryingLastMessage ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              {retryingLastMessage ? t.chat("retryingLastMessage") : t.chat("retryLastMessageAction")}
+            </button>
+          </section>
+        ) : null}
       </div>
     </aside>
   );

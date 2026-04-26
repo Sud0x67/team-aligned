@@ -2811,23 +2811,23 @@ export class AppStorage {
           role: "Application Assistant",
           avatar: "TA",
           description:
-            "Answers questions about using TeamAligned, including setup, chat, Skills, MCP, workspaces, and notifications.",
-          capabilities: ["Onboarding", "Provider setup", "Skills and MCP", "Workspace help"],
-          lastMessage: "Ask me anything about using TeamAligned.",
-          welcomeQuestion: "How should I start using TeamAligned?",
+            "Helps you set up TeamAligned, understand direct chats, use attachments, Skills, MCP, workspaces, and recover from common beta issues.",
+          capabilities: ["Direct chat help", "Provider setup", "Skills and MCP", "Workspace help"],
+          lastMessage: "Ask me how to use TeamAligned more smoothly.",
+          welcomeQuestion: "How can you help me use TeamAligned?",
           welcomeAnswer:
-            "Start by completing your profile, configuring a Provider in Settings, then open a direct chat or a starter Team. I can help with TeamAligned usage, Skills, MCP, workspaces, and notifications.",
+            "I can help you get productive in TeamAligned. Start with Settings -> Provider, test the connection, then open a direct chat with an Agent. In direct chat, you can upload files or images, use `/skills` and `/mcp`, retry the latest request from the info panel, and use `/clear` when the context gets too noisy.",
         }
       : {
-          name: "TeamAligned 助手",
+          name: "TeamAligned 指南",
           role: "应用助手",
           avatar: "助",
-          description: "回答 TeamAligned 使用、配置、单聊群聊、Skills、MCP、工作区与通知相关问题。",
-          capabilities: ["新手引导", "Provider 配置", "Skills 与 MCP", "工作区帮助"],
-          lastMessage: "有任何 TeamAligned 使用问题，都可以直接问我。",
-          welcomeQuestion: "我应该如何开始使用 TeamAligned？",
+          description: "帮助你完成 TeamAligned 配置，理解单聊、附件、Skills、MCP、工作区和常见 beta 问题。",
+          capabilities: ["单聊帮助", "Provider 配置", "Skills 与 MCP", "工作区帮助"],
+          lastMessage: "想更顺地使用 TeamAligned，可以直接问我。",
+          welcomeQuestion: "你可以怎么帮我使用 TeamAligned？",
           welcomeAnswer:
-            "建议先完成个人信息，再到设置里配置并测试 Provider，然后从单聊 Agent 或默认群组开始。我可以帮你理解 TeamAligned 的聊天、Skills、MCP、工作区和通知设置。",
+            "我可以帮你把 TeamAligned 用顺。建议先到“设置 -> 模型配置”填写并测试 Provider，然后打开一个 Agent 单聊。单聊里可以上传文件或图片、使用 `/skills` 和 `/mcp`、从右侧信息栏重试上一条请求，也可以在上下文变乱时用 `/clear` 清空历史。",
         };
   }
 

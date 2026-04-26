@@ -368,17 +368,18 @@ export class TeamalignedRuntime extends EventEmitter {
     const mentionResolution = resolveMentionedMembers(payload.input, snapshot.agents);
     const mentionedAgentIds = mentionResolution.matchedIds;
 
-      this.storage.addMessage({
-        conversationId: payload.conversationId,
-        senderId: "user",
-        senderName: byLanguage(responseLanguage, { zh: "你", en: "You" }),
-        senderKind: "user",
-        messageType: "user",
-        visibility: "public",
-        content: buildUserMessageContent(payload.input, attachments, responseLanguage),
+    this.storage.addMessage({
+      conversationId: payload.conversationId,
+      senderId: "user",
+      senderName: byLanguage(responseLanguage, { zh: "你", en: "You" }),
+      senderKind: "user",
+      messageType: "user",
+      visibility: "public",
+      content: buildUserMessageContent(payload.input, attachments, responseLanguage),
       mentions: mentionedAgentIds,
       runId: null,
       metadata: {
+        rawInput: payload.input,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(slashDirectives.skill
           ? { temporarySkill: slashDirectives.skill.id, temporarySkillSlug: slashDirectives.skill.slug }

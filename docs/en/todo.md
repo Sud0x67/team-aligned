@@ -6,6 +6,27 @@ Source: [Chinese version](../todo.md)
 
 TeamAligned has moved from feature wiring to beta hardening.
 
+## 0.3.0-beta Direct Agent Chat Polish
+
+Goal: make direct Agent chat the smoothest and easiest entry point into TeamAligned. Users should be able to send, stream, cancel, retry, upload files/images, and understand the active conversation capability without reading internal runtime details.
+
+Completed in this pass:
+
+- [x] Moved the development version to `0.3.0-beta`.
+- [x] Focused the right conversation info panel on user-facing information: token usage, workspace, open-folder shortcut, export, and current Skill/MCP capability.
+- [x] Added a direct-chat “Retry last message” action for failed, cancelled, or unsatisfying replies.
+- [x] Persisted user-message `rawInput` so retrying an attachment/image message does not reuse display-only attachment copy as model input.
+- [x] Added attachment count and per-file size guards to prevent oversized uploads from freezing the composer.
+- [x] Refined the built-in TeamAligned Guide copy around Provider setup, direct chat, attachments, Slash commands, retry, and `/clear`.
+- [x] Updated the built-in `team-aligned-assistant` Skill guidance for direct chat and the right info panel.
+
+Next:
+
+- [ ] Re-test streaming, cancel, retry, and `/clear` combinations against real providers.
+- [ ] Continue improving image-attachment understanding across provider capability differences and failure states.
+- [ ] Add stronger file-upload size/type/recovery guidance.
+- [ ] Verify Markdown rendering for code blocks, lists, tables, links, and long-scroll content.
+
 ## 0.2.1-beta Stability Goals
 
 Goal: after the `0.2.0-beta` release, improve feedback, diagnostics, and recovery paths before expanding the product surface.

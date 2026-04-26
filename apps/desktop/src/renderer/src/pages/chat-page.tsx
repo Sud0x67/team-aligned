@@ -4,6 +4,7 @@ import {
   isTeamAlignedAssistantAgentId,
   type AttachmentAssetRecord,
   type ConversationRecord,
+  type MessageRecord,
 } from "@shared";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/use-app-store";
@@ -23,7 +24,6 @@ export function ChatPage() {
     conversations,
     messages,
     runs,
-    toolInvocations,
     agents,
     teams,
     promptAliases,
@@ -52,6 +52,7 @@ export function ChatPage() {
     status: "idle" | "exporting" | "success" | "error";
     message: string | null;
   }>({ status: "idle", message: null });
+  const [retryingLastMessage, setRetryingLastMessage] = useState(false);
 
   useEffect(() => {
     if (!requestedConversationId) return;
@@ -96,6 +97,7 @@ export function ChatPage() {
 
   useEffect(() => {
     setConversationExportState({ status: "idle", message: null });
+    setRetryingLastMessage(false);
   }, [activeConversationId]);
 
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
@@ -110,22 +112,8 @@ export function ChatPage() {
         (message.runId === activeRun.id || message.createdAt >= activeRun.createdAt),
     );
   }, [activeMessages, activeRun]);
-  const latestConversationRun = useMemo(() => {
-    if (!activeConversation) return null;
-    return [...runs]
-      .filter((run) => run.conversationId === activeConversation.id)
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
-  }, [activeConversation, runs]);
   const isTeamConversation = activeConversation?.kind === "team";
   const showInternal = activeConversation ? internalVisible[activeConversation.id] ?? false : false;
-  const detailRun = activeRun ?? latestConversationRun;
-
-  const conversationToolInvocations = useMemo(() => {
-    if (!activeConversation) return [];
-    return toolInvocations.filter(
-      (invocation) => invocation.conversationId === activeConversation.id,
-    );
-  }, [activeConversation, toolInvocations]);
 
   const pendingSystemMessage = useMemo(() => {
     if (!activeRun) return null;
@@ -330,6 +318,20 @@ export function ChatPage() {
 
   const activeWorkspacePath = activeTarget?.workspacePath ?? null;
 
+  const retryableUserMessage = useMemo(() => {
+    if (!activeConversation || activeConversation.kind !== "agent") return null;
+    return (
+      [...activeMessages]
+        .reverse()
+        .find(
+          (message) =>
+            message.senderKind === "user" &&
+            message.visibility === "public" &&
+            message.messageType === "user",
+        ) ?? null
+    );
+  }, [activeConversation, activeMessages]);
+
   const pendingActor = useMemo(() => {
     if (!activeConversation) return null;
 
@@ -464,6 +466,51 @@ export function ChatPage() {
   const handleCancel = async () => {
     if (!activeConversation) return;
     await controlRun({ conversationId: activeConversation.id, action: "cancel" });
+  };
+
+  const getMessageAttachments = (message: MessageRecord | null): AttachmentAssetRecord[] => {
+    const attachments = message?.metadata?.attachments;
+    return Array.isArray(attachments) ? (attachments as AttachmentAssetRecord[]) : [];
+  };
+
+  const getRetryInput = (message: MessageRecord) => {
+    const rawInput = message.metadata?.rawInput;
+    if (typeof rawInput === "string") {
+      return rawInput;
+    }
+
+    const attachments = getMessageAttachments(message);
+    const content = message.content.trim();
+    if (
+      attachments.length > 0 &&
+      (content.startsWith("已上传附件：") || content.startsWith("Uploaded attachments:"))
+    ) {
+      return "";
+    }
+    return message.content;
+  };
+
+  const handleRetryLastMessage = async () => {
+    if (!activeConversation || isConversationBusy || !retryableUserMessage || retryingLastMessage) {
+      return;
+    }
+
+    setRetryingLastMessage(true);
+    try {
+      await sendInput({
+        conversationId: activeConversation.id,
+        input: getRetryInput(retryableUserMessage),
+        attachments: getMessageAttachments(retryableUserMessage),
+      });
+    } catch (error) {
+      window.alert(
+        error instanceof Error && error.message.trim().length > 0
+          ? `${t.chat("retryLastMessageFailed")} ${error.message}`
+          : t.chat("retryLastMessageFailed"),
+      );
+    } finally {
+      setRetryingLastMessage(false);
+    }
   };
 
   const handleExportConversation = async () => {
@@ -622,11 +669,12 @@ export function ChatPage() {
           workspacePath={activeWorkspacePath}
           activeSkillLabel={activeSkillLabel}
           pinnedMcpLabel={pinnedMcpLabel}
-          run={detailRun}
-          toolInvocations={conversationToolInvocations}
           onOpenWorkspace={(workspacePath) => void openWorkspace(workspacePath)}
           onExportConversation={handleExportConversation}
           exportState={conversationExportState}
+          canRetryLastMessage={Boolean(retryableUserMessage) && !isConversationBusy}
+          retryingLastMessage={retryingLastMessage}
+          onRetryLastMessage={handleRetryLastMessage}
         />
       ) : null}
     </div>

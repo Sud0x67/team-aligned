@@ -11,6 +11,9 @@ type SlashSuggestion = {
   kind?: "command" | "skill" | "prompt";
 };
 
+const maxAttachmentCount = 8;
+const maxAttachmentBytes = 20 * 1024 * 1024;
+
 const emojiChoices = [
   "😀",
   "😄",
@@ -51,6 +54,13 @@ function fileToDataUrl(file: File) {
     reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${Math.round(bytes / 1024 / 1024)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 export function ChatComposer({
@@ -192,6 +202,33 @@ export function ChatComposer({
 
   const uploadFiles = async (files: File[], successMessage: string) => {
     if (files.length === 0) return;
+    const remainingSlots = Math.max(0, maxAttachmentCount - attachments.length);
+    if (remainingSlots === 0) {
+      setFeedback({
+        tone: "error",
+        message: t.chat("attachmentUploadTooMany").replace("{{count}}", String(maxAttachmentCount)),
+      });
+      return;
+    }
+
+    const sizeAcceptedFiles = files.filter((file) => file.size <= maxAttachmentBytes);
+    const acceptedFiles = sizeAcceptedFiles.slice(0, remainingSlots);
+    const rejectedBySize = files.length - sizeAcceptedFiles.length;
+    const rejectedByCount = sizeAcceptedFiles.length - acceptedFiles.length;
+
+    if (acceptedFiles.length === 0) {
+      setFeedback({
+        tone: "error",
+        message:
+          rejectedBySize > 0
+            ? t
+                .chat("attachmentUploadTooLarge")
+                .replace("{{size}}", formatFileSize(maxAttachmentBytes))
+            : t.chat("attachmentUploadFailed"),
+      });
+      return;
+    }
+
     setUploading(true);
     setFeedback({
       tone: "info",
@@ -200,7 +237,7 @@ export function ChatComposer({
 
     try {
       const results = await Promise.allSettled(
-        files.map(async (file) => {
+        acceptedFiles.map(async (file) => {
           const dataUrl = await fileToDataUrl(file);
           return window.teamaligned.saveAttachmentAsset({
             conversationId,
@@ -217,16 +254,17 @@ export function ChatComposer({
         )
         .map((result) => result.value);
       const failedCount = results.length - succeeded.length;
+      const skippedCount = failedCount + rejectedBySize + rejectedByCount;
 
       if (succeeded.length > 0) {
         setAttachments((current) => [...current, ...succeeded]);
       }
 
-      if (failedCount > 0) {
+      if (skippedCount > 0) {
         setFeedback({
           tone: "error",
           message:
-            failedCount === files.length
+            succeeded.length === 0
               ? t.chat("attachmentUploadFailed")
               : `${t.chat("attachmentUploadPartial")} ${succeeded.length} / ${files.length}`,
         });
