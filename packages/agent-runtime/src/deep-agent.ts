@@ -14,6 +14,8 @@ import type {
   ProviderConfig,
   UserProfile,
 } from "@teamaligned/shared";
+import type { RuntimeToolInvocationEvent } from "./agent-tools.ts";
+import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 
@@ -467,6 +469,7 @@ function buildSystemPrompt(input: {
       `当前用户资料：姓名 ${profile.name}，简介 ${profile.bio || "未设置"}。`,
       "请优先使用与用户相同的语言回复。",
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
+      "如果需要读取、搜索、写入当前 workspace 的真实文件，请优先使用 workspace_* 工具；这些工具会被 TeamAligned 记录为可见过程。",
       runtimeToolSummary,
       "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
     ],
@@ -486,6 +489,7 @@ function buildSystemPrompt(input: {
       `Current user profile: name ${profile.name}, bio ${profile.bio || "not set"}.`,
       "Reply in the same language the user is currently using.",
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
+      "When reading, searching, or writing real files in the current workspace, prefer the workspace_* tools so TeamAligned can surface visible progress.",
       runtimeToolSummary,
       "If local config or request constraints block progress, clearly explain what information or configuration is missing.",
     ],
@@ -696,6 +700,7 @@ export async function invokeSingleChatDeepAgent(input: {
   latestInput: string;
   attachments?: AttachmentAssetRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
@@ -791,10 +796,16 @@ export async function invokeSingleChatDeepAgent(input: {
     historyMessages.at(-1)?.role === "user" ? historyMessages.slice(0, -1) : historyMessages;
   const messages = session.initialized ? [latestUserMessage] : [...previousMessages, latestUserMessage];
 
-  if (provider.supportsStreaming && onTextStream && typeof (session.agent as { streamEvents?: unknown }).streamEvents === "function") {
+  if (
+    ((provider.supportsStreaming && onTextStream) || input.onDeepAgentToolInvocation) &&
+    typeof (session.agent as { streamEvents?: unknown }).streamEvents === "function"
+  ) {
     try {
       let streamedText = "";
       let finalOutput: unknown = null;
+      const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
+        input.onDeepAgentToolInvocation,
+      );
       const stream = await (session.agent as {
         streamEvents: (
           input: unknown,
@@ -807,7 +818,11 @@ export async function invokeSingleChatDeepAgent(input: {
 
       for await (const event of stream) {
         if (!event || typeof event !== "object") continue;
+        await emitDeepAgentToolInvocation(event);
         if (event.event === "on_chat_model_stream") {
+          if (!provider.supportsStreaming || !onTextStream) {
+            continue;
+          }
           const chunk =
             "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
               ? event.data.chunk

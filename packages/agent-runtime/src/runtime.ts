@@ -1349,7 +1349,7 @@ export class TeamalignedRuntime extends EventEmitter {
       if (event.phase === "start") {
         let content: string | null = null;
         if (
-          ["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) ||
+          ["list_directory", "read_text_file", "read_file", "search_workspace", "read_skill_bundle"].includes(toolName) ||
           toolName.startsWith("skill_")
         ) {
           if (!announcedContextLookup) {
@@ -1364,7 +1364,7 @@ export class TeamalignedRuntime extends EventEmitter {
                   en: `${input.speaker.name}: I'll fetch related context from ${sourceName} first.`,
                 });
           }
-        } else if (toolName === "write_text_file") {
+        } else if (["write_text_file", "write_file", "edit_file"].includes(toolName)) {
           content = isLocalTool
             ? byLanguage(input.responseLanguage, {
                 zh: `${input.speaker.name}：我开始把这部分改进文件里。`,
@@ -1411,7 +1411,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
       if (event.phase === "success") {
         let content: string | null = null;
-        if (toolName === "write_text_file") {
+        if (["write_text_file", "write_file", "edit_file"].includes(toolName)) {
           content = isLocalTool
             ? byLanguage(input.responseLanguage, {
                 zh: `${input.speaker.name}：这部分改动已经写进文件了。`,
@@ -1427,7 +1427,7 @@ export class TeamalignedRuntime extends EventEmitter {
             en: `${input.speaker.name}: Command finished. I'll continue.`,
           });
         } else if (
-          !["list_directory", "read_text_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
+          !["list_directory", "read_text_file", "read_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
           !toolName.startsWith("skill_")
         ) {
           content = isLocalTool
@@ -1935,11 +1935,12 @@ export class TeamalignedRuntime extends EventEmitter {
         ? readInstalledSkillDefinition(activeSkillRecord)
         : null;
     const transcriptPaths = this.storage.getConversationTranscriptPaths(conversation.id);
+    const toolInvocationObserver = this.createToolInvocationObserver(conversation.id, runId);
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
       attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
       activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
-      onInvocation: this.createToolInvocationObserver(conversation.id, runId),
+      onInvocation: toolInvocationObserver,
     });
     const steps: RunStep[] = [
       {
@@ -2000,7 +2001,8 @@ export class TeamalignedRuntime extends EventEmitter {
               history: this.storage.listMessages(conversation.id),
               latestInput: input,
               attachments,
-              onMcpInvocation: this.createToolInvocationObserver(conversation.id, runId),
+              onMcpInvocation: toolInvocationObserver,
+              onDeepAgentToolInvocation: toolInvocationObserver,
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
               responseLanguage,
@@ -2598,6 +2600,31 @@ export class TeamalignedRuntime extends EventEmitter {
                 batch.map(async (item) => {
                   let streamMessageId: string | null = null;
                   try {
+                    const teamToolObserver = this.createTeamToolInvocationObserver({
+                      conversationId: conversation.id,
+                      runId,
+                      speaker: item.owner,
+                      responseLanguage,
+                      onUpdate: (content, metadata) => {
+                        if (!shouldContinueRun()) {
+                          return;
+                        }
+                        this.emitTeamUpdate({
+                          conversationId: conversation.id,
+                          runId,
+                          stage:
+                            metadata?.phase === "tool_error"
+                              ? "tool_error"
+                              : metadata?.phase === "tool_success"
+                                ? "tool_success"
+                                : "tool_start",
+                          actorId: item.owner.id,
+                          actorName: item.owner.name,
+                          content,
+                          metadata,
+                        });
+                      },
+                    });
                     const content = await executeNaturalTeamWorkItem({
                       provider: provider!,
                       profile: snapshot.profile,
@@ -2616,31 +2643,8 @@ export class TeamalignedRuntime extends EventEmitter {
                       mcpServers: availableMcpServers,
                       mcpConnections: availableMcpConnections,
                       responseLanguage,
-                      onMcpInvocation: this.createTeamToolInvocationObserver({
-                        conversationId: conversation.id,
-                        runId,
-                        speaker: item.owner,
-                        responseLanguage,
-                        onUpdate: (content, metadata) => {
-                          if (!shouldContinueRun()) {
-                            return;
-                          }
-                          this.emitTeamUpdate({
-                            conversationId: conversation.id,
-                            runId,
-                            stage:
-                              metadata?.phase === "tool_error"
-                                ? "tool_error"
-                                : metadata?.phase === "tool_success"
-                                  ? "tool_success"
-                                  : "tool_start",
-                            actorId: item.owner.id,
-                            actorName: item.owner.name,
-                            content,
-                            metadata,
-                          });
-                        },
-                      }),
+                      onMcpInvocation: teamToolObserver,
+                      onDeepAgentToolInvocation: teamToolObserver,
                       onUpdate: ({ phase, content }) => {
                         if (!shouldContinueRun()) {
                           return;
@@ -2908,30 +2912,7 @@ export class TeamalignedRuntime extends EventEmitter {
                   roundIndex,
                 },
               });
-              const message = await generateNaturalTeamAgentMessage({
-              provider: provider!,
-              profile: snapshot.profile,
-              team: {
-                ...team,
-                context: updatedContext,
-              },
-                speaker,
-                members,
-                mode: selection.mode,
-              context: updatedContext,
-              userInput: input,
-                roundIndex,
-                previousTurnMessages: turnMessages,
-              workspacePath,
-              conversationId: conversation.id,
-              runId,
-                responseLanguage,
-                isFinalSpeaker:
-                  turnMessages.length >= MAX_TEAM_TURN_MESSAGES - 1 ||
-                  speaker.id === speakers.at(-1)?.id,
-              mcpServers: availableMcpServers,
-              mcpConnections: availableMcpConnections,
-              onMcpInvocation: this.createTeamToolInvocationObserver({
+              const teamToolObserver = this.createTeamToolInvocationObserver({
                 conversationId: conversation.id,
                 runId,
                 speaker,
@@ -2955,49 +2936,74 @@ export class TeamalignedRuntime extends EventEmitter {
                     metadata,
                   });
                 },
-              }),
-              onTextStream: async (aggregatedText) => {
-                if (!shouldContinueRun()) {
-                  return;
-                }
-                if (streamMessageId) {
-                  this.storage.updateMessage(streamMessageId, {
-                    content: aggregatedText,
-                    metadata: {
-                      teamId: team.id,
-                      mode: selectedMode,
-                      roundIndex,
-                      streaming: true,
-                    },
-                  });
-                } else {
-                  const streamMessage = this.storage.addMessage(
-                    {
-                      conversationId: conversation.id,
-                      senderId: speaker.id,
-                      senderName: speaker.name,
-                      senderKind: "agent",
-                      messageType: "agent",
-                      visibility: "public",
+              });
+              const message = await generateNaturalTeamAgentMessage({
+                provider: provider!,
+                profile: snapshot.profile,
+                team: {
+                  ...team,
+                  context: updatedContext,
+                },
+                speaker,
+                members,
+                mode: selection.mode,
+                context: updatedContext,
+                userInput: input,
+                roundIndex,
+                previousTurnMessages: turnMessages,
+                workspacePath,
+                conversationId: conversation.id,
+                runId,
+                responseLanguage,
+                isFinalSpeaker:
+                  turnMessages.length >= MAX_TEAM_TURN_MESSAGES - 1 ||
+                  speaker.id === speakers.at(-1)?.id,
+                mcpServers: availableMcpServers,
+                mcpConnections: availableMcpConnections,
+                onMcpInvocation: teamToolObserver,
+                onDeepAgentToolInvocation: teamToolObserver,
+                onTextStream: async (aggregatedText) => {
+                  if (!shouldContinueRun()) {
+                    return;
+                  }
+                  if (streamMessageId) {
+                    this.storage.updateMessage(streamMessageId, {
                       content: aggregatedText,
-                      mentions: [],
-                      runId,
                       metadata: {
                         teamId: team.id,
                         mode: selectedMode,
                         roundIndex,
                         streaming: true,
                       },
-                      createdAt: Date.now(),
-                    },
-                    { skipTranscript: true },
-                  );
-                  streamMessageId = streamMessage.id;
-                }
-                this.emitSnapshot();
-              },
-              additionalTools: runtimeTools.tools,
-            });
+                    });
+                  } else {
+                    const streamMessage = this.storage.addMessage(
+                      {
+                        conversationId: conversation.id,
+                        senderId: speaker.id,
+                        senderName: speaker.name,
+                        senderKind: "agent",
+                        messageType: "agent",
+                        visibility: "public",
+                        content: aggregatedText,
+                        mentions: [],
+                        runId,
+                        metadata: {
+                          teamId: team.id,
+                          mode: selectedMode,
+                          roundIndex,
+                          streaming: true,
+                        },
+                        createdAt: Date.now(),
+                      },
+                      { skipTranscript: true },
+                    );
+                    streamMessageId = streamMessage.id;
+                  }
+                  this.emitSnapshot();
+                },
+                additionalTools: runtimeTools.tools,
+              });
               if (!shouldContinueRun()) {
                 return;
               }

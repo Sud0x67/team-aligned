@@ -17,6 +17,8 @@ import {
   normalizeProviderErrorMessage,
   normalizeMessageContent,
 } from "./deep-agent.ts";
+import type { RuntimeToolInvocationEvent } from "./agent-tools.ts";
+import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
 
@@ -532,6 +534,7 @@ async function invokeWorkerText(input: {
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   responseLanguage?: RuntimeLanguage;
@@ -540,13 +543,15 @@ async function invokeWorkerText(input: {
   const messages = [{ role: "user" as const, content: input.message }];
 
   if (
-    input.provider.supportsStreaming &&
-    input.onTextStream &&
+    ((input.provider.supportsStreaming && input.onTextStream) || input.onDeepAgentToolInvocation) &&
     typeof (worker as { streamEvents?: unknown }).streamEvents === "function"
   ) {
     try {
       let streamedText = "";
       let finalOutput: unknown = null;
+      const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
+        input.onDeepAgentToolInvocation,
+      );
       const stream = await (worker as {
         streamEvents: (
           input: unknown,
@@ -559,7 +564,11 @@ async function invokeWorkerText(input: {
 
       for await (const event of stream) {
         if (!event || typeof event !== "object") continue;
+        await emitDeepAgentToolInvocation(event);
         if (event.event === "on_chat_model_stream") {
+          if (!input.provider.supportsStreaming || !input.onTextStream) {
+            continue;
+          }
           const chunk =
             "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
               ? event.data.chunk
@@ -1190,6 +1199,7 @@ export async function executeNaturalTeamWorkItem(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onUpdate?: (event: {
     phase: "started" | "streaming" | "completed" | "failed";
     owner: AgentRecord;
@@ -1283,6 +1293,7 @@ export async function executeNaturalTeamWorkItem(input: {
       mcpServers: input.mcpServers,
       mcpConnections: input.mcpConnections,
       onMcpInvocation: input.onMcpInvocation,
+      onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       onTextStream: async (aggregatedText, deltaText) => {
         await input.onTextStream?.(aggregatedText, deltaText);
         if (!announcedStreaming && deltaText.trim().length > 0) {
@@ -1355,6 +1366,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   responseLanguage?: RuntimeLanguage;
@@ -1457,6 +1469,7 @@ export async function generateNaturalTeamAgentMessage(input: {
       mcpServers: input.mcpServers,
       mcpConnections: input.mcpConnections,
       onMcpInvocation: input.onMcpInvocation,
+      onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       onTextStream: input.onTextStream,
       responseLanguage,
       additionalTools: input.additionalTools,

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
 import type { SkillCatalogRecord } from "@teamaligned/shared";
@@ -245,6 +245,7 @@ export function buildRuntimeLangChainTools(input: {
             onInvocation: input.onInvocation,
           },
           async () => {
+            mkdirSync(dirname(targetPath), { recursive: true });
             writeFileSync(targetPath, content, "utf8");
             return `已写入文件：${targetPath}`;
           },
