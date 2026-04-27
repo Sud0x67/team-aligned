@@ -12,6 +12,7 @@ import type {
   EnsureConversationResult,
   OpenConversationEvent,
   ProviderId,
+  RendererErrorReport,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SaveAvatarAssetInput,
@@ -32,6 +33,10 @@ import type {
 
 const api: TeamalignedApi = {
   bootstrap: () => ipcRenderer.invoke("teamaligned:bootstrap"),
+  loadConversationData: (conversationId: string) =>
+    ipcRenderer.invoke("teamaligned:load-conversation-data", conversationId),
+  reportRendererError: (payload: RendererErrorReport) =>
+    ipcRenderer.invoke("teamaligned:report-renderer-error", payload),
   sendInput: (payload: SendInputPayload) => ipcRenderer.invoke("teamaligned:send-input", payload),
   controlRun: (payload: RunControlPayload) => ipcRenderer.invoke("teamaligned:control-run", payload),
   createAgent: (payload: CreateAgentInput) => ipcRenderer.invoke("teamaligned:create-agent", payload),

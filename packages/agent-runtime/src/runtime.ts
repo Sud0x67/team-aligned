@@ -103,8 +103,25 @@ type SlashDirectiveContext = {
   promptAlias: PromptAliasRecord | null;
 };
 
+type RuntimeErrorLog = {
+  source: string;
+  name: string;
+  message: string;
+  stack: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
+  return Promise.race<T>([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(label)), timeoutMs);
+    }),
+  ]);
 }
 
 function trimOutput(text: string, max = 2400) {
@@ -120,6 +137,22 @@ function isSafeChildPath(parentPath: string, childPath: string) {
 function trimHeadline(text: string, max = 120) {
   const value = text.trim().replace(/\s+/g, " ");
   return value.length <= max ? value : `${value.slice(0, max)}...`;
+}
+
+function serializeRuntimeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack ?? null,
+    };
+  }
+
+  return {
+    name: typeof error,
+    message: String(error),
+    stack: null,
+  };
 }
 
 function sanitizeExportName(value: string) {
@@ -240,6 +273,7 @@ function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
 export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
+  private catalogSyncStarted = false;
   private readonly singleChatSessions = new Map<
     string,
     {
@@ -257,24 +291,72 @@ export class TeamalignedRuntime extends EventEmitter {
 
   async init() {
     this.storage.init();
-    try {
-      const catalog = await fetchSkillCatalog();
-      this.storage.replaceSkillCatalog(catalog);
-    } catch {
-      // Keep local cached catalog when remote sync is not available.
-    }
-    try {
-      const catalog = await fetchMcpCatalog();
-      this.storage.replaceMcpCatalog(catalog);
-    } catch {
-      // Keep local cached catalog when remote sync is not available.
-    }
     this.recoverInterruptedRuns();
-    this.emitSnapshot();
+    this.emitSnapshot(this.getStartupSnapshot());
+    setTimeout(() => {
+      void this.syncCatalogsInBackground();
+    }, 0);
   }
 
   getSnapshot(): AppSnapshot {
     return this.storage.getSnapshot();
+  }
+
+  getStartupSnapshot(): AppSnapshot {
+    const firstConversationId = this.storage.listConversations()[0]?.id;
+    return this.storage.getSnapshot({
+      conversationIds: firstConversationId ? [firstConversationId] : [],
+      messageLimit: 80,
+    });
+  }
+
+  getConversationSnapshot(conversationId: string): AppSnapshot {
+    return this.storage.getSnapshot({
+      conversationIds: [conversationId],
+      messageLimit: 200,
+    });
+  }
+
+  private async syncCatalogsInBackground() {
+    if (this.catalogSyncStarted) {
+      return;
+    }
+    this.catalogSyncStarted = true;
+
+    const [skillResult, mcpResult] = await Promise.allSettled([
+      withTimeout(fetchSkillCatalog(), 2500, "Skill catalog sync timed out"),
+      withTimeout(fetchMcpCatalog(), 2500, "MCP catalog sync timed out"),
+    ]);
+
+    let changed = false;
+    if (skillResult.status === "fulfilled") {
+      this.storage.replaceSkillCatalog(skillResult.value);
+      changed = true;
+    } else {
+      this.emitRuntimeError("runtime:skill-catalog-sync", skillResult.reason);
+    }
+    if (mcpResult.status === "fulfilled") {
+      this.storage.replaceMcpCatalog(mcpResult.value);
+      changed = true;
+    } else {
+      this.emitRuntimeError("runtime:mcp-catalog-sync", mcpResult.reason);
+    }
+
+    if (changed) {
+      this.emitSnapshot(this.getStartupSnapshot());
+    }
+  }
+
+  private emitRuntimeError(
+    source: string,
+    error: unknown,
+    metadata: Record<string, unknown> | null = null,
+  ) {
+    this.emit("runtime-error", {
+      source,
+      ...serializeRuntimeError(error),
+      metadata,
+    } satisfies RuntimeErrorLog);
   }
 
   private createAppNotification(
@@ -3933,7 +4015,7 @@ export class TeamalignedRuntime extends EventEmitter {
     }
   }
 
-  private emitSnapshot() {
-    this.emit("snapshot", this.getSnapshot());
+  private emitSnapshot(snapshot: AppSnapshot = this.getSnapshot()) {
+    this.emit("snapshot", snapshot);
   }
 }

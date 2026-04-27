@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Component } from "react";
 import type { AppLanguage } from "@shared";
 import { createTranslator } from "../i18n";
+import { reportRendererError } from "../error-reporting";
 
 type Props = {
   children: ReactNode;
@@ -27,8 +28,11 @@ export class AppErrorBoundary extends Component<Props, State> {
     };
   }
 
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, info: { componentStack?: string }) {
     console.error("Renderer crashed:", error);
+    reportRendererError("renderer:error-boundary", error, {
+      componentStack: info.componentStack ?? null,
+    });
   }
 
   render() {

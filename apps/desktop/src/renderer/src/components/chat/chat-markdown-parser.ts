@@ -8,6 +8,13 @@ export type MarkdownBlock =
   | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "hr" };
 
+const MAX_MARKDOWN_CHARS = 120_000;
+const MAX_MARKDOWN_LINES = 4_000;
+const MAX_MARKDOWN_BLOCKS = 1_000;
+const MAX_TABLE_COLUMNS = 24;
+const MAX_TABLE_ROWS = 200;
+const MAX_LIST_ITEMS = 500;
+
 function isFence(line: string) {
   return line.trim().startsWith("```");
 }
@@ -49,6 +56,12 @@ function parseTableRow(line: string) {
     .map((cell) => cell.trim());
 }
 
+function pushBlock(blocks: MarkdownBlock[], block: MarkdownBlock) {
+  if (blocks.length < MAX_MARKDOWN_BLOCKS) {
+    blocks.push(block);
+  }
+}
+
 function isBlockStart(line: string) {
   return (
     isFence(line) ||
@@ -62,11 +75,15 @@ function isBlockStart(line: string) {
 }
 
 export function parseChatMarkdown(content: string): MarkdownBlock[] {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const normalizedContent =
+    content.length > MAX_MARKDOWN_CHARS
+      ? `${content.slice(0, MAX_MARKDOWN_CHARS)}\n\n...`
+      : content;
+  const lines = normalizedContent.replace(/\r\n/g, "\n").split("\n").slice(0, MAX_MARKDOWN_LINES);
   const blocks: MarkdownBlock[] = [];
   let index = 0;
 
-  while (index < lines.length) {
+  while (index < lines.length && blocks.length < MAX_MARKDOWN_BLOCKS) {
     const line = lines[index] ?? "";
 
     if (!line.trim()) {
@@ -83,26 +100,26 @@ export function parseChatMarkdown(content: string): MarkdownBlock[] {
         index += 1;
       }
       if (index < lines.length) index += 1;
-      blocks.push({ type: "code", language, text: codeLines.join("\n") });
+      pushBlock(blocks, { type: "code", language, text: codeLines.join("\n") });
       continue;
     }
 
     const nextLine = lines[index + 1] ?? "";
     if (isTableRow(line) && isTableSeparator(nextLine)) {
-      const headers = parseTableRow(line);
+      const headers = parseTableRow(line).slice(0, MAX_TABLE_COLUMNS);
       const rows: string[][] = [];
       index += 2;
-      while (index < lines.length && isTableRow(lines[index] ?? "")) {
-        rows.push(parseTableRow(lines[index] ?? ""));
+      while (index < lines.length && isTableRow(lines[index] ?? "") && rows.length < MAX_TABLE_ROWS) {
+        rows.push(parseTableRow(lines[index] ?? "").slice(0, MAX_TABLE_COLUMNS));
         index += 1;
       }
-      blocks.push({ type: "table", headers, rows });
+      pushBlock(blocks, { type: "table", headers, rows });
       continue;
     }
 
     const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
     if (headingMatch) {
-      blocks.push({
+      pushBlock(blocks, {
         type: "heading",
         depth: headingMatch[1].length,
         text: headingMatch[2],
@@ -112,28 +129,28 @@ export function parseChatMarkdown(content: string): MarkdownBlock[] {
     }
 
     if (isHorizontalRule(line)) {
-      blocks.push({ type: "hr" });
+      pushBlock(blocks, { type: "hr" });
       index += 1;
       continue;
     }
 
     if (isUnorderedListItem(line)) {
       const items: string[] = [];
-      while (index < lines.length && isUnorderedListItem(lines[index] ?? "")) {
+      while (index < lines.length && isUnorderedListItem(lines[index] ?? "") && items.length < MAX_LIST_ITEMS) {
         items.push((lines[index] ?? "").replace(/^\s*[-*+]\s+/, ""));
         index += 1;
       }
-      blocks.push({ type: "unordered-list", items });
+      pushBlock(blocks, { type: "unordered-list", items });
       continue;
     }
 
     if (isOrderedListItem(line)) {
       const items: string[] = [];
-      while (index < lines.length && isOrderedListItem(lines[index] ?? "")) {
+      while (index < lines.length && isOrderedListItem(lines[index] ?? "") && items.length < MAX_LIST_ITEMS) {
         items.push((lines[index] ?? "").replace(/^\s*\d+[.)]\s+/, ""));
         index += 1;
       }
-      blocks.push({ type: "ordered-list", items });
+      pushBlock(blocks, { type: "ordered-list", items });
       continue;
     }
 
@@ -143,7 +160,7 @@ export function parseChatMarkdown(content: string): MarkdownBlock[] {
         quoteLines.push((lines[index] ?? "").replace(/^\s*>\s?/, ""));
         index += 1;
       }
-      blocks.push({ type: "blockquote", text: quoteLines.join("\n") });
+      pushBlock(blocks, { type: "blockquote", text: quoteLines.join("\n") });
       continue;
     }
 
@@ -152,7 +169,7 @@ export function parseChatMarkdown(content: string): MarkdownBlock[] {
       paragraphLines.push(lines[index] ?? "");
       index += 1;
     }
-    blocks.push({ type: "paragraph", text: paragraphLines.join("\n") });
+    pushBlock(blocks, { type: "paragraph", text: paragraphLines.join("\n") });
   }
 
   return blocks;

@@ -43,3 +43,21 @@ test("parseChatMarkdown keeps unsafe links as plain text", () => {
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0]?.type, "paragraph");
 });
+
+test("parseChatMarkdown caps oversized tables and content", () => {
+  const headers = Array.from({ length: 80 }, (_, index) => `H${index + 1}`).join(" | ");
+  const separator = Array.from({ length: 80 }, () => "---").join(" | ");
+  const row = Array.from({ length: 80 }, (_, index) => `C${index + 1}`).join(" | ");
+  const blocks = parseChatMarkdown(
+    [
+      `| ${headers} |`,
+      `| ${separator} |`,
+      ...Array.from({ length: 500 }, () => `| ${row} |`),
+    ].join("\n"),
+  );
+
+  const table = blocks.find((block) => block.type === "table");
+  assert.ok(table);
+  assert.equal(table.type === "table" ? table.headers.length : 0, 24);
+  assert.equal(table.type === "table" ? table.rows.length : 0, 200);
+});

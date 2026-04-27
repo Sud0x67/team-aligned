@@ -107,6 +107,11 @@ type SettingsFilePayload = {
   profile?: Partial<UserProfile>;
 };
 
+type SnapshotOptions = {
+  conversationIds?: string[];
+  messageLimit?: number;
+};
+
 type StoredAttachmentRecord = AttachmentAssetRecord & {
   id: string;
   conversationId: string;
@@ -210,7 +215,6 @@ export class AppStorage {
       this.loadState();
       const seededStarter = this.ensureStarterWorkspaceIfNeeded();
       const normalizedBuiltins = this.ensureSystemBuiltins();
-      this.ensureWorkspaceLayouts();
       if (normalizedBuiltins || seededStarter) {
         this.persist();
       }
@@ -220,13 +224,30 @@ export class AppStorage {
     this.seedIfEmpty(this.readSettingsFile());
   }
 
-  getSnapshot(): AppSnapshot {
+  getSnapshot(options: SnapshotOptions = {}): AppSnapshot {
     const agents = this.listAgents();
     const teams = this.listTeams();
     const conversations = this.listConversations();
+    const selectedConversationIds = options.conversationIds
+      ? new Set(options.conversationIds)
+      : null;
+    const conversationsWithMessages = selectedConversationIds
+      ? conversations.filter((conversation) => selectedConversationIds.has(conversation.id))
+      : conversations;
     const messages = Object.fromEntries(
-      conversations.map((conversation) => [conversation.id, this.listMessages(conversation.id)]),
+      conversationsWithMessages.map((conversation) => [
+        conversation.id,
+        this.listMessages(conversation.id, { limit: options.messageLimit }),
+      ]),
     );
+    const runs = this.listRuns().filter(
+      (run) => !selectedConversationIds || selectedConversationIds.has(run.conversationId),
+    );
+    const runIds = new Set(runs.map((run) => run.id));
+    const includeConversationRecord = (item: { conversationId: string; runId?: string | null }) =>
+      !selectedConversationIds ||
+      selectedConversationIds.has(item.conversationId) ||
+      (item.runId ? runIds.has(item.runId) : false);
 
     return {
       profile: this.getProfile(),
@@ -236,20 +257,28 @@ export class AppStorage {
       teams,
       conversations,
       messages,
-      runs: this.listRuns(),
-      attachments: [...this.state.attachments].sort((a, b) => a.createdAt - b.createdAt),
-      artifacts: [...this.state.artifacts].sort((a, b) => b.createdAt - a.createdAt),
-      toolInvocations: [...this.state.toolInvocations].sort((a, b) => a.createdAt - b.createdAt),
-      runSteps: [...this.state.runSteps].sort((a, b) =>
-        a.runId === b.runId ? a.stepIndex - b.stepIndex : a.runId.localeCompare(b.runId, "en")
-      ),
+      runs,
+      attachments: [...this.state.attachments]
+        .filter(includeConversationRecord)
+        .sort((a, b) => a.createdAt - b.createdAt),
+      artifacts: [...this.state.artifacts]
+        .filter(includeConversationRecord)
+        .sort((a, b) => b.createdAt - a.createdAt),
+      toolInvocations: [...this.state.toolInvocations]
+        .filter(includeConversationRecord)
+        .sort((a, b) => a.createdAt - b.createdAt),
+      runSteps: [...this.state.runSteps]
+        .filter(includeConversationRecord)
+        .sort((a, b) =>
+          a.runId === b.runId ? a.stepIndex - b.stepIndex : a.runId.localeCompare(b.runId, "en")
+        ),
       notifications: this.listNotifications(),
       extensions: this.listExtensions(),
       promptAliases: this.listPromptAliases(),
       skillCatalog: this.listSkillCatalog(),
       mcpCatalog: this.listMcpCatalog(),
       mcpConnections: this.listMcpConnections(),
-      stats: this.getStats(agents, teams, messages),
+      stats: this.getStats(agents, teams),
     };
   }
 
@@ -748,10 +777,11 @@ export class AppStorage {
     this.persist();
   }
 
-  listMessages(conversationId: string): MessageRecord[] {
-    return this.state.messages
+  listMessages(conversationId: string, options: { limit?: number } = {}): MessageRecord[] {
+    const messages = this.state.messages
       .filter((message) => message.conversationId === conversationId)
       .sort((a, b) => a.createdAt - b.createdAt);
+    return options.limit && messages.length > options.limit ? messages.slice(-options.limit) : messages;
   }
 
   private shouldUseMessageAsConversationPreview(message: MessageRecord) {
@@ -2526,24 +2556,6 @@ export class AppStorage {
     return this.createWorkspaceLayout(workspacePath, options);
   }
 
-  private ensureWorkspaceLayouts() {
-    for (const agent of this.state.agents) {
-      this.createWorkspaceLayout(agent.workspacePath, {
-        type: "agent",
-        title: agent.name,
-        summary: agent.description,
-      });
-    }
-
-    for (const team of this.state.teams) {
-      this.createWorkspaceLayout(team.workspacePath, {
-        type: "team",
-        title: team.name,
-        summary: team.description,
-      });
-    }
-  }
-
   private createWorkspaceLayout(
     workspacePath: string,
     options: { type: "agent" | "team"; title: string; summary: string },
@@ -3534,15 +3546,11 @@ export class AppStorage {
   private getStats(
     agents: AgentRecord[],
     teams: TeamRecord[],
-    messagesByConversation: Record<string, MessageRecord[]>,
   ): DashboardStats {
     const runs = this.listRuns();
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const totalMessages = Object.values(messagesByConversation).reduce(
-      (sum, items) => sum + items.length,
-      0,
-    );
+    const totalMessages = this.state.messages.length;
 
     return {
       activeAgents: agents.filter((agent) => agent.status === "online").length,

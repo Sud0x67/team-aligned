@@ -504,12 +504,24 @@ export interface DiagnosticsExportResult {
   exportedAt: number;
 }
 
+export interface RendererErrorReport {
+  source: string;
+  message: string;
+  stack: string | null;
+  url: string;
+  userAgent: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: number;
+}
+
 export interface SelectDirectoryInput {
   title?: string;
 }
 
 export interface TeamalignedApi {
   bootstrap: () => Promise<AppSnapshot>;
+  loadConversationData: (conversationId: string) => Promise<AppSnapshot>;
+  reportRendererError: (payload: RendererErrorReport) => Promise<boolean>;
   sendInput: (payload: SendInputPayload) => Promise<AppSnapshot>;
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;

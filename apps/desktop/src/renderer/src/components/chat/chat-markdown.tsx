@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
 import { parseChatMarkdown } from "./chat-markdown-parser";
+import { reportRendererError } from "../../error-reporting";
+
+const MAX_INLINE_SEGMENTS = 800;
+const MAX_INLINE_LINES = 1_000;
 
 function safeHref(value: string) {
   try {
@@ -62,6 +66,10 @@ function renderInlineSegment(text: string, keyPrefix: string, inverted: boolean)
     }
 
     cursor = match.index + token.length;
+    if (nodes.length >= MAX_INLINE_SEGMENTS) {
+      nodes.push(text.slice(cursor));
+      return nodes;
+    }
   }
 
   if (cursor < text.length) {
@@ -72,10 +80,14 @@ function renderInlineSegment(text: string, keyPrefix: string, inverted: boolean)
 }
 
 function renderInlineText(text: string, keyPrefix: string, inverted: boolean) {
-  return text.split("\n").flatMap((line, index) => {
+  return text.split("\n").slice(0, MAX_INLINE_LINES).flatMap((line, index) => {
     const renderedLine = renderInlineSegment(line, `${keyPrefix}-${index}`, inverted);
     return index === 0 ? renderedLine : [<br key={`${keyPrefix}-br-${index}`} />, ...renderedLine];
   });
+}
+
+function PlainTextFallback({ content }: { content: string }) {
+  return <p className="whitespace-pre-wrap">{content}</p>;
 }
 
 export function ChatMarkdownContent({
@@ -85,12 +97,21 @@ export function ChatMarkdownContent({
   content: string;
   inverted?: boolean;
 }) {
-  const blocks = parseChatMarkdown(content);
+  let blocks: ReturnType<typeof parseChatMarkdown>;
+  try {
+    blocks = parseChatMarkdown(content);
+  } catch (error) {
+    reportRendererError("chat-markdown:parse", error, {
+      contentLength: content.length,
+    });
+    return <PlainTextFallback content={content} />;
+  }
   if (blocks.length === 0) return null;
 
-  return (
-    <div className="space-y-2 break-words">
-      {blocks.map((block, index) => {
+  try {
+    return (
+      <div className="space-y-2 break-words">
+        {blocks.map((block, index) => {
         if (block.type === "heading") {
           const headingClass =
             block.depth <= 2
@@ -205,7 +226,14 @@ export function ChatMarkdownContent({
             {renderInlineText(block.text, `p-${index}`, inverted)}
           </p>
         );
-      })}
-    </div>
-  );
+        })}
+      </div>
+    );
+  } catch (error) {
+    reportRendererError("chat-markdown:render", error, {
+      contentLength: content.length,
+      blockCount: blocks.length,
+    });
+    return <PlainTextFallback content={content} />;
+  }
 }

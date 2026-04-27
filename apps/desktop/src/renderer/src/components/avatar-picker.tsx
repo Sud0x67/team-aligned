@@ -51,6 +51,24 @@ function getCropMetrics(input: {
   offsetX: number;
   offsetY: number;
 }) {
+  if (
+    !Number.isFinite(input.width) ||
+    !Number.isFinite(input.height) ||
+    input.width <= 0 ||
+    input.height <= 0
+  ) {
+    return {
+      cropSize: 1,
+      maxX: 0,
+      maxY: 0,
+      sx: 0,
+      sy: 0,
+      imageWidth: CROP_PREVIEW_SIZE,
+      imageHeight: CROP_PREVIEW_SIZE,
+      imageX: 0,
+      imageY: 0,
+    };
+  }
   const zoom = clamp(input.zoom, 1, 3);
   const cropSize = Math.min(input.width, input.height) / zoom;
   const maxX = Math.max(0, input.width - cropSize);
@@ -78,6 +96,14 @@ async function cropAvatarImage(input: {
   offsetY: number;
 }) {
   const image = await loadImage(input.dataUrl);
+  if (
+    !Number.isFinite(image.naturalWidth) ||
+    !Number.isFinite(image.naturalHeight) ||
+    image.naturalWidth <= 0 ||
+    image.naturalHeight <= 0
+  ) {
+    throw new Error("Invalid image dimensions");
+  }
   const metrics = getCropMetrics({
     width: image.naturalWidth,
     height: image.naturalHeight,

@@ -30,6 +30,50 @@ test("init seeds starter agents and teams for a brand-new workspace", () => {
   }
 });
 
+test("getSnapshot can load only the requested conversation payload", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const fullSnapshot = storage.getSnapshot();
+    const conversationIds = fullSnapshot.conversations.map((conversation) => conversation.id);
+    assert.ok(conversationIds.length >= 2);
+
+    const selectedConversationId = conversationIds[0];
+    const partialSnapshot = storage.getSnapshot({
+      conversationIds: [selectedConversationId],
+      messageLimit: 1,
+    });
+
+    assert.deepEqual(Object.keys(partialSnapshot.messages), [selectedConversationId]);
+    assert.ok((partialSnapshot.messages[selectedConversationId]?.length ?? 0) <= 1);
+    assert.equal(partialSnapshot.conversations.length, fullSnapshot.conversations.length);
+    assert.equal(partialSnapshot.stats.totalMessages, fullSnapshot.stats.totalMessages);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("init does not recreate every stored workspace directory on existing data", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const snapshot = storage.getSnapshot();
+    const team = snapshot.teams[0];
+    assert.ok(team);
+    assert.equal(existsSync(team.workspacePath), true);
+
+    rmSync(team.workspacePath, { recursive: true, force: true });
+    const nextStorage = new AppStorage(root);
+    nextStorage.init();
+
+    assert.equal(existsSync(team.workspacePath), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("init leaves default provider api keys empty for first-time setup", () => {
   const root = createTempRoot();
   try {

@@ -26,6 +26,7 @@ type AppStore = AppSnapshot & {
   loading: boolean;
   commandSuggestions: typeof commandSuggestions;
   bootstrap: () => Promise<void>;
+  loadConversationData: (conversationId: string) => Promise<void>;
   sendInput: (payload: SendInputPayload) => Promise<void>;
   controlRun: (payload: RunControlPayload) => Promise<void>;
   createAgent: (payload: CreateAgentInput) => Promise<void>;
@@ -102,8 +103,54 @@ const emptySnapshot: AppSnapshot = {
 };
 
 export const useAppStore = create<AppStore>((set, get) => {
+  const replaceConversationPayload = (
+    state: AppStore,
+    snapshot: AppSnapshot,
+    conversationIds: string[],
+  ) => {
+    const selectedIds = new Set(conversationIds);
+    const replaceItems = <T extends { conversationId: string }>(current: T[], incoming: T[]) => [
+      ...current.filter((item) => !selectedIds.has(item.conversationId)),
+      ...incoming,
+    ];
+
+    return {
+      messages: {
+        ...state.messages,
+        ...snapshot.messages,
+      },
+      runs: replaceItems(state.runs, snapshot.runs),
+      attachments: replaceItems(state.attachments, snapshot.attachments),
+      artifacts: replaceItems(state.artifacts, snapshot.artifacts),
+      toolInvocations: replaceItems(state.toolInvocations, snapshot.toolInvocations),
+      runSteps: replaceItems(state.runSteps, snapshot.runSteps),
+    };
+  };
+
   const applySnapshot = (snapshot: AppSnapshot) =>
-    set({ ...snapshot, bootstrapped: true, loading: false });
+    set((state) => {
+      const loadedConversationIds = Object.keys(snapshot.messages);
+      const isPartialSnapshot =
+        loadedConversationIds.length > 0 && loadedConversationIds.length < snapshot.conversations.length;
+      if (!isPartialSnapshot) {
+        return { ...snapshot, bootstrapped: true, loading: false };
+      }
+
+      return {
+        ...snapshot,
+        ...replaceConversationPayload(state, snapshot, loadedConversationIds),
+        bootstrapped: true,
+        loading: false,
+      };
+    });
+
+  const mergeConversationSnapshot = (conversationId: string, snapshot: AppSnapshot) =>
+    set((state) => ({
+      ...snapshot,
+      ...replaceConversationPayload(state, snapshot, [conversationId]),
+      bootstrapped: true,
+      loading: false,
+    }));
 
   const runSnapshotAction = async (action: () => Promise<AppSnapshot | undefined>) => {
     const snapshot = await action();
@@ -126,6 +173,10 @@ export const useAppStore = create<AppStore>((set, get) => {
     commandSuggestions,
     applySnapshot,
     bootstrap: async () => runLoadingSnapshotAction(() => window.teamaligned.bootstrap()),
+    loadConversationData: async (conversationId) => {
+      const snapshot = await window.teamaligned.loadConversationData(conversationId);
+      mergeConversationSnapshot(conversationId, snapshot);
+    },
     sendInput: async (payload) =>
       runLoadingSnapshotAction(() => window.teamaligned.sendInput(payload)),
     controlRun: async (payload) =>

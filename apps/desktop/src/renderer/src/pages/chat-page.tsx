@@ -30,6 +30,7 @@ export function ChatPage() {
     skillCatalog,
     mcpCatalog,
     commandSuggestions,
+    loadConversationData,
     sendInput,
     controlRun,
     deleteAgent,
@@ -98,6 +99,14 @@ export function ChatPage() {
     () => (activeConversation ? messages[activeConversation.id] ?? [] : []),
     [activeConversation, messages],
   );
+  const activeConversationMessagesLoaded = activeConversation
+    ? Object.prototype.hasOwnProperty.call(messages, activeConversation.id)
+    : false;
+
+  useEffect(() => {
+    if (!activeConversation || activeConversationMessagesLoaded) return;
+    void loadConversationData(activeConversation.id);
+  }, [activeConversation, activeConversationMessagesLoaded, loadConversationData]);
 
   useEffect(() => {
     if (!activeConversation || activeConversation.unread <= 0) return;

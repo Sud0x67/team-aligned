@@ -13,6 +13,7 @@ import type {
   FeedbackChannel,
   NotificationRecord,
   ProviderId,
+  RendererErrorReport,
   RunControlPayload,
   SaveAttachmentAssetInput,
   SavePromptAliasInput,
@@ -32,6 +33,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const isNotificationDebug = isDev || process.env.TA_NOTIFY_DEBUG === "1";
 const notificationDebugLogPath = join(homedir(), ".teamaligned", "logs", "notification-dispatch.log");
+const startupLogPath = join(homedir(), ".teamaligned", "logs", "startup.log");
+const errorLogPath = join(homedir(), ".teamaligned", "logs", "errors.log");
 const feedbackIssueUrl = "https://github.com/Sud0x67/team-aligned/issues/new";
 const feedbackEmail = "jokeroller@163.com";
 const providerKeyHelpUrls: Record<ProviderId, string> = {
@@ -41,7 +44,52 @@ const providerKeyHelpUrls: Record<ProviderId, string> = {
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: TeamalignedRuntime | null = null;
+let runtimeReady: Promise<TeamalignedRuntime> | null = null;
 const activeSystemNotifications = new Set<Notification>();
+
+function appendStartupLog(event: string, payload: Record<string, unknown> = {}) {
+  const line = `${new Date().toISOString()} ${event} ${JSON.stringify(payload)}\n`;
+  try {
+    mkdirSync(dirname(startupLogPath), { recursive: true });
+    appendFileSync(startupLogPath, line, "utf8");
+  } catch {
+    // Startup diagnostics must never block opening the app.
+  }
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack ?? null,
+    };
+  }
+
+  return {
+    name: typeof error,
+    message: String(error),
+    stack: null,
+  };
+}
+
+function appendErrorLog(event: string, payload: Record<string, unknown> = {}) {
+  const line = `${new Date().toISOString()} ${event} ${JSON.stringify(payload)}\n`;
+  try {
+    mkdirSync(dirname(errorLogPath), { recursive: true });
+    appendFileSync(errorLogPath, line, "utf8");
+  } catch {
+    // Error reporting must stay best-effort.
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  appendErrorLog("main:uncaughtException", serializeError(error));
+});
+
+process.on("unhandledRejection", (reason) => {
+  appendErrorLog("main:unhandledRejection", serializeError(reason));
+});
 
 function appendNotificationDebug(event: string, payload: Record<string, unknown>) {
   if (!isNotificationDebug) return;
@@ -52,6 +100,16 @@ function appendNotificationDebug(event: string, payload: Record<string, unknown>
   } catch {
     // Keep notification flow resilient even when debug file is unavailable.
   }
+}
+
+async function getReadyRuntime() {
+  if (runtimeReady) {
+    return runtimeReady;
+  }
+  if (runtime) {
+    return runtime;
+  }
+  throw new Error("TeamAligned runtime is not initialized.");
 }
 
 function canDispatchSystemNotification(channel: RuntimeNotificationChannel, notification: NotificationRecord) {
@@ -405,6 +463,19 @@ async function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+  mainWindow.on("unresponsive", () => {
+    appendErrorLog("window:unresponsive", {});
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    appendErrorLog("renderer:process-gone", details as unknown as Record<string, unknown>);
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    appendErrorLog("renderer:did-fail-load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+  });
 }
 
 function broadcastSnapshot() {
@@ -415,92 +486,112 @@ function broadcastSnapshot() {
 }
 
 app.whenReady().then(async () => {
+  const startupStartedAt = Date.now();
   app.setName("teamaligned");
   const runtimeRoot = resolveRuntimeRoot();
   mkdirSync(runtimeRoot, { recursive: true });
+  appendStartupLog("startup:begin", {
+    runtimeRoot,
+    packaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+  });
   registerAssetProtocol();
-  runtime = new TeamalignedRuntime(runtimeRoot);
-  await runtime.init();
-  runtime.on("snapshot", broadcastSnapshot);
-  runtime.on("notification", (payload: { channel: RuntimeNotificationChannel; notification: NotificationRecord }) => {
-    dispatchSystemNotification(payload);
+
+  let resolveRuntimeReady!: (value: TeamalignedRuntime) => void;
+  let rejectRuntimeReady!: (reason: unknown) => void;
+  runtimeReady = new Promise<TeamalignedRuntime>((resolveRuntime, rejectRuntime) => {
+    resolveRuntimeReady = resolveRuntime;
+    rejectRuntimeReady = rejectRuntime;
   });
 
-  ipcMain.handle("teamaligned:bootstrap", async () => runtime?.getSnapshot());
+  ipcMain.handle("teamaligned:bootstrap", async () => (await getReadyRuntime()).getStartupSnapshot());
+  ipcMain.handle("teamaligned:load-conversation-data", async (_event, conversationId: string) =>
+    (await getReadyRuntime()).getConversationSnapshot(conversationId),
+  );
+  ipcMain.handle("teamaligned:report-renderer-error", async (_event, payload: RendererErrorReport) => {
+    appendErrorLog("renderer:error", payload as unknown as Record<string, unknown>);
+    return true;
+  });
   ipcMain.handle("teamaligned:send-input", async (_event, payload: SendInputPayload) =>
-    runtime?.sendInput(payload),
+    (await getReadyRuntime()).sendInput(payload),
   );
   ipcMain.handle("teamaligned:control-run", async (_event, payload: RunControlPayload) =>
-    runtime?.controlRun(payload),
+    (await getReadyRuntime()).controlRun(payload),
   );
   ipcMain.handle("teamaligned:create-agent", async (_event, payload: CreateAgentInput) =>
-    runtime?.createAgent(payload),
+    (await getReadyRuntime()).createAgent(payload),
   );
   ipcMain.handle("teamaligned:create-team", async (_event, payload: CreateTeamInput) =>
-    runtime?.createTeam(payload),
+    (await getReadyRuntime()).createTeam(payload),
   );
   ipcMain.handle("teamaligned:delete-agent", async (_event, agentId: string) =>
-    runtime?.deleteAgent(agentId),
+    (await getReadyRuntime()).deleteAgent(agentId),
   );
   ipcMain.handle("teamaligned:delete-team", async (_event, teamId: string) =>
-    runtime?.deleteTeam(teamId),
+    (await getReadyRuntime()).deleteTeam(teamId),
   );
   ipcMain.handle("teamaligned:delete-conversation", async (_event, conversationId: string) =>
-    runtime?.deleteConversation(conversationId),
+    (await getReadyRuntime()).deleteConversation(conversationId),
   );
   ipcMain.handle("teamaligned:ensure-conversation", async (_event, payload: EnsureConversationInput) =>
-    runtime?.ensureConversation(payload),
+    (await getReadyRuntime()).ensureConversation(payload),
   );
   ipcMain.handle("teamaligned:update-agent", async (_event, payload: UpdateAgentInput) =>
-    runtime?.updateAgent(payload),
+    (await getReadyRuntime()).updateAgent(payload),
   );
   ipcMain.handle("teamaligned:update-team", async (_event, payload: UpdateTeamInput) =>
-    runtime?.updateTeam(payload),
+    (await getReadyRuntime()).updateTeam(payload),
   );
-  ipcMain.handle("teamaligned:refresh-skill-catalog", async () => runtime?.refreshSkillCatalog());
+  ipcMain.handle("teamaligned:refresh-skill-catalog", async () =>
+    (await getReadyRuntime()).refreshSkillCatalog(),
+  );
   ipcMain.handle("teamaligned:install-skill", async (_event, skillId: string) =>
-    runtime?.installSkill(skillId),
+    (await getReadyRuntime()).installSkill(skillId),
   );
   ipcMain.handle("teamaligned:remove-skill", async (_event, skillId: string) =>
-    runtime?.removeSkill(skillId),
+    (await getReadyRuntime()).removeSkill(skillId),
   );
   ipcMain.handle("teamaligned:save-prompt-alias", async (_event, payload: SavePromptAliasInput) =>
-    runtime?.savePromptAlias(payload),
+    (await getReadyRuntime()).savePromptAlias(payload),
   );
   ipcMain.handle("teamaligned:remove-prompt-alias", async (_event, promptAliasId: string) =>
-    runtime?.removePromptAlias(promptAliasId),
+    (await getReadyRuntime()).removePromptAlias(promptAliasId),
   );
-  ipcMain.handle("teamaligned:refresh-mcp-catalog", async () => runtime?.refreshMcpCatalog());
+  ipcMain.handle("teamaligned:refresh-mcp-catalog", async () =>
+    (await getReadyRuntime()).refreshMcpCatalog(),
+  );
   ipcMain.handle("teamaligned:connect-mcp", async (_event, payload: ConnectMcpInput) =>
-    runtime?.connectMcp(payload),
+    (await getReadyRuntime()).connectMcp(payload),
   );
   ipcMain.handle("teamaligned:check-mcp-health", async (_event, serverId: string) =>
-    runtime?.checkMcpHealth(serverId),
+    (await getReadyRuntime()).checkMcpHealth(serverId),
   );
   ipcMain.handle("teamaligned:disconnect-mcp", async (_event, serverId: string) =>
-    runtime?.disconnectMcp(serverId),
+    (await getReadyRuntime()).disconnectMcp(serverId),
   );
   ipcMain.handle("teamaligned:toggle-extension", async (_event, extensionId: string) =>
-    runtime?.toggleExtension(extensionId),
+    (await getReadyRuntime()).toggleExtension(extensionId),
   );
   ipcMain.handle("teamaligned:update-agent-skills", async (_event, payload: UpdateAgentSkillsInput) =>
-    runtime?.updateAgentSkills(payload),
+    (await getReadyRuntime()).updateAgentSkills(payload),
   );
   ipcMain.handle("teamaligned:update-agent-mcps", async (_event, payload: UpdateAgentMcpsInput) =>
-    runtime?.updateAgentMcps(payload),
+    (await getReadyRuntime()).updateAgentMcps(payload),
   );
   ipcMain.handle("teamaligned:update-settings", async (_event, payload: UpdateSettingsInput) =>
-    runtime?.updateSettings(payload),
+    (await getReadyRuntime()).updateSettings(payload),
   );
   ipcMain.handle("teamaligned:update-profile", async (_event, payload: UpdateProfileInput) =>
-    runtime?.updateProfile(payload),
+    (await getReadyRuntime()).updateProfile(payload),
   );
   ipcMain.handle("teamaligned:update-provider", async (_event, payload: UpdateProviderInput) =>
-    runtime?.updateProvider(payload),
+    (await getReadyRuntime()).updateProvider(payload),
   );
   ipcMain.handle(
     "teamaligned:test-provider-connection",
-    async (_event, payload: ProviderConnectionTestInput) => runtime?.testProviderConnection(payload),
+    async (_event, payload: ProviderConnectionTestInput) =>
+      (await getReadyRuntime()).testProviderConnection(payload),
   );
   ipcMain.handle(
     "teamaligned:save-avatar-asset",
@@ -511,16 +602,18 @@ app.whenReady().then(async () => {
         dataUrl: string;
         fileNameHint?: string;
       },
-    ) => runtime?.saveAvatarAsset(payload),
+    ) => (await getReadyRuntime()).saveAvatarAsset(payload),
   );
   ipcMain.handle(
     "teamaligned:save-attachment-asset",
-    async (_event, payload: SaveAttachmentAssetInput) => runtime?.saveAttachmentAsset(payload),
+    async (_event, payload: SaveAttachmentAssetInput) =>
+      (await getReadyRuntime()).saveAttachmentAsset(payload),
   );
   ipcMain.handle("teamaligned:export-conversation-data", async (_event, conversationId: string) =>
-    runtime?.exportConversationData(conversationId),
+    (await getReadyRuntime()).exportConversationData(conversationId),
   );
   ipcMain.handle("teamaligned:export-diagnostics", async () => {
+    await getReadyRuntime();
     const diagnosticsDir = resolveDiagnosticsDir();
     mkdirSync(diagnosticsDir, { recursive: true });
     const safeTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -547,9 +640,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:open-provider-key-help", async (_event, providerId: ProviderId) =>
     openProviderKeyHelp(providerId),
   );
-  ipcMain.handle("teamaligned:mark-notifications-read", async () => runtime?.markNotificationsRead());
+  ipcMain.handle("teamaligned:mark-notifications-read", async () =>
+    (await getReadyRuntime()).markNotificationsRead(),
+  );
   ipcMain.handle("teamaligned:mark-conversation-read", async (_event, conversationId: string) =>
-    runtime?.markConversationRead(conversationId),
+    (await getReadyRuntime()).markConversationRead(conversationId),
   );
   ipcMain.handle("teamaligned:open-notification-settings", async () => {
     try {
@@ -594,12 +689,45 @@ app.whenReady().then(async () => {
   });
 
   await createWindow();
+  appendStartupLog("startup:window-ready", { elapsedMs: Date.now() - startupStartedAt });
+
+  void (async () => {
+    const runtimeStartedAt = Date.now();
+    appendStartupLog("startup:runtime-init-start");
+    const nextRuntime = new TeamalignedRuntime(runtimeRoot);
+    runtime = nextRuntime;
+    nextRuntime.on("snapshot", broadcastSnapshot);
+    nextRuntime.on(
+      "notification",
+      (payload: { channel: RuntimeNotificationChannel; notification: NotificationRecord }) => {
+        dispatchSystemNotification(payload);
+      },
+    );
+    nextRuntime.on("runtime-error", (payload: Record<string, unknown>) => {
+      appendErrorLog("runtime:error", payload);
+    });
+    await nextRuntime.init();
+    appendStartupLog("startup:runtime-ready", {
+      elapsedMs: Date.now() - runtimeStartedAt,
+      totalElapsedMs: Date.now() - startupStartedAt,
+    });
+    resolveRuntimeReady(nextRuntime);
+  })().catch((error) => {
+    appendStartupLog("startup:runtime-failed", {
+      message: error instanceof Error ? error.message : String(error),
+      totalElapsedMs: Date.now() - startupStartedAt,
+    });
+    rejectRuntimeReady(error);
+  });
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       await createWindow();
     }
   });
+}).catch((error) => {
+  appendErrorLog("main:startup-failed", serializeError(error));
+  throw error;
 });
 
 app.on("window-all-closed", () => {
