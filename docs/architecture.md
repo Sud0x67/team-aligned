@@ -1,17 +1,18 @@
 # 系统架构
 
+[English version](./en/architecture.md)
+
+更新时间：2026-05-02
+
+当前版本：`0.4.0-beta`
+
 ## 文档范围
 
-这份文档以当前仓库中的真实实现为准，不再描述“计划中的理想架构”。
+这份文档描述当前仓库中已经实现的架构，不再保留旧原型阶段或历史路线图中的设想。
 
-当前 `teamaligned` 已经是一套可运行的本地优先桌面应用，整体由四层组成：
+TeamAligned 是一个本地优先的 AI 协作桌面应用。产品表面是聊天软件，底层是本地 Agent runtime、工具层、扩展系统和可审计持久层。
 
-- Electron 桌面壳
-- React 渲染层
-- 本地 Agent Runtime
-- 本地持久层
-
-## 当前总览
+## 总体结构
 
 ```text
 teamaligned
@@ -21,354 +22,229 @@ teamaligned
 │  └─ React Renderer
 ├─ packages/agent-runtime
 │  ├─ TeamalignedRuntime
-│  ├─ DeepAgents / LangGraph 集成
+│  ├─ Direct Agent Runtime
 │  ├─ Team Runtime
-│  ├─ Skills / MCP Registry
-│  ├─ Tool Layer
-│  ├─ SQLite + Drizzle
-│  └─ File-backed Assets / Transcript / Workspace
+│  ├─ Workspace / Web / Skill / MCP Tools
+│  ├─ SQLite Storage
+│  └─ File-backed Assets, Transcripts, Workspaces
 └─ packages/shared
-   ├─ 领域类型
-   ├─ 默认种子数据
-   ├─ slash command 解析
-   └─ IPC 共享协议
+   ├─ Shared Types
+   ├─ Default Seeds
+   ├─ Slash Commands
+   └─ IPC Protocol Types
 ```
 
-## 目录与职责
+## 应用页面
 
-### `apps/desktop`
+当前主导航只保留四个页面：
 
-负责桌面端外壳与全部产品界面。
+- 会话：默认入口，承载单聊、群聊、消息、附件、运行状态和右侧信息栏。
+- 管理：创建、编辑、删除 Agent 与群组；配置 Agent Skill/MCP 白名单。
+- 扩展：同步和管理 Skills、MCP、Prompt Alias。
+- 设置：语言、主题、通知、Provider、帮助反馈和诊断导出。
 
-当前已包含：
+仪表盘已从主导航移除。后续如果恢复，需要证明它承担独立用户任务，而不是把产品重新带回 dashboard-first。
 
-- Electron 主进程
-- preload IPC 桥接
-- React renderer
-- 对话、管理、扩展、设置页面
-- 通知面板与个人资料弹窗
-- 聊天附件上传、图片预览、`@` 选择器、`/` 自动补全
+## 默认数据
 
-### `packages/agent-runtime`
+新用户初始化时默认创建：
 
-负责本地运行时、工具接入和持久化。
+- TeamAligned Assistant：内置应用助手，不允许删除或修改，只绑定内置 `team-aligned-assistant` Skill。
+- Product Squad / 产品开发组：唯一默认群组，用于展示 Planner、Designer、Coder 的协作方式。
+- 默认 Agent：Coder、Designer、Planner、Researcher，以及内置 TeamAligned Assistant。
 
-当前已包含：
+默认 Provider API Key 为空，用户必须在首次引导或设置页中显式填写。
 
-- `TeamalignedRuntime` 主编排器
-- 单聊 DeepAgents 调用链
-- 群聊自然发言编排
-- Skills registry / 安装 / 激活 / 脚本执行
-- MCP registry / 连接 / 健康检查 / tool discovery
-- 本地工具层：文件、搜索、命令
-- SQLite 持久层与 Drizzle schema / migration
+## 前端结构
 
-### `packages/shared`
+`apps/desktop` 负责桌面壳和所有界面：
 
-负责跨层共享的类型、默认值和协议。
+- Electron main：窗口、IPC、系统通知、文件选择、导出、系统设置跳转。
+- preload：暴露 `window.teamaligned` API，连接 renderer 和 runtime。
+- React renderer：聊天页、管理页、扩展页、设置页、通知面板、个人信息弹窗。
 
-当前主要承载：
+聊天页当前结构：
 
-- `AgentRecord`、`TeamRecord`、`ConversationRecord`、`RunRecord`
-- MCP / Skill / Provider / Attachment / Artifact 类型
-- 默认种子数据
-- slash command 解析与共享输入协议
+- 左侧：会话搜索和会话列表。
+- 中间：消息线程和输入区。
+- 右侧：默认收起的信息栏，展示 token、workspace、打开目录、当前 Skill/MCP、最近工具调用等。
 
-## 前端信息架构
+输入区支持：
 
-当前应用的主页面与 Figma 原型保持一致，已经落成以下结构：
+- Enter 发送，Shift+Enter 换行。
+- 附件上传。
+- 图片预览。
+- 群聊 `@` 选择。
+- `#` workspace 文件引用和模糊搜索。
+- `/` slash 命令补全。
+- 表情和截图入口。
 
-- `/`：会话
-- `/manage`：管理
-- `/extensions`：扩展
-- `/settings`：设置
-
-同时存在两个全局浮层能力：
-
-- 通知面板
-- 个人资料弹窗
-
-### 当前聊天页结构
-
-聊天页当前采用主聊天区 + 默认收起的信息侧栏：
-
-- 左侧：会话搜索 + 会话列表
-- 中间：消息线程 + 输入区
-- 最右侧：默认收起的会话信息侧栏
-
-会话信息侧栏展开后展示：
-
-- Token 消耗
-- workspace 与 Finder 打开入口
-- 当前 Skill / MCP
-- 当前 run 状态
-- 最近工具调用
-
-与旧文档不同的是，输入框上方不再常驻 run 详情卡片，避免挤占聊天输入区。
-
-### 当前管理页结构
-
-管理页已拆成两个子视图：
-
-- Agent 管理
-- 群组管理
-
-支持：
-
-- 创建 Agent
-- 创建群组
-- 配置头像
-- 配置 Agent Skill 白名单
-- 配置 Agent MCP 白名单
-
-### 当前扩展页结构
-
-扩展页当前只保留扩展中心，分成两个 tab：
-
-- Skills
-- MCP
-
-支持：
-
-- 同步远端 catalog
-- 安装 Skill 到本地全局目录
-- 配置 MCP 连接
-- 健康检查
-- 查看 MCP 发现到的 tools
-
-### 当前设置页结构
-
-设置页当前承载四类配置：
-
-- 外观
-- 语言
-- 通知
-- 模型配置
-
-模型配置当前已支持：
-
-- OpenAI
-- Qwen（通过 DashScope OpenAI-compatible 接口）
-
-并且已经具备：
-
-- 参数校验
-- API Key 显隐
-- 连通性测试
-- 保存并启用反馈
-
-## 运行时总结构
+## Runtime
 
 运行时入口是 `packages/agent-runtime/src/runtime.ts` 中的 `TeamalignedRuntime`。
 
 它负责：
 
-- 加载快照
-- 接收用户输入
-- 路由 slash command
-- 启动单聊 run / 群聊 run
-- 调度工具与 MCP
-- 写入持久层
-- 向 UI 推送最新 snapshot
+- 接收用户输入。
+- 路由 slash command。
+- 启动单聊 run 或群聊 run。
+- 注入 Provider、Skills、MCP 和本地工具。
+- 处理流式输出、取消、重试、`/clear`。
+- 写入 messages、runs、attachments、artifacts、tool invocations、run steps。
+- 向 UI 推送最新 snapshot。
 
-### 运行时分层
+## 单聊 Agent
 
-```text
-TeamalignedRuntime
-├─ Snapshot / State Assembly
-├─ Single Chat Runtime
-│  ├─ DeepAgents
-│  ├─ LangChain ChatOpenAI
-│  ├─ LangGraph MemorySaver
-│  ├─ Skill Prompt Injection
-│  ├─ Skill Script Tools
-│  ├─ Workspace Tools
-│  └─ MCP Tools
-├─ Team Runtime
-│  ├─ Handoff State Machine
-│  ├─ Natural Multi-Agent Replies
-│  ├─ Execution Work Items + Subagents
-│  ├─ Messages + Updates Dual Streaming
-│  └─ Team Memory Updates
-├─ Slash Command Router
-├─ Provider Validation / Connection Test
-├─ Skill Registry
-├─ MCP Registry + Runtime
-└─ Storage
-```
+单聊已经接入真实模型调用链：
 
-## 单聊架构
+- Provider：OpenAI 与 Qwen（DashScope OpenAI-compatible）。
+- Agent runtime：DeepAgents、LangChain、LangGraph MemorySaver。
+- Prompt：系统提示、用户身份、会话历史、当前 Skill、MCP/工具说明。
+- 输入：文本、附件、图片、多模态内容。
+- 输出：流式消息、自然过程消息、工具调用记录、artifact。
 
-### 当前真实链路
+单聊可用工具包括：
 
-单聊不是 mock，而是已经接上真实模型调用链：
-
-- Provider 配置来自 `settings.json`
-- `deep-agent.ts` 负责创建 `ChatOpenAI`
-- `createDeepAgent` 负责 agent runtime
-- `MemorySaver` 提供 LangGraph 级别的短期状态保存
-- 会话历史会被裁剪后注入模型
-- 当前激活 Skill 的 `SKILL.md` 会进入 system prompt
-- 当前可用 MCP tools 与本地工具层会一并注入 agent
-
-### 单聊工具层
-
-当前单聊已经可用的工具包括：
-
-- workspace 列目录
-- 读取文本文件
-- 写入文本文件
-- `ripgrep` 搜索
-- 本地 shell 命令执行
-- Skill bundle 读取
-- Skill `scripts/` 执行
+- `workspace_list_directory`
+- `workspace_read_text_file`
+- `workspace_write_text_file`
+- `workspace_search_rg`
+- `workspace_run_command`
+- `web_search`
+- `web_fetch`
+- Skill script tools
 - MCP discovered tools
 
-### 单聊交互能力
+## 群聊 Team
 
-当前单聊已支持：
+群聊不是 manager 可见模式，而是“自然团队聊天 + 不可见编排”。
 
-- 自然语言消息
-- 附件上传
-- 图片附件预览
-- 图片附件作为单聊多模态输入
-- slash command
-- `@` 选择器
-- `/` 自动补全
-- 流式输出
-- 发送后等待回复与取消当前任务
+核心机制：
 
-## 群聊架构
+- 显式 `@Agent` 优先。
+- 无 `@` 时由 planner 判断适合发言或执行的 Agent。
+- planner 默认 30 秒超时；超时后使用本地 fallback，避免 Provider 长尾导致群聊静默卡住。
+- fallback 会识别文本里直接出现的 Agent 名称和 workspace 路径，用于生成基础执行计划。
+- handoff 状态记录谁刚发言、谁应接棒、原因和 revision。
+- 普通问题通常 1-2 个 Agent 发言。
+- 多视角问题通常 2-4 个 Agent 发言。
+- 复杂协作最多 5 个 Agent 参与。
+- 执行任务拆成 work items，可并行或串行。
+- 工具调用转成自然过程消息。
 
-### 当前真实链路
+当前限制：
 
-群聊已经不是脚本化演示，也不再默认采用 manager 主导模型。
+- 每个群组最多 5 个 Agent。
+- 每个 team turn 最多 5 个小轮。
+- 每个 Agent 每 turn 最多发言 10 次。
+- 每个 team turn 最多 50 条 Agent 消息。
+- 每个 Agent 每 turn 最多 5 个 work item。
+- 同时最多 5 个 work item 并行执行。
 
-当前流程：
+群聊已支持：
 
-1. 用户消息进入 `TeamalignedRuntime`
-2. runtime 读取群组成员，最多激活 5 个 Agent
-3. `team-runtime.ts` 中不可见的 system orchestrator 判断模式
-   - `focused`
-   - `multi_voice`
-   - `collaboration`
-4. 如果用户 `@Agent`，被点名 Agent 优先发言
-5. 如果没有 `@`，系统根据语义选择 1 到 5 个相关 Agent
-6. 被选中的 Agent 像真实群成员一样在主线程自然发言
-7. Agent `@` 会触发接棒，handoff 状态持续写回
-8. 执行意图触发 work item，并由 execution subagent 执行重任务
-9. messages + updates 双轨输出过程与结果
+- `@` 指定 Agent。
+- 无 `@` 语义选人。
+- handoff 多轮接棒。
+- 群聊图片附件。
+- 群聊执行过程输出。
+- 群聊取消。
+- 群聊 `/clear` 清理消息、run、transcript、team memory 和 handoff。
 
-### 群聊发言控制
+当前真实 Provider 回放已覆盖：
 
-当前群聊的控制原则：
+- `@` 指定 Agent。
+- 无 `@` 自动选人。
+- 多轮 handoff。
+- 并行执行。
+- 依赖等待。
+- 图片附件。
+- `web_fetch` 工具调用。
+- 取消。
+- `/clear`。
 
-- 默认没有用户可见的 manager
-- 群组最多 5 个 Agent
-- 普通问题通常 1 到 2 个 Agent 发言
-- 多视角问题 2 到 4 个 Agent 发言
-- 复杂协作 3 到 5 个 Agent 发言
-- 每个 team turn 最多 5 个小轮
-- 每个 team turn 最多 50 条 Agent 消息
-- 每个 Agent 每 turn 最多发言 10 次
-- Agent 没有新增观点时应保持沉默
-- Agent 互相 `@` 只能触发下一小轮，不能无限循环
+## Slash Commands
 
-### 群聊上下文
+当前保留克制的 slash 命令集合：
 
-当前群聊会综合这些信息进入规划与总结：
+- `/skills`：查看或切换当前会话 Skill。
+- `/mcp`：查看或切换当前会话 MCP。
+- `/<skill-id>`：临时使用某个 Skill。
+- `/<prompt-alias>`：使用用户自定义 Prompt Alias。
+- `/clear`：清空当前会话上下文。
 
-- 当前阶段
-- 最近决策
-- 活跃任务
-- workspace 摘要
-- pinned artifacts
-- 最近公开消息
-- handoff 状态（active/last/next/reason/revision）
+`/pause`、`/resume`、`/cancel` 不再作为 slash 主入口。取消由发送按钮在运行中切换为取消按钮承载。
 
-### 群聊当前边界
+## Skills
 
-当前群聊已具备真实协作链路，但仍有边界：
+Skills 采用“远端 catalog + 本地安装 + Agent 白名单 + runtime 注入”模式。
 
-- 群聊执行中的工具状态仍需继续优化节流，避免长任务刷屏
-- 工具级权限仍是下一阶段能力
-- 更强的 checkpoint / failure recovery 仍待加强
+当前能力：
 
-## Skills 架构
+- 同步 GitHub skill catalog。
+- 安装 Skill 到 `~/.teamaligned/skills`。
+- 内置 `team-aligned-assistant` Skill 随应用打包，不依赖远端下载。
+- Agent 级 Skill 白名单。
+- 当前会话 active Skill。
+- Skill `SKILL.md` 注入 prompt。
+- Skill `scripts/` 转成 runtime tools。
+- Skill 安装、同步、移除、启用的 UI 反馈。
 
-### 当前实现
+## MCP
 
-Skills 已经采用“远端 registry + 本地全局安装 + Agent 白名单”的模式。
+MCP 当前支持：
 
-当前能力包括：
+- `stdio npx` 型 MCP。
+- `HTTP + headers` 型 MCP。
+- catalog 同步。
+- 本地连接配置。
+- 健康检查。
+- tool discovery。
+- Agent 级 MCP 白名单。
+- runtime 注入 discovered tools。
 
-- 从 GitHub skills 仓库同步 catalog
-- 安装整个 skill 目录到 `~/.teamaligned/skills`
-- 读取 `SKILL.md`
-- 允许 Agent 配置 skill 白名单
-- `/skills` 查看和切换当前会话 skill
-- 将 Skill 定义注入到单聊 prompt
-- 将 Skill `scripts/` 转成 runtime tools
+当前尚未完成：
 
-### 当前边界
+- MCP tool 级白名单。
+- OAuth 型 MCP 授权流。
+- 更细的高风险 tool 确认机制。
 
-当前 Skill 已经参与 runtime，但还没有独立的“Skill 执行过程 UI”。
+## Web Tools
 
-## MCP 架构
+所有 Agent 可用：
 
-### 当前支持范围
+- `web_search`：优先使用 Provider native web search，失败或不支持时走内置 fallback。
+- `web_fetch`：抓取网页、抽取正文、截断输出并返回来源信息。
 
-第一版 MCP 当前明确支持：
+Web 工具遵循开放访问策略，但有技术保护：
 
-- `stdio npx` 型 MCP
-- `HTTP + headers` 型 MCP
+- 仅允许 HTTP/HTTPS。
+- 限制超时。
+- 限制重定向次数。
+- 限制响应体大小。
+- 限制输出长度。
 
-当前明确不支持：
+## 持久层
 
-- OAuth 型 MCP
+TeamAligned 的本地数据固定在 `~/.teamaligned`。
 
-### 当前能力
+### 配置层
 
-MCP 当前已经具备：
+`~/.teamaligned/settings.json`
 
-- 从 GitHub MCP registry 同步 catalog
-- 本地保存连接配置
-- 本地连接健康检查
-- tool discovery
-- Agent / Team 白名单
-- 将 discovered tools 注入 DeepAgents runtime
-- `/mcp`、`/mcp use`、`/mcp tools`
+保存：
 
-### 当前边界
-
-MCP 当前尚未完成：
-
-- tool 级白名单
-- OAuth 远端授权流
-- 更强的服务模板与专用适配
-
-## 持久层架构
-
-当前持久层已经明确拆成三层：
-
-### 1. 配置层
-
-路径：`~/.teamaligned/settings.json`
-
-负责：
-
-- 外观
+- 主题
 - 语言
-- 通知开关
-- 当前激活 provider
-- provider 列表
-- 个人资料
+- 通知设置
+- 当前 Provider
+- 个人信息
 
-### 2. 结构化运行态
+### 结构化数据层
 
-路径：`~/.teamaligned/app.db`
+`~/.teamaligned/app.db`
 
-当前主要表包括：
+主要表：
 
 - `settings_entries`
 - `providers`
@@ -379,6 +255,7 @@ MCP 当前尚未完成：
 - `runs`
 - `notifications`
 - `extensions`
+- `prompt_aliases`
 - `skill_catalog`
 - `mcp_catalog`
 - `mcp_connections`
@@ -387,115 +264,77 @@ MCP 当前尚未完成：
 - `tool_invocations`
 - `run_steps`
 
-其中 `agents / teams / providers / notifications / conversations / messages / runs`
-都已经具备正式结构化列与索引，不再只是纯 payload 存储。
+### 文件层
 
-### 3. 文件层
+主要目录：
 
-路径位于 `~/.teamaligned` 下的多个目录：
+- `~/.teamaligned/transcripts`
+- `~/.teamaligned/workspaces/agents/*`
+- `~/.teamaligned/workspaces/teams/*`
+- `~/.teamaligned/avatars/profile`
+- `~/.teamaligned/avatars/agents`
+- `~/.teamaligned/avatars/teams`
+- `~/.teamaligned/skills`
 
-- `transcripts/`
-- `workspaces/agents/*`
-- `workspaces/teams/*`
-- `avatars/profile`
-- `avatars/agents`
-- `avatars/teams`
-- `workspaces/**/artifacts/attachments`
-- `skills/*`
+Agent / Team workspace 内部运行文件放在：
 
-当前运行时不再执行旧目录兼容迁移，数据根目录固定为 `~/.teamaligned`。历史 `~/teamaligned`、`userData/teamaligned` 与 `app-state.json` 不会在启动时自动导入；如果检测到旧版不兼容 schema，会直接给出重建 `app.db` 的提示。
+```text
+${workspace}/.team-aligned/
+├─ artifacts/
+├─ attachments/
+├─ memory/
+└─ sessions/
+```
 
-### 历史对话存储方式
+workspace 根目录留给用户生成和管理真实文件。
 
-当前历史对话有两份：
+## 通知
 
-- SQLite `messages` 作为主查询源
-- JSONL transcript 作为审计流水
+通知分两层：
 
-也就是说：
+- 应用内通知中心。
+- macOS 系统通知。
 
-- UI 加载历史消息主要读 SQLite
-- 导出、审计、人工检查依赖 transcript 文件
+规则：
 
-## 数据与页面的映射
+- 应用在前台时不触发系统通知。
+- 当前会话已读或刚读过时，不再把同一会话消息写入通知中心。
+- 已读会清除通知中心对应项。
+- 点击系统通知可回到对应会话。
+- 设置页提供通知权限引导和系统设置跳转。
 
-### 会话页
+## 导出与诊断
 
-依赖：
+当前支持：
 
-- `conversations`
-- `messages`
-- `runs`
-- `run_steps`
-- `attachments`
-- `artifacts`
-- `tool_invocations`
+- 会话数据导出。
+- 选择消息导出长图。
+- 诊断 JSON 导出。
+- 打开诊断目录。
 
-### 管理页
+诊断导出默认脱敏：
 
-依赖：
+- API Key
+- MCP 环境变量值
+- MCP 请求头值
 
-- `agents`
-- `teams`
-- Agent Skill 白名单
-- Agent MCP 白名单
+## 当前主要边界
 
-### 扩展页
+当前架构还需要继续增强：
 
-依赖：
+- 群聊真实 Provider 回放覆盖不足。
+- 长任务 checkpoint / failure recovery 仍不完整。
+- MCP tool 级白名单尚未实现。
+- OAuth 型 MCP 尚未实现。
+- transcript / artifact / attachment 的项目包导出仍需完善。
+- 关键聊天 UI 组件测试和 Electron E2E 测试仍不足。
 
-- `skill_catalog`
-- `mcp_catalog`
-- `mcp_connections`
-- 本地 `skills/` 安装目录
+## 下一阶段建议
 
-### 设置页
+优先顺序：
 
-依赖：
-
-- `settings.json`
-- provider 连通性测试接口
-
-## 当前已经具备的能力
-
-截至当前版本，项目已经具备以下核心能力：
-
-- Electron 桌面应用可运行
-- Figma 对齐后的核心 UI 已落成
-- 单聊真实模型调用
-- 群聊真实自然发言编排
-- slash command：`/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>`
-- Skills registry / 安装 / 激活 / 脚本执行
-- MCP registry / 配置 / 健康检查 / 白名单 / runtime 注入
-- workspace 文件 / 搜索 / 命令工具层
-- 附件上传与图片预览
-- 单聊图片理解
-- run 详情、artifact、attachment、tool invocation 可视化
-- 应用内通知中心与系统通知主链路
-- `settings.json` + `app.db` + 文件层三层持久化
-- Drizzle schema 与 migration
-
-## 当前明确尚未完成的能力
-
-当前还没有完成，或仅完成一部分的能力包括：
-
-- MCP tool 级白名单
-- OAuth 型 MCP 授权流
-- 更完整的导出与备份
-- 全文搜索
-- 更强的群聊失败恢复与 checkpoint
-- 更系统的测试体系
-- 打包、签名、发布链路
-
-## 近期建议
-
-如果后续继续开发，建议优先顺序是：
-
-1. 聊天主链路体验打磨与通知机制验证
-2. 群聊失败恢复与统一错误态
-3. MCP tool 级白名单与配置模板
-4. 导出 / transcript / artifact 打包
-5. 全文搜索
-6. 测试与发布链路
-
-这几项完成后，系统会从“高级可体验原型”更进一步走向“可长期使用的本地应用”。
+1. 群聊真实回放与失败恢复。
+2. 工具权限、MCP tool 级白名单和高风险操作提示。
+3. 长任务 checkpoint 与可恢复执行。
+4. 项目包导出和全文搜索。
+5. 发布检查、安装体验和 E2E 测试。

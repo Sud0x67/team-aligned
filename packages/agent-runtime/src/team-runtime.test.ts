@@ -241,6 +241,162 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
   assert.equal(result.mode, "multi_voice");
 });
 
+test("selectNaturalTeamSpeakers treats normal no-mention input as a fresh focused turn", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await selectNaturalTeamSpeakers({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: {
+      activeAgentId: "agent-coder",
+      lastSpeakerId: "agent-coder",
+      nextAgentIds: ["agent-coder"],
+      reason: "上一轮接棒",
+      revision: 1,
+      updatedAt: Date.now(),
+    },
+    history: [],
+    userInput: "请根据这句话判断谁最适合回应：我们需要一个发布前检查清单。",
+    explicitMentionIds: [],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "chat",
+        mode: "focused",
+        speakerIds: ["agent-designer", "agent-coder"],
+        reason: "planner response",
+        activeTask: "",
+        nextPhase: "",
+        decision: "",
+        workItems: [],
+      }),
+    },
+  });
+
+  assert.deepEqual(
+    result.speakers.map((item) => item.id),
+    ["agent-designer"],
+  );
+});
+
+test("selectNaturalTeamSpeakers keeps handoff continuity for explicit follow-up wording", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await selectNaturalTeamSpeakers({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: {
+      activeAgentId: "agent-coder",
+      lastSpeakerId: "agent-coder",
+      nextAgentIds: ["agent-coder"],
+      reason: "上一轮接棒",
+      revision: 1,
+      updatedAt: Date.now(),
+    },
+    history: [],
+    userInput: "继续这个任务，补一个实现说明。",
+    explicitMentionIds: [],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "chat",
+        mode: "focused",
+        speakerIds: ["agent-designer"],
+        reason: "planner response",
+        activeTask: "",
+        nextPhase: "",
+        decision: "",
+        workItems: [],
+      }),
+    },
+  });
+
+  assert.deepEqual(
+    result.speakers.map((item) => item.id),
+    ["agent-coder"],
+  );
+});
+
 test("planTeamTurn uses planner intent for execute path", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
@@ -617,6 +773,155 @@ test("planTeamTurn falls back safely when planner fails", async () => {
   assert.equal(result.intent, "chat");
   assert.equal(result.mode, "collaboration");
   assert.equal(result.speakers.length, 3);
+});
+
+test("planTeamTurn falls back quickly when planner times out", async () => {
+  const previousTimeout = process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+  process.env.TA_TEAM_PLANNER_TIMEOUT_MS = "5";
+  try {
+    const members = [
+      makeAgent("agent-coder", "coder", "Coder"),
+      makeAgent("agent-designer", "designer", "Designer"),
+    ];
+    const provider: ProviderConfig = {
+      id: "qwen",
+      label: "Qwen",
+      baseUrl: "https://example.com",
+      apiKey: "dummy",
+      defaultModel: "qwen3.6-plus",
+      supportsToolCalling: true,
+      supportsStreaming: true,
+      isActive: true,
+    };
+    const context: TeamContext = {
+      phase: "讨论中",
+      constraints: [],
+      activeTasks: [],
+      recentDecisions: [],
+      pinnedArtifacts: [],
+      workspaceSummary: "",
+    };
+    const team: TeamRecord = {
+      id: "team-1",
+      name: "产品开发组",
+      description: "",
+      avatar: "产",
+      avatarPath: null,
+      avatarColor: "#7c3aed",
+      workspacePath: "/tmp",
+      memberIds: members.map((item) => item.id),
+      context,
+    };
+    const profile: UserProfile = {
+      name: "User",
+      bio: "",
+      avatarPath: null,
+    };
+
+    const result = await planTeamTurn({
+      provider,
+      team,
+      members,
+      profile,
+      context,
+      handoff: null,
+      history: [],
+      userInput: "@Coder 请调用 web_fetch 抓取 https://example.com 并总结。",
+      explicitMentionIds: ["agent-coder"],
+      mcpServers: [],
+      planner: {
+        invoke: () => new Promise(() => {}),
+      },
+    });
+
+    assert.equal(result.intent, "chat");
+    assert.equal(result.speakers[0]?.id, "agent-coder");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+    } else {
+      process.env.TA_TEAM_PLANNER_TIMEOUT_MS = previousTimeout;
+    }
+  }
+});
+
+test("planTeamTurn fallback preserves named sequential owners and file targets", async () => {
+  const previousTimeout = process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+  process.env.TA_TEAM_PLANNER_TIMEOUT_MS = "5";
+  try {
+    const members = [
+      makeAgent("agent-coder", "coder", "Coder"),
+      makeAgent("agent-designer", "designer", "Designer"),
+      makeAgent("agent-planner", "planner", "Planner"),
+    ];
+    const provider: ProviderConfig = {
+      id: "qwen",
+      label: "Qwen",
+      baseUrl: "https://example.com",
+      apiKey: "dummy",
+      defaultModel: "qwen3.6-plus",
+      supportsToolCalling: true,
+      supportsStreaming: true,
+      isActive: true,
+    };
+    const context: TeamContext = {
+      phase: "讨论中",
+      constraints: [],
+      activeTasks: [],
+      recentDecisions: [],
+      pinnedArtifacts: [],
+      workspaceSummary: "",
+    };
+    const team: TeamRecord = {
+      id: "team-1",
+      name: "产品开发组",
+      description: "",
+      avatar: "产",
+      avatarPath: null,
+      avatarColor: "#7c3aed",
+      workspacePath: "/tmp",
+      memberIds: members.map((item) => item.id),
+      context,
+    };
+    const profile: UserProfile = {
+      name: "User",
+      bio: "",
+      avatarPath: null,
+    };
+
+    const result = await planTeamTurn({
+      provider,
+      team,
+      members,
+      profile,
+      context,
+      handoff: null,
+      history: [],
+      userInput:
+        "请进入执行模式：Designer 必须先创建 docs/replay-design-brief.md；Coder 必须等待 Designer 完成后读取这个文件，再创建 src/replay-implementation-notes.md。",
+      explicitMentionIds: [],
+      mcpServers: [],
+      planner: {
+        invoke: () => new Promise(() => {}),
+      },
+    });
+
+    assert.equal(result.intent, "execute");
+    assert.deepEqual(
+      result.workItems.map((item) => item.owner.id),
+      ["agent-designer", "agent-coder"],
+    );
+    assert.deepEqual(result.workItems[0]?.writeTargets, ["docs/replay-design-brief.md"]);
+    assert.deepEqual(result.workItems[1]?.readTargets, ["docs/replay-design-brief.md"]);
+    assert.deepEqual(result.workItems[1]?.writeTargets, ["src/replay-implementation-notes.md"]);
+    assert.deepEqual(result.workItems[1]?.dependsOnAgentIds, ["agent-designer"]);
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+    } else {
+      process.env.TA_TEAM_PLANNER_TIMEOUT_MS = previousTimeout;
+    }
+  }
 });
 
 test("normalizeTeamHandoffState filters invalid ids and keeps only current team members", () => {

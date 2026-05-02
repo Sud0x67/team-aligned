@@ -70,3 +70,43 @@
 
 - 第二期目标（`@` + handoff 连续多轮稳定性）已完成并进入自动化回归范围。
 - 当前剩余重点转向：群聊过程消息体验收口与导出能力最小可用。
+
+---
+
+## 真实 Provider 回放补充（2026-05-02）
+
+本轮使用真实 Qwen / DashScope Provider 跑完整群聊可靠性回放。每个场景使用独立临时 runtime、独立群组会话和独立 workspace，避免长上下文或失败 run 污染后续场景。
+
+### 执行环境
+
+- Provider: Qwen / DashScope OpenAI-compatible
+- Model: `qwen3.5-plus`
+- API Key: 已脱敏
+- 命令：`npm run test:provider-replay`
+- 报告：`/var/folders/s8/txhb_s8x7ndd7t90zhy1jgxc0000gn/T/teamaligned-provider-replay-KpXOe9/provider-replay-report.json`
+
+### 回放结果
+
+| 场景 | 验收重点 | 结果 | 耗时 |
+|---|---|---:|---:|
+| `@` 指定 Agent | Coder 被明确 @ 后独占回复，不被其他 Agent 抢答 | ✅ 通过 | 86s |
+| 无 `@` 自动选人 | planner / fallback 能选择合适 Agent，并输出 selection 过程消息 | ✅ 通过 | 85s |
+| 多轮 handoff | Designer -> Coder 接棒稳定，handoff 过程消息存在 | ✅ 通过 | 42s |
+| 并行执行 | 互不依赖文件可并行执行，并触发 `write_text_file` | ✅ 通过 | 84s |
+| 依赖等待 | Coder 等待 Designer，出现 `execution_waiting`，并完成 read/write 工具链路 | ✅ 通过 | 92s |
+| 图片附件 | 群聊 Agent 能读取图片并回答主色 | ✅ 通过 | 35s |
+| Web 工具 | `web_fetch` 可抓取 `https://example.com`，过程消息与来源链接可见 | ✅ 通过 | 38s |
+| 取消 | 运行中取消后 run 进入 `cancelled`，handoff 被重置 | ✅ 通过 | 1s |
+| `/clear` | 清理消息、runs 和 handoff 状态 | ✅ 通过 | 1s |
+
+### 本轮修复
+
+- 回放脚本改为每个场景独立 runtime，避免上一场景的长上下文、未完成 run 或取消状态污染下一场景。
+- 群聊 planner 增加默认 30 秒超时，超时后走本地 fallback，避免真实 Provider 长尾导致群聊像卡住。
+- fallback 执行计划现在能识别用户文本里的 Agent 名称和 workspace 路径，例如 `Designer`、`Coder`、`docs/...`、`src/...`。
+- 依赖等待验收收紧为：必须有 waiting 过程消息、`read_text_file`、`write_text_file`，且不能出现失败工具调用。
+
+### 残余观察（非阻断）
+
+- 真实 Provider 仍可能出现网络长尾或偶发连接超时；当前 runtime 会给出可读错误提示，回放脚本可单场景重跑。
+- 无 `@` 自动选人仍依赖 planner，超时回退后可靠性更高，但下一步仍可继续优化速度与过程消息密度。

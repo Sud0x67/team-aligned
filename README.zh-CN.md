@@ -17,7 +17,7 @@
 - 运行时：Node.js 22+ + TypeScript
 - Agent 编排：DeepAgents + LangChain + LangGraph
 - 本地数据层：SQLite + Drizzle + better-sqlite3
-- 本地能力：文件系统、终端、搜索、MCP、Skills
+- 本地能力：文件系统、终端、搜索、网页抓取/搜索、MCP、Skills
 - 模型供应商：OpenAI + Qwen（DashScope）
 
 ## 仓库结构

@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { createDeepAgent, FilesystemBackend } from "deepagents";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MemorySaver } from "@langchain/langgraph";
 import { z } from "zod";
 import type {
   AgentRecord,
+  AttachmentAssetRecord,
   McpCatalogRecord,
   McpConnectionRecord,
   ProviderConfig,
@@ -28,6 +30,7 @@ export const MAX_AGENT_WORK_ITEMS = 5;
 export const MAX_TEAM_TURN_MESSAGES = 50;
 export const MAX_TEAM_SUBROUNDS = 5;
 export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
+const DEFAULT_TEAM_PLANNER_TIMEOUT_MS = 30_000;
 
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
 
@@ -126,6 +129,128 @@ type RawTeamTurnPlan = z.infer<typeof teamTurnPlanSchema>;
 type StructuredTeamTurnPlanner = {
   invoke(input: string): Promise<unknown> | unknown;
 };
+
+type WorkerUserContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+
+function getTeamPlannerTimeoutMs() {
+  const configured = Number(process.env.TA_TEAM_PLANNER_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_TEAM_PLANNER_TIMEOUT_MS;
+}
+
+async function withTeamPlannerTimeout<T>(promise: Promise<T> | T) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error("Team turn planner timed out"));
+        }, getTeamPlannerTimeoutMs());
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function buildAttachmentImageDataUrl(attachment: AttachmentAssetRecord) {
+  const data = readFileSync(attachment.path).toString("base64");
+  return `data:${attachment.mimeType};base64,${data}`;
+}
+
+function buildWorkerUserContent(
+  message: string,
+  attachments: AttachmentAssetRecord[],
+  responseLanguage: RuntimeLanguage,
+): WorkerUserContent {
+  const imageAttachments = attachments.filter((attachment) => attachment.mimeType.startsWith("image/"));
+  if (imageAttachments.length === 0) {
+    return message;
+  }
+
+  const content: Exclude<WorkerUserContent, string> = [
+    {
+      type: "text",
+      text: [
+        message,
+        "",
+        byLanguage(responseLanguage, {
+          zh: "请理解并结合下面上传的图片内容进行群聊回复。若图片无法读取，请明确说明。",
+          en: "Please use the uploaded image content in the group reply. If any image cannot be read, state that clearly.",
+        }),
+      ].join("\n"),
+    },
+  ];
+
+  for (const attachment of imageAttachments) {
+    try {
+      content.push({
+        type: "image_url",
+        image_url: { url: buildAttachmentImageDataUrl(attachment) },
+      });
+    } catch {
+      content.push({
+        type: "text",
+        text: byLanguage(responseLanguage, {
+          zh: `图片 ${attachment.name} 读取失败，路径：${attachment.path}`,
+          en: `Failed to read image ${attachment.name}. Path: ${attachment.path}`,
+        }),
+      });
+    }
+  }
+
+  return content;
+}
+
+function shouldUseWorkerToolsForNaturalChat(input: {
+  userInput: string;
+  attachments?: AttachmentAssetRecord[];
+}) {
+  if ((input.attachments?.length ?? 0) > 0) {
+    return true;
+  }
+  return /web[_\s-]?(fetch|search)|https?:\/\/|网页|网站|联网|搜索|检索|抓取|打开链接|读取文件|查看文件|写文件|创建文件|修改文件|#\S+/.test(
+    input.userInput,
+  );
+}
+
+async function invokeDirectTeamChatText(input: {
+  provider: ProviderConfig;
+  systemPrompt: string;
+  message: string;
+  onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+}) {
+  const model = createProviderModel(input.provider);
+  const messages = [
+    { role: "system" as const, content: input.systemPrompt },
+    { role: "user" as const, content: input.message },
+  ];
+  if (input.provider.supportsStreaming) {
+    const stream = await model.stream(messages);
+    let aggregatedText = "";
+    for await (const chunk of stream) {
+      const deltaText = normalizeMessageContent(
+        chunk && typeof chunk === "object" && "content" in chunk ? chunk.content : chunk,
+      );
+      if (!deltaText) continue;
+      aggregatedText = `${aggregatedText}${deltaText}`;
+      await input.onTextStream?.(aggregatedText, deltaText);
+    }
+    if (aggregatedText.trim()) {
+      return aggregatedText.trim();
+    }
+  }
+  return extractAgentText(await model.invoke(messages));
+}
 
 function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
@@ -258,6 +383,13 @@ function fallbackModeForInput(userInput: string): NaturalTeamMode {
   return "focused";
 }
 
+export function shouldApplyTeamHandoffContinuity(userInput: string) {
+  const normalized = userInput.toLowerCase();
+  return /继续|接着|上面|上一步|上一轮|刚才|前面|这个|这部分|它|接棒|handoff|continue|previous|last turn|same task|that part|this part/.test(
+    normalized,
+  );
+}
+
 function selectFallbackSpeakers(input: {
   members: AgentRecord[];
   explicitMentionIds: string[];
@@ -297,7 +429,13 @@ function selectFallbackSpeakers(input: {
     if (/计划|拆解|规划|优先级|路线|todo/.test(normalized) && /计划|项目|planner|经理|pm/.test(haystack)) score += 5;
     if (/数据|分析|指标|统计|图表/.test(normalized) && /数据|分析|analyst|nova/.test(haystack)) score += 5;
     if (/研究|调研|竞品|资料|搜索/.test(normalized) && /研究|调研|research/.test(haystack)) score += 5;
-    if (input.activeAgentId && input.activeAgentId === agent.id) score += 4;
+    if (
+      input.activeAgentId &&
+      input.activeAgentId === agent.id &&
+      shouldApplyTeamHandoffContinuity(input.userInput)
+    ) {
+      score += 4;
+    }
     return { agent, score };
   });
 
@@ -306,7 +444,7 @@ function selectFallbackSpeakers(input: {
       ? Math.min(TEAM_MEMBER_LIMIT, input.members.length)
       : mode === "multi_voice"
         ? Math.min(4, input.members.length)
-        : Math.min(2, input.members.length);
+        : 1;
   return {
     mode,
     speakers: scored
@@ -479,6 +617,44 @@ function normalizeTargetPath(value: string) {
   return value.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
 }
 
+function extractWorkspacePathMentions(value: string) {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const pattern =
+    /(?:^|[\s`"'“”‘’([{（,，;；:：])((?!https?:\/\/)(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+)(?=$|[\s`"'“”‘’)\]}）,，;；。.!?！？])/g;
+  for (const match of value.matchAll(pattern)) {
+    const path = normalizeTargetPath(match[1] ?? "");
+    if (!path || seen.has(path)) {
+      continue;
+    }
+    seen.add(path);
+    paths.push(path);
+  }
+  return paths;
+}
+
+function findNamedMembersInText(userInput: string, members: AgentRecord[]) {
+  const normalized = userInput.toLowerCase();
+  return members
+    .map((agent) => {
+      const candidates = [
+        agent.name,
+        agent.id,
+        agent.id.replace(/^agent-/, ""),
+      ]
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length >= 2);
+      const index = candidates.reduce((current, candidate) => {
+        const found = normalized.indexOf(candidate);
+        return found >= 0 && (current < 0 || found < current) ? found : current;
+      }, -1);
+      return { agent, index };
+    })
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.agent);
+}
+
 function pathOverlaps(left: string, right: string) {
   const a = normalizeTargetPath(left);
   const b = normalizeTargetPath(right);
@@ -529,6 +705,7 @@ async function invokeWorkerText(input: {
   workspacePath: string;
   systemPrompt: string;
   message: string;
+  attachments?: AttachmentAssetRecord[];
   threadId: string;
   memoryPaths?: string[];
   mcpServers?: McpCatalogRecord[];
@@ -540,7 +717,13 @@ async function invokeWorkerText(input: {
   responseLanguage?: RuntimeLanguage;
 }) {
   const worker = createEphemeralWorker(input);
-  const messages = [{ role: "user" as const, content: input.message }];
+  const responseLanguage = input.responseLanguage ?? "zh";
+  const messages = [
+    {
+      role: "user" as const,
+      content: buildWorkerUserContent(input.message, input.attachments ?? [], responseLanguage),
+    },
+  ];
 
   if (
     ((input.provider.supportsStreaming && input.onTextStream) || input.onDeepAgentToolInvocation) &&
@@ -601,7 +784,7 @@ async function invokeWorkerText(input: {
   return (
     extractAgentText(result) ||
     normalizeMessageContent(result) ||
-    byLanguage(input.responseLanguage ?? "zh", {
+    byLanguage(responseLanguage, {
       zh: "模型已完成调用，但没有返回可显示的文本内容。",
       en: "The model finished the call, but returned no displayable text.",
     })
@@ -636,30 +819,79 @@ function buildFallbackExecutionPlan(input: {
   responseLanguage: RuntimeLanguage;
 }) {
   const fallback = selectFallbackSpeakers(input);
-  const owners = fallback.speakers.slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
   const normalizedInput = input.userInput.toLowerCase();
   const prefersParallel = /并行|同时|simultaneous|in parallel|parallel/.test(normalizedInput);
   const prefersSequential =
     !prefersParallel &&
     /(先.*(再|然后)|完成后|结束后|基于.*结果|依赖|等待|after|then|once)/.test(normalizedInput);
-  const workItems = owners.map((owner, index) => ({
-    id: `work-${index + 1}`,
-    owner,
-    summary: byLanguage(input.responseLanguage, {
-      zh: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分`,
-      en: `Handle the part of "${compact(input.userInput)}" related to ${owner.role}`,
-    }),
-    kickoffMessage:
-      index === 0
-        ? byLanguage(input.responseLanguage, { zh: "我先开始处理这个部分。", en: "I'll start with this part first." })
-        : prefersSequential
-          ? byLanguage(input.responseLanguage, { zh: "我会等前置部分完成后继续接棒。", en: "I'll wait for prerequisites to finish, then continue." })
-          : byLanguage(input.responseLanguage, { zh: "我这边也同步处理一部分。", en: "I'll handle another part in parallel." }),
-    readTargets: [],
-    writeTargets: [],
-    dependsOnAgentIds: prefersSequential && index > 0 ? [owners[index - 1]?.id].filter(Boolean) : [],
-    canRunInParallel: prefersParallel || !prefersSequential,
-  }));
+  const namedOwners = findNamedMembersInText(input.userInput, input.members);
+  let owners = Array.from(
+    new Map([...namedOwners, ...fallback.speakers].map((owner) => [owner.id, owner])).values(),
+  ).slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
+  if (prefersSequential && owners.length < Math.min(2, input.members.length)) {
+    const existing = new Set(owners.map((owner) => owner.id));
+    owners = [
+      ...owners,
+      ...input.members.filter((member) => !existing.has(member.id)),
+    ].slice(0, Math.min(2, input.members.length));
+  }
+
+  const pathMentions = extractWorkspacePathMentions(input.userInput);
+  const workItems = owners.map((owner, index) => {
+    const previousOwner = owners[index - 1] ?? null;
+    let readTargets: string[] = [];
+    let writeTargets: string[] = [];
+    if (pathMentions.length > 0) {
+      if (prefersSequential && owners.length > 1) {
+        if (index === 0) {
+          writeTargets = pathMentions[0] ? [pathMentions[0]] : [];
+        } else if (index === 1) {
+          readTargets = pathMentions[0] ? [pathMentions[0]] : [];
+          writeTargets = pathMentions[1] ? [pathMentions[1]] : [];
+        } else {
+          writeTargets = pathMentions[index] ? [pathMentions[index]] : [];
+        }
+      } else {
+        writeTargets = pathMentions[index] ? [pathMentions[index]] : [];
+      }
+    }
+
+    const targetSummary = [
+      readTargets.length > 0
+        ? byLanguage(input.responseLanguage, {
+            zh: `读取 ${formatList(readTargets, input.responseLanguage)}`,
+            en: `read ${formatList(readTargets, input.responseLanguage)}`,
+          })
+        : "",
+      writeTargets.length > 0
+        ? byLanguage(input.responseLanguage, {
+            zh: `产出 ${formatList(writeTargets, input.responseLanguage)}`,
+            en: `write ${formatList(writeTargets, input.responseLanguage)}`,
+          })
+        : "",
+    ]
+      .filter(Boolean)
+      .join(byLanguage(input.responseLanguage, { zh: "，", en: ", " }));
+
+    return {
+      id: `work-${index + 1}`,
+      owner,
+      summary: byLanguage(input.responseLanguage, {
+        zh: `处理“${compact(input.userInput)}”中与 ${owner.role} 相关的部分${targetSummary ? `，${targetSummary}` : ""}`,
+        en: `Handle the part of "${compact(input.userInput)}" related to ${owner.role}${targetSummary ? `, ${targetSummary}` : ""}`,
+      }),
+      kickoffMessage:
+        index === 0
+          ? byLanguage(input.responseLanguage, { zh: "我先开始处理这个部分。", en: "I'll start with this part first." })
+          : prefersSequential
+            ? byLanguage(input.responseLanguage, { zh: "我会等前置部分完成后继续接棒。", en: "I'll wait for prerequisites to finish, then continue." })
+            : byLanguage(input.responseLanguage, { zh: "我这边也同步处理一部分。", en: "I'll handle another part in parallel." }),
+      readTargets,
+      writeTargets,
+      dependsOnAgentIds: prefersSequential && previousOwner ? [previousOwner.id] : [],
+      canRunInParallel: prefersParallel || !prefersSequential,
+    };
+  });
 
   return {
     reason: byLanguage(input.responseLanguage, {
@@ -793,7 +1025,9 @@ function buildFallbackTeamTurnPlan(input: {
           mode: fallback.mode,
           speakers: fallback.speakers,
           members: input.members,
-          activeAgentId: input.activeAgentId ?? null,
+          activeAgentId: shouldApplyTeamHandoffContinuity(input.userInput)
+            ? (input.activeAgentId ?? null)
+            : null,
         });
   const clampedSpeakers = clampSpeakersForMode({
     mode: fallback.mode,
@@ -854,6 +1088,8 @@ export async function planTeamTurn(input: {
 }) {
   const responseLanguage = input.responseLanguage ?? "zh";
   const cappedMembers = input.members.slice(0, TEAM_MEMBER_LIMIT);
+  const shouldContinueHandoff = shouldApplyTeamHandoffContinuity(input.userInput);
+  const effectiveHandoff = shouldContinueHandoff ? input.handoff : null;
   if (cappedMembers.length === 0) {
     return {
       intent: "chat",
@@ -873,14 +1109,14 @@ export async function planTeamTurn(input: {
   const fallback = buildFallbackTeamTurnPlan({
     members: cappedMembers,
     explicitMentionIds: input.explicitMentionIds,
-    activeAgentId: input.handoff?.activeAgentId ?? null,
+    activeAgentId: effectiveHandoff?.activeAgentId ?? null,
     userInput: input.userInput,
     responseLanguage,
   });
 
   try {
     const planner = input.planner ?? createTeamIntentAgent({ provider: input.provider });
-    const rawResult = await planner.invoke(
+    const rawResult = await withTeamPlannerTimeout(planner.invoke(
         byLanguage(responseLanguage, {
           zh: [
             "你是 teamaligned 群聊中的不可见 system orchestrator。",
@@ -897,6 +1133,8 @@ export async function planTeamTurn(input: {
             "- multi_voice: 2-4 个 Agent",
             "- collaboration: 3-5 个 Agent",
             "- 如果用户显式 @，这些 Agent 必须出现在 speakerIds 或 work item owner 中",
+            "- 如果用户没有显式 @ 且只是普通问答/判断，优先 focused 且只选择 1 个最相关 Agent",
+            "- 只有用户表达继续、接着、上面、刚才、previous、continue 等延续语义时，才沿用上一轮 handoff",
             "",
             "execute 规则：",
             "- work item 应尽量让不同角色处理不同文件或不同分工",
@@ -947,6 +1185,8 @@ export async function planTeamTurn(input: {
             "- multi_voice: 2-4 agents",
             "- collaboration: 3-5 agents",
             "- If users explicitly @ mention agents, those agents must appear in speakerIds or work item owners",
+            "- If there is no explicit @ and this is a normal Q&A/judgment, prefer focused with exactly 1 best-matching agent",
+            "- Only continue the previous handoff when the user says continue/previous/that part/this part or an equivalent follow-up phrase",
             "",
             "Execution rules:",
             "- Work items should let different roles own different files or responsibilities",
@@ -983,7 +1223,7 @@ export async function planTeamTurn(input: {
             "- speakerIds and ownerAgentId must come from roster ids.",
           ],
         }).join("\n"),
-    );
+    ));
     const result = teamTurnPlanSchema.parse(rawResult);
     const plannerIntent =
       result.intent === "chat" && fallback.intent === "execute" && input.explicitMentionIds.length > 0
@@ -1002,13 +1242,16 @@ export async function planTeamTurn(input: {
             mode,
             speakers: rawSpeakers.length > 0 ? rawSpeakers : fallback.speakers,
             members: cappedMembers,
-            activeAgentId: input.handoff?.activeAgentId ?? null,
+            activeAgentId: effectiveHandoff?.activeAgentId ?? null,
           });
-    const speakers = clampSpeakersForMode({
+    let speakers = clampSpeakersForMode({
       mode,
       speakers: preferredSpeakers,
       members: cappedMembers,
     });
+    if (plannerIntent === "chat" && input.explicitMentionIds.length === 0 && mode === "focused") {
+      speakers = speakers.slice(0, 1);
+    }
 
     const mappedWorkItems = mapExecutionWorkItems({
       rawWorkItems: result.workItems ?? [],
@@ -1192,6 +1435,7 @@ export async function executeNaturalTeamWorkItem(input: {
   profile: UserProfile;
   context: TeamContext;
   userInput: string;
+  attachments?: AttachmentAssetRecord[];
   workspacePath: string;
   conversationId: string;
   runId: string;
@@ -1288,6 +1532,7 @@ export async function executeNaturalTeamWorkItem(input: {
       workspacePath: input.workspacePath,
       systemPrompt,
       message,
+      attachments: input.attachments,
       threadId: `${input.conversationId}:${input.runId}:${input.workItem.owner.id}:execution`,
       memoryPaths: ["/.team-aligned/memory/MEMORY.md"],
       mcpServers: input.mcpServers,
@@ -1357,6 +1602,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   context: TeamContext;
   mode: NaturalTeamMode;
   userInput: string;
+  attachments?: AttachmentAssetRecord[];
   roundIndex: number;
   previousTurnMessages: NaturalTeamAgentMessage[];
   workspacePath: string;
@@ -1457,23 +1703,35 @@ export async function generateNaturalTeamAgentMessage(input: {
     ],
   }).join("\n");
 
+  const needsWorkerTools = shouldUseWorkerToolsForNaturalChat({
+    userInput: input.userInput,
+    attachments: input.attachments,
+  });
   const content = compact(
-    await invokeWorkerText({
-      name: input.speaker.name,
-      provider: input.provider,
-      workspacePath: input.workspacePath,
-      systemPrompt,
-      message,
-      threadId: `${input.conversationId}:${input.runId}:${input.speaker.id}:chat:${input.roundIndex}`,
-      memoryPaths: ["/.team-aligned/memory/MEMORY.md"],
-      mcpServers: input.mcpServers,
-      mcpConnections: input.mcpConnections,
-      onMcpInvocation: input.onMcpInvocation,
-      onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
-      onTextStream: input.onTextStream,
-      responseLanguage,
-      additionalTools: input.additionalTools,
-    }),
+    needsWorkerTools
+      ? await invokeWorkerText({
+          name: input.speaker.name,
+          provider: input.provider,
+          workspacePath: input.workspacePath,
+          systemPrompt,
+          message,
+          attachments: input.attachments,
+          threadId: `${input.conversationId}:${input.runId}:${input.speaker.id}:chat:${input.roundIndex}`,
+          memoryPaths: ["/.team-aligned/memory/MEMORY.md"],
+          mcpServers: input.mcpServers,
+          mcpConnections: input.mcpConnections,
+          onMcpInvocation: input.onMcpInvocation,
+          onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
+          onTextStream: input.onTextStream,
+          responseLanguage,
+          additionalTools: input.additionalTools,
+        })
+      : await invokeDirectTeamChatText({
+          provider: input.provider,
+          systemPrompt,
+          message,
+          onTextStream: input.onTextStream,
+        }),
   );
 
   if (!content || content === "[SKIP]") {

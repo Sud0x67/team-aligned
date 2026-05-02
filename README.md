@@ -17,7 +17,7 @@ It is designed to feel like natural chat software: talk to one Agent in direct c
 - Runtime: Node.js 22+ + TypeScript
 - Agent orchestration: DeepAgents + LangChain + LangGraph
 - Local data: SQLite + Drizzle + better-sqlite3
-- Local capabilities: filesystem, shell, search, MCP, Skills
+- Local capabilities: filesystem, shell, search, web fetch/search, MCP, Skills
 - Providers: OpenAI + Qwen (DashScope)
 
 ## Repository

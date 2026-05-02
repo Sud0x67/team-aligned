@@ -74,6 +74,7 @@ import {
   normalizeTeamHandoffState,
   planTeamTurn,
   resolveMentionedMembers,
+  shouldApplyTeamHandoffContinuity,
   TEAM_MEMBER_LIMIT,
   type TeamExecutionPlan,
   type TeamTurnPlan,
@@ -624,6 +625,7 @@ export class TeamalignedRuntime extends EventEmitter {
         runtimeInput,
         slashDirectives,
         explicitMentionIds,
+        attachments,
         responseLanguage,
       );
     }
@@ -2467,6 +2469,7 @@ export class TeamalignedRuntime extends EventEmitter {
     input: string,
     _slashContext: SlashDirectiveContext,
     inputMentionIds: string[] = [],
+    attachments: AttachmentAssetRecord[] = [],
     responseLanguage: RuntimeLanguage,
   ) {
     const snapshot = this.storage.getSnapshot();
@@ -2511,6 +2514,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const runId = `run-${nanoid(8)}`;
     const shouldContinueRun = () => !this.isRunTerminal(runId);
+    const shouldContinueHandoff = shouldApplyTeamHandoffContinuity(input);
     let updatedContext: TeamContext = {
       ...team.context,
       activeTasks: Array.from(
@@ -2562,7 +2566,7 @@ export class TeamalignedRuntime extends EventEmitter {
             .map((id) => members.find((agent) => agent.id === id))
             .filter((agent): agent is AgentRecord => agent !== undefined);
           const handoffAgent =
-            !mentionedAgents.length && handoffState.activeAgentId
+            !mentionedAgents.length && shouldContinueHandoff && handoffState.activeAgentId
               ? members.find((agent) => agent.id === handoffState.activeAgentId) ?? null
               : null;
           const thinkingText = byLanguage(responseLanguage, {
@@ -2927,6 +2931,7 @@ export class TeamalignedRuntime extends EventEmitter {
                       members,
                       context: updatedContext,
                       userInput: input,
+                      attachments,
                       workspacePath,
                       conversationId: conversation.id,
                       runId,
@@ -3240,6 +3245,7 @@ export class TeamalignedRuntime extends EventEmitter {
                 mode: selection.mode,
                 context: updatedContext,
                 userInput: input,
+                attachments,
                 roundIndex,
                 previousTurnMessages: turnMessages,
                 workspacePath,

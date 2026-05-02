@@ -1,89 +1,94 @@
 # Development TODO
 
-Source: [Chinese version](../todo.md)
+[中文版本](../todo.md)
 
-## Current Phase
+Updated: 2026-05-02
 
-TeamAligned has moved from feature wiring to beta hardening.
+Current version: `0.4.0-beta`
 
-## 0.3.0-beta Direct Agent Chat Polish
+## Current State
 
-Goal: make direct Agent chat the smoothest and easiest entry point into TeamAligned. Users should be able to send, stream, cancel, retry, upload files/images, and understand the active conversation capability without reading internal runtime details.
+TeamAligned has moved from feature wiring into beta hardening. The app now has a real usable core:
 
-Completed in this pass:
+- Direct Agent chat: real providers, streaming, cancel, retry, `/clear`, attachments, image understanding, Markdown, and the right info panel.
+- Team chat: explicit `@` priority, planner intent detection, handoff continuity, parallel/sequential execution, process messages, cancel, and context clearing.
+- Local tools: workspace file read/write, search, command execution, `web_search`, and `web_fetch`.
+- Extensions: Skills, Prompt Alias, MCP catalog, stdio/http MCP, and Agent-level Skill/MCP allowlists.
+- Local data: `~/.teamaligned`, SQLite, transcripts, attachments, artifacts, tool invocations, and run steps.
+- System features: notification center, system notifications, diagnostics export, conversation export, share-image export, and macOS packaging config.
 
-- [x] Moved the development version to `0.3.0-beta`.
-- [x] Focused the right conversation info panel on user-facing information: token usage, workspace, open-folder shortcut, export, and current Skill/MCP capability.
-- [x] Added a direct-chat “Retry last message” action for failed, cancelled, or unsatisfying replies.
-- [x] Persisted user-message `rawInput` so retrying an attachment/image message does not reuse display-only attachment copy as model input.
-- [x] Added attachment count and per-file size guards to prevent oversized uploads from freezing the composer.
-- [x] Added runtime-side attachment rejection for invalid data URLs, empty files, and files over 20 MB, plus clearer upload failure reasons in the composer.
-- [x] Refined the built-in TeamAligned Guide copy around Provider setup, direct chat, attachments, Slash commands, retry, and `/clear`.
-- [x] Updated the built-in `team-aligned-assistant` Skill guidance for direct chat and the right info panel.
-- [x] Expanded conversation search to local public message content for a minimal local full-text search entry.
-- [x] Added Markdown table parsing and smoke coverage for headings, lists, tables, and code blocks.
+The default first-run experience is intentionally focused:
 
-Next:
+- Built-in TeamAligned Assistant as the app guide.
+- Only one default group: Product Squad.
+- Provider API Keys start empty and must be configured by the user.
 
-- [ ] Re-test streaming, cancel, retry, and `/clear` combinations against real providers.
-- [ ] Continue improving image-attachment understanding across provider capability differences and failure states.
-- [ ] Continue verifying Markdown link safety and long-scroll content behavior.
+## P0: Chat Reliability
 
-## 0.3.0-beta Group Chat Continuity Polish
+Goal: users should clearly feel that Agents are working, cancellable, and recoverable after failures.
 
-Goal: keep the shipped version at `0.3.0-beta` while bringing the next group-chat stability goals forward. Group chat should feel like a working team, not a stalled scheduler.
+- [ ] Run real-provider direct-chat regression: streaming, cancel, retry, `/clear`, image attachments, and long Markdown output.
+- [x] Run real-provider team-chat replay: explicit `@`, no-`@` speaker routing, multi-round handoff, parallel execution, dependency waiting, image attachments, web tool invocation, cancel, and `/clear`.
+- [ ] Tune team process-message density so long tasks are visible without flooding the chat.
+- [ ] Unify failure copy for Provider, MCP, command, image-understanding, and web-tool failures.
+- [ ] Verify recent-message summaries, unread counts, notification center state, and read state across direct and team chats.
 
-Completed in this pass:
+## P1: Tool Permissions And Explainability
 
-- [x] Strengthened explicit `@` priority: mentioned Agents must become execution work-item owners for execution-like requests.
-- [x] Added a runtime fallback when the planner misclassifies an explicit `@Agent` execution request as chat.
-- [x] Translated tool start/success/error events into short public process messages spoken by the active Agent.
-- [x] Marked tool process messages with `teamProcess` metadata and filtered them out of the next planner history to avoid intent-recognition noise.
-- [x] Added a public group-chat cancellation message and reset handoff on cancel.
-- [x] Added smoke tests for explicit `@` execution ownership and planner-misclassification fallback.
+Goal: users should understand what each Agent can use and when high-risk tools are being called.
 
-Next:
+- [ ] Add MCP tool-level allowlists so one MCP connection does not expose every discovered tool by default.
+- [ ] Add clearer risk prompts and process output for shell, file writes, and write-capable MCP tools.
+- [ ] Keep the right info panel focused on useful information: tokens, workspace, open-folder action, active Skill/MCP, and recent tool calls.
+- [ ] Keep `/skills`, `/mcp`, `/<skill-id>`, and `/<prompt-alias>` responses conversational rather than console-like.
+- [ ] Keep TeamAligned Assistant non-editable, non-deletable, and locked to the built-in app-assistant Skill.
 
-- [ ] Replay real-provider group scenarios: explicit `@`, no-`@` planner routing, parallel execution, sequential dependencies, cancel, and `/clear`.
-- [ ] Keep tuning process-message density so long tasks remain visible without flooding the chat.
-- [ ] Verify group image attachments, multi-Agent context continuity, and Markdown output together.
+## P2: Long-Task Recovery And Auditability
 
-## 0.2.1-beta Stability Goals
+Goal: when a long task fails or is cancelled, users still know what completed, where it stopped, and how to continue.
 
-Goal: after the `0.2.0-beta` release, improve feedback, diagnostics, and recovery paths before expanding the product surface.
+- [ ] Design a minimal checkpoint record: task phase, completed steps, failure point, and retry suggestion.
+- [ ] Make run, run steps, tool invocations, artifacts, and transcripts link together consistently.
+- [x] Improve team execution messages for “who is waiting,” “who completed what,” and “who continues next.”
+- [ ] Continue filtering internal process messages from planner history so tool chatter does not pollute intent detection.
+- [ ] Clarify recovery paths for retry last message, edit and resend, and clear context.
 
-Completed in this pass:
+## P3: Export, Search, And Sharing
 
-- [x] Added a Help and feedback section to Settings.
-- [x] Added GitHub Issue handoff: <https://github.com/Sud0x67/team-aligned/issues>
-- [x] Added email feedback handoff: <jokeroller@163.com>
-- [x] Added local diagnostics JSON export.
-- [x] Diagnostics are redacted by default: API Keys, MCP environment values, and MCP request header values are not exported.
-- [x] Added a shortcut to open the diagnostics folder.
-- [x] Moved the development version to `0.2.1-beta`.
+Goal: users should be able to take local collaboration results with them, inspect them, share them, or recover them.
 
-Next:
+- [ ] Design a project export package: messages, transcripts, artifacts, attachment index, and workspace summary.
+- [ ] Improve long-image sharing: multi-select messages, long-content pagination, image attachments, and consistent Markdown rendering.
+- [ ] Expand local search across conversations, transcripts, artifacts, and workspace files.
+- [ ] Keep exports redacted by default so API Keys, MCP secrets, and request headers are not leaked.
 
-- [ ] Continue unifying recovery hints for provider config failures, direct chat failures, and group failures.
-- [x] Added bilingual MCP connection/health/timeout recovery hints and smoke-test coverage.
-- [ ] Re-run real-device validation for notification permission and missing-banner guidance.
-- [ ] Before release, re-run `beta:check`, macOS DMG/ZIP builds, and installer experience checks.
+## P4: Release Quality
 
-## Additional Completed Hardening
+Goal: every beta release should have a stable and repeatable release gate.
 
-- [x] Notification Center “mark as read” now has regression coverage and clears notification entries.
-- [x] Active Skill state is more visible in the right conversation info panel.
-- [x] MCP connected/health-check success messages now tell users the next action: assign MCP in Agent editing or type `/mcp` in chat.
-- [x] Attachment upload persistence now has smoke coverage for invalid, empty, oversized, and valid files.
-- [x] Smoke tests now cover shared command parsing, chat Markdown parsing, runtime/provider/MCP behavior, group orchestration, language helpers, and storage behavior.
+- [ ] Run `npm run beta:check` before every release.
+- [ ] Check macOS DMG / ZIP install experience for Apple Silicon and Intel builds.
+- [ ] Verify app name, icon, DMG background, volume icon, version, and changelog.
+- [ ] Add key chat-page component tests and necessary Electron E2E coverage.
+- [ ] Keep crash logs and local diagnostics easy to collect for user feedback.
 
-## Priority Direction
+## Not Prioritized Yet
 
-1. Improve chat quality and continuity.
-2. Validate notifications and provider recovery end-to-end.
-3. Stabilize group orchestration behavior and process visibility.
-4. Keep codebase clean by removing temporary logic.
+These should stay out of the next mainline unless user feedback strongly demands them:
 
-## Working Rule
+- Restoring the dashboard page.
+- Adding more model providers.
+- Large marketplace expansion.
+- Multi-user online collaboration.
+- Full OAuth MCP authorization flow.
 
-TODO state must stay aligned with actual code and acceptance evidence.
+## Completion Criteria
+
+The next hardening stage is done when:
+
+- [ ] Direct chat passes real-provider regression.
+- [x] Team chat passes real-provider replay.
+- [ ] Cancel, retry, and `/clear` are stable in direct and team chat.
+- [ ] Tool progress is visible without flooding the chat.
+- [ ] Users can understand what the current Agent / Team can do.
+- [ ] Diagnostics, export, and release checks run reliably.

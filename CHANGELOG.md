@@ -11,7 +11,7 @@ All notable changes to TeamAligned are documented in this file.
 - Added built-in web tools for all agents:
   - `web_search` (provider-native first, automatic fallback)
   - `web_fetch` (page fetch + content extraction)
-- Wired web tools into direct chat, group chat, and the built-in Nova assistant runtime.
+- Wired web tools into direct chat, group chat, and the built-in TeamAligned Assistant runtime.
 - Added process-visible progress messages for web tool execution (start / in-progress / done).
 
 ### Improved
@@ -20,6 +20,7 @@ All notable changes to TeamAligned are documented in this file.
   - `web_search`: normalized items and source links
   - `web_fetch`: extracted content metadata (`url`, `title`, `truncated`, `chars`)
 - Extended smoke test coverage for web tool behavior and fallback reliability.
+- Refreshed architecture and TODO documentation around the current `0.4.0-beta` product state.
 
 ### Fixed
 
