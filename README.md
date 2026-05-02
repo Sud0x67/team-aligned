@@ -31,6 +31,7 @@ It is designed to feel like natural chat software: talk to one Agent in direct c
 
 - English docs index: [`docs/en/README.md`](./docs/en/README.md)
 - 中文文档索引: [`docs/README.md`](./docs/README.md)
+- Changelog: [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## Development
 

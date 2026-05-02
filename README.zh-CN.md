@@ -31,6 +31,7 @@
 
 - English 文档索引：[`docs/en/README.md`](./docs/en/README.md)
 - 中文文档索引：[`docs/README.md`](./docs/README.md)
+- 更新日志：[`CHANGELOG.zh-CN.md`](./CHANGELOG.zh-CN.md)
 
 ## 本地开发
 

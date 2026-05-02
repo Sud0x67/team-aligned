@@ -472,6 +472,53 @@ test("markNotificationsRead clears notification center items", () => {
   }
 });
 
+test("resetUnread clears conversation unread and related notification center items", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const conversationId = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+
+    storage.createNotification({
+      type: "agent_message",
+      title: "Assistant replied",
+      body: "Hello",
+      relatedConversationId: conversationId,
+      relatedRunId: "run-agent",
+    });
+    storage.createNotification({
+      type: "group_message",
+      title: "Group update",
+      body: "Coder is working",
+      relatedConversationId: "conv-team-product",
+      relatedRunId: "run-team",
+    });
+
+    const before = storage.getSnapshot();
+    assert.equal(
+      before.notifications.some((item) => item.relatedConversationId === conversationId),
+      true,
+    );
+
+    storage.touchConversation(conversationId, "Assistant replied", true);
+    storage.resetUnread(conversationId);
+
+    const after = storage.getSnapshot();
+    const conversation = after.conversations.find((item) => item.id === conversationId);
+    assert.equal(conversation?.unread, 0);
+    assert.equal(
+      after.notifications.some((item) => item.relatedConversationId === conversationId),
+      false,
+    );
+    assert.equal(
+      after.notifications.some((item) => item.relatedConversationId === "conv-team-product"),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("saveAttachmentAsset rejects invalid, empty, and oversized uploads with clear errors", () => {
   const root = createTempRoot();
   try {

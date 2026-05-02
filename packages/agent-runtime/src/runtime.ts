@@ -322,7 +322,9 @@ function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
 export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
+  private readonly conversationReadPresence = new Map<string, number>();
   private catalogSyncStarted = false;
+  private static readonly notificationPresenceWindowMs = 15_000;
   private readonly singleChatSessions = new Map<
     string,
     {
@@ -412,9 +414,45 @@ export class TeamalignedRuntime extends EventEmitter {
     input: Omit<NotificationRecord, "id" | "read" | "createdAt"> & { createdAt?: number },
     channel: SystemNotificationChannel = null,
   ) {
+    if (
+      input.relatedConversationId &&
+      this.shouldSuppressConversationNotification(input.relatedConversationId)
+    ) {
+      return null;
+    }
     const notification = this.storage.createNotification(input);
     this.emit("notification", { notification, channel });
     return notification;
+  }
+
+  private shouldSuppressConversationNotification(conversationId: string) {
+    this.pruneConversationReadPresence();
+    const conversation = this.storage.getConversation(conversationId);
+    if (!conversation) {
+      return false;
+    }
+
+    // If the conversation is already marked read, there is no value in
+    // adding another notification-center item for it.
+    if (conversation.unread <= 0) {
+      return true;
+    }
+
+    const lastReadAt = this.conversationReadPresence.get(conversationId);
+    if (!lastReadAt) {
+      return false;
+    }
+
+    return Date.now() - lastReadAt <= TeamalignedRuntime.notificationPresenceWindowMs;
+  }
+
+  private pruneConversationReadPresence() {
+    const nowAt = Date.now();
+    for (const [conversationId, timestamp] of this.conversationReadPresence) {
+      if (nowAt - timestamp > TeamalignedRuntime.notificationPresenceWindowMs) {
+        this.conversationReadPresence.delete(conversationId);
+      }
+    }
   }
 
   private getConversationNotificationChannel(conversationId: string): SystemNotificationChannel {
@@ -1722,6 +1760,8 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   async markConversationRead(conversationId: string) {
+    this.pruneConversationReadPresence();
+    this.conversationReadPresence.set(conversationId, Date.now());
     this.storage.resetUnread(conversationId);
     this.emitSnapshot();
     return this.getSnapshot();

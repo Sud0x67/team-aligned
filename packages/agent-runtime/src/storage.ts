@@ -1522,6 +1522,11 @@ export class AppStorage {
     const conversation = this.getConversation(conversationId);
     if (!conversation) return;
     conversation.unread = 0;
+    // Keep notification center aligned with read-state:
+    // once a conversation is marked read, drop related pending notices.
+    this.state.notifications = this.state.notifications.filter(
+      (notification) => notification.relatedConversationId !== conversationId,
+    );
     this.persist();
   }
 
