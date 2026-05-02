@@ -1412,6 +1412,114 @@ export class TeamalignedRuntime extends EventEmitter {
     };
   }
 
+  private createAgentToolInvocationObserver(input: {
+    conversationId: string;
+    runId: string;
+    agent: AgentRecord;
+    responseLanguage: RuntimeLanguage;
+  }) {
+    const baseObserver = this.createToolInvocationObserver(input.conversationId, input.runId);
+    const announcedToolStarts = new Set<string>();
+    return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
+      if (this.isRunTerminal(input.runId)) {
+        return;
+      }
+      await baseObserver(event);
+      if (this.isRunTerminal(input.runId)) {
+        return;
+      }
+
+      const toolName = event.toolName.replace(/^workspace_/, "");
+      const sourceName = "server" in event ? event.server.name : event.serverName;
+      const isLocalTool = !("server" in event);
+
+      if (event.phase === "start") {
+        let content: string | null = null;
+        if (toolName === "web_search") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 正在搜索网页来源。`,
+            en: `${input.agent.name} is searching web sources.`,
+          });
+        } else if (toolName === "web_fetch") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 正在抓取网页正文并提取关键信息。`,
+            en: `${input.agent.name} is fetching the webpage and extracting key points.`,
+          });
+        } else if (toolName === "run_workspace_command") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 正在执行命令确认环境。`,
+            en: `${input.agent.name} is running a command to verify the environment.`,
+          });
+        }
+        if (!content) {
+          return;
+        }
+        const dedupeKey = `${toolName}:${sourceName}:${isLocalTool ? "local" : "remote"}`;
+        if (announcedToolStarts.has(dedupeKey) && toolName !== "run_workspace_command") {
+          return;
+        }
+        announcedToolStarts.add(dedupeKey);
+        this.addRunMessage(input.conversationId, input.runId, content, "system", {
+          stage: "tool_start",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+        });
+        this.emitSnapshot();
+        return;
+      }
+
+      if (event.phase === "success") {
+        let content: string | null = null;
+        if (toolName === "web_search") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 已拿到网页检索结果，正在整理结论。`,
+            en: `${input.agent.name} got web search results and is synthesizing conclusions.`,
+          });
+        } else if (toolName === "web_fetch") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 已完成网页抓取，正在基于来源回答。`,
+            en: `${input.agent.name} finished webpage fetching and is preparing a source-grounded answer.`,
+          });
+        }
+        if (!content) {
+          return;
+        }
+        this.addRunMessage(input.conversationId, input.runId, content, "system", {
+          stage: "tool_success",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+        });
+        this.emitSnapshot();
+        return;
+      }
+
+      if (event.phase === "error") {
+        if (toolName !== "web_search" && toolName !== "web_fetch") {
+          return;
+        }
+        const content = isLocalTool
+          ? byLanguage(input.responseLanguage, {
+              zh: `${input.agent.name} 在 ${toolName} 这一步遇到问题：${event.error}`,
+              en: `${input.agent.name} hit an issue in ${toolName}: ${event.error}`,
+            })
+          : byLanguage(input.responseLanguage, {
+              zh: `${input.agent.name} 在 ${sourceName}.${toolName} 这一步遇到问题：${event.error}`,
+              en: `${input.agent.name} hit an issue in ${sourceName}.${toolName}: ${event.error}`,
+            });
+        this.addRunMessage(input.conversationId, input.runId, content, "system", {
+          stage: "tool_error",
+          toolName,
+          sourceName,
+          local: isLocalTool,
+          error: event.error,
+        });
+        this.emitSnapshot();
+      }
+    };
+  }
+
   private createTeamToolInvocationObserver(input: {
     conversationId: string;
     runId: string;
@@ -1474,6 +1582,16 @@ export class TeamalignedRuntime extends EventEmitter {
                   en: `${input.speaker.name}: I'll fetch related context from ${sourceName} first.`,
                 });
           }
+        } else if (toolName === "web_search") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：我先在网页上检索相关信息。`,
+            en: `${input.speaker.name}: I’ll search the web for relevant information first.`,
+          });
+        } else if (toolName === "web_fetch") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：我先抓取网页正文并提取关键内容。`,
+            en: `${input.speaker.name}: I’ll fetch the webpage content and extract key points first.`,
+          });
         } else if (["write_text_file", "write_file", "edit_file"].includes(toolName)) {
           content = isLocalTool
             ? byLanguage(input.responseLanguage, {
@@ -1531,6 +1649,16 @@ export class TeamalignedRuntime extends EventEmitter {
                 zh: `${input.speaker.name}：我已经通过 ${sourceName} 把这部分改动提交出去了。`,
                 en: `${input.speaker.name}: I've submitted this change via ${sourceName}.`,
               });
+        } else if (toolName === "web_search") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：我拿到网页检索结果了，继续整理要点。`,
+            en: `${input.speaker.name}: I got web search results and will now synthesize key points.`,
+          });
+        } else if (toolName === "web_fetch") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：网页内容抓取完成，我继续基于来源给出结论。`,
+            en: `${input.speaker.name}: Web content fetched. I’ll continue with source-grounded conclusions.`,
+          });
         } else if (toolName === "run_workspace_command") {
           content = byLanguage(input.responseLanguage, {
             zh: `${input.speaker.name}：命令已经跑完了，我继续往下处理。`,
@@ -2045,10 +2173,17 @@ export class TeamalignedRuntime extends EventEmitter {
         ? readInstalledSkillDefinition(activeSkillRecord)
         : null;
     const transcriptPaths = this.storage.getConversationTranscriptPaths(conversation.id);
-    const toolInvocationObserver = this.createToolInvocationObserver(conversation.id, runId);
+    const toolInvocationObserver = this.createAgentToolInvocationObserver({
+      conversationId: conversation.id,
+      runId,
+      agent,
+      responseLanguage,
+    });
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
       attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
+      provider,
+      responseLanguage,
       activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
       onInvocation: toolInvocationObserver,
     });
@@ -2351,12 +2486,18 @@ export class TeamalignedRuntime extends EventEmitter {
     const workspacePath = team.workspacePath;
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
-    const runtimeTools = buildRuntimeLangChainTools({
-      workspacePath,
-      attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
-      activeSkill: null,
-      onInvocation: this.createToolInvocationObserver(conversation.id, runId),
-    });
+    const attachmentRoots = this.storage.getConversationAttachmentRoots(conversation.id);
+    const createTeamRuntimeTools = (
+      onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>,
+    ) =>
+      buildRuntimeLangChainTools({
+        workspacePath,
+        attachmentRoots,
+        provider,
+        responseLanguage,
+        activeSkill: null,
+        onInvocation,
+      });
     let selection: {
       mode: TeamTurnPlan["mode"];
       speakers: AgentRecord[];
@@ -2815,7 +2956,7 @@ export class TeamalignedRuntime extends EventEmitter {
                         }
                         this.emitSnapshot();
                       },
-                      additionalTools: runtimeTools.tools,
+                      additionalTools: createTeamRuntimeTools(teamToolObserver).tools,
                     });
                     return { item, ok: true as const, content, streamMessageId };
                   } catch (error) {
@@ -3112,7 +3253,7 @@ export class TeamalignedRuntime extends EventEmitter {
                   }
                   this.emitSnapshot();
                 },
-                additionalTools: runtimeTools.tools,
+                additionalTools: createTeamRuntimeTools(teamToolObserver).tools,
               });
               if (!shouldContinueRun()) {
                 return;

@@ -44,7 +44,7 @@ For new users, guide them through this order:
 
 ## Chat Usage
 
-- Direct chat supports slash commands, emoji, attachments, send, cancel, streaming replies, and image understanding when the model supports vision.
+- Direct chat supports slash commands, emoji, attachments, send, cancel, streaming replies, image understanding, and web browsing via web_search / web_fetch.
 - Direct chat is the clearest product entry point: keep guidance practical, explain the next click, and mention retry or /clear when a conversation feels stuck.
 - The right info panel in direct chat should be described as a lightweight place for token usage, workspace shortcuts, export, current Skill/MCP, and retry.
 - Team chat should feel like a human team chat. Explain who started, who is continuing, who is waiting, and who completed a step.

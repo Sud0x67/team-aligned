@@ -15,6 +15,8 @@ test("workspace_write_text_file creates missing parent directories", async () =>
     const { tools } = buildRuntimeLangChainTools({
       workspacePath,
       attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
       activeSkill: null,
     });
     const writeTool = tools.find((tool) => tool.name === "workspace_write_text_file");
@@ -40,6 +42,8 @@ test("workspace_write_text_file rejects paths outside the workspace", async () =
     const { tools } = buildRuntimeLangChainTools({
       workspacePath,
       attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
       activeSkill: null,
     });
     const writeTool = tools.find((tool) => tool.name === "workspace_write_text_file");

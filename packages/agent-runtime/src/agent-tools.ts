@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
-import type { SkillCatalogRecord } from "@teamaligned/shared";
+import type { ProviderConfig, SkillCatalogRecord } from "@teamaligned/shared";
 import { z } from "zod";
+import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
+import { runWebFetch, runWebSearch } from "./web-tools.ts";
 
 const execFileAsync = promisify(execFile);
 const MAX_TEXT_READ = 32_000;
@@ -156,6 +158,8 @@ function createInvocationId(prefix: string) {
 export function buildRuntimeLangChainTools(input: {
   workspacePath: string;
   attachmentRoots: string[];
+  provider: ProviderConfig | null;
+  responseLanguage: RuntimeLanguage;
   activeSkill: SkillCatalogRecord | null;
   onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
 }) {
@@ -350,10 +354,100 @@ export function buildRuntimeLangChainTools(input: {
     ),
   ];
 
+  tools.push(
+    tool(
+      async ({ url, extractMode, maxChars }) => {
+        return withInvocation(
+          {
+            invocationId: createInvocationId("local_webfetch"),
+            serverId: "local-web",
+            serverName: "Web Fetch",
+            toolName: "web_fetch",
+            args: { url, extractMode, maxChars },
+            onInvocation: input.onInvocation,
+          },
+          async () => {
+            const result = await runWebFetch({
+              url,
+              extractMode,
+              maxChars,
+            });
+            return JSON.stringify(result, null, 2);
+          },
+          (result) => result,
+        );
+      },
+      {
+        name: "web_fetch",
+        description: byLanguage(input.responseLanguage, {
+          zh: "抓取公开网页并提取主要文本内容。适合先检索来源再读取正文。",
+          en: "Fetch a public webpage and extract its main text content.",
+        }),
+        schema: z.object({
+          url: z.string().describe("目标网页 URL，必须是 http(s)。"),
+          extractMode: z
+            .enum(["markdown", "text"])
+            .default("markdown")
+            .describe("输出格式：markdown 或 text。"),
+          maxChars: z
+            .number()
+            .int()
+            .min(512)
+            .max(32_000)
+            .optional()
+            .describe("可选，正文最大字符数。"),
+        }),
+      },
+    ),
+    tool(
+      async ({ query, maxResults }) => {
+        return withInvocation(
+          {
+            invocationId: createInvocationId("local_websearch"),
+            serverId: "local-web",
+            serverName: "Web Search",
+            toolName: "web_search",
+            args: { query, maxResults },
+            onInvocation: input.onInvocation,
+          },
+          async () => {
+            const result = await runWebSearch({
+              provider: input.provider,
+              query,
+              maxResults,
+            });
+            return JSON.stringify(result, null, 2);
+          },
+          (result) => result,
+        );
+      },
+      {
+        name: "web_search",
+        description: byLanguage(input.responseLanguage, {
+          zh: "搜索公开网页信息。优先使用 provider 原生 web search，不可用时自动回退。",
+          en: "Search public web information. Prefers provider-native web search and falls back automatically.",
+        }),
+        schema: z.object({
+          query: z.string().describe("搜索关键词或问题。"),
+          maxResults: z
+            .number()
+            .int()
+            .min(1)
+            .max(8)
+            .optional()
+            .describe("可选，返回结果数量上限。"),
+        }),
+      },
+    ),
+  );
+
   if (!input.activeSkill?.installPath) {
     return {
       tools,
-      summary: "Workspace 文件、搜索与命令工具已可用。",
+      summary: byLanguage(input.responseLanguage, {
+        zh: "Workspace 文件、搜索、命令与网页工具（web_search / web_fetch）已可用。",
+        en: "Workspace file/search/command tools and web tools (web_search / web_fetch) are available.",
+      }),
     };
   }
 
@@ -467,6 +561,9 @@ export function buildRuntimeLangChainTools(input: {
 
   return {
     tools,
-    summary: `Workspace 工具已可用，当前技能 ${input.activeSkill.displayName} 也已接入 bundle 和脚本工具。`,
+    summary: byLanguage(input.responseLanguage, {
+      zh: `Workspace 与网页工具已可用，当前技能 ${input.activeSkill.displayName} 也已接入 bundle 和脚本工具。`,
+      en: `Workspace and web tools are available. Active skill ${input.activeSkill.displayName} also has bundle/script tools enabled.`,
+    }),
   };
 }
