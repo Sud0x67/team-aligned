@@ -1,10 +1,21 @@
+import { createServer, type Server } from "node:http";
 import { tool } from "@langchain/core/tools";
+import {
+  UnauthorizedError,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from "@modelcontextprotocol/sdk/client/auth";
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp";
 import type {
+  OAuthClientInformationMixed,
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth";
+import type {
   McpCatalogRecord,
   McpConnectionRecord,
+  McpOAuthStateRecord,
   McpToolRecord,
 } from "@teamaligned/shared";
 import { resolveWorkspaceAwareArgs } from "./mcp-registry.ts";
@@ -12,17 +23,201 @@ import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 
 const MCP_CONNECT_TIMEOUT_MS = 15_000;
 const MCP_TOOL_TIMEOUT_MS = 30_000;
+const MCP_OAUTH_TIMEOUT_MS = 180_000;
 
 function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
 }
 
+export class McpOAuthAuthorizationRequiredError extends Error {
+  constructor(
+    message: string,
+    readonly serverId: string,
+    readonly serverName: string,
+    readonly authorizationUrl: string | null,
+  ) {
+    super(message);
+    this.name = "McpOAuthAuthorizationRequiredError";
+  }
+}
+
+function createDefaultOAuthState(status: McpOAuthStateRecord["status"] = "unauthenticated"): McpOAuthStateRecord {
+  return {
+    status,
+    authorizationUrl: null,
+    tokens: null,
+    clientInformation: null,
+    codeVerifier: null,
+    discoveryState: null,
+    lastUpdatedAt: null,
+    lastError: null,
+  };
+}
+
+function ensureOAuthConnection(catalog: McpCatalogRecord, connection: McpConnectionRecord) {
+  if (catalog.authType !== "oauth") return connection;
+  return {
+    ...connection,
+    oauth: connection.oauth ?? createDefaultOAuthState(),
+  };
+}
+
+function updateOAuthState(
+  connection: McpConnectionRecord,
+  patch: Partial<McpOAuthStateRecord>,
+) {
+  const base = connection.oauth ?? createDefaultOAuthState();
+  return {
+    ...connection,
+    oauth: {
+      ...base,
+      ...patch,
+      lastUpdatedAt: Date.now(),
+    },
+  };
+}
+
+function isUnauthorizedError(error: unknown) {
+  return (
+    error instanceof UnauthorizedError ||
+    (error instanceof Error && /unauthorized|401|authorization required|oauth/i.test(error.message))
+  );
+}
+
+function createOAuthRequiredError(
+  catalog: McpCatalogRecord,
+  connection: McpConnectionRecord,
+  language: RuntimeLanguage,
+) {
+  const authorizationUrl = connection.oauth?.authorizationUrl ?? null;
+  return new McpOAuthAuthorizationRequiredError(
+    byLanguage(language, {
+      zh: authorizationUrl
+        ? `${catalog.name} 需要 OAuth 授权。请打开授权链接完成登录：${authorizationUrl}`
+        : `${catalog.name} 需要 OAuth 授权。请先在扩展页对该 MCP 执行授权。`,
+      en: authorizationUrl
+        ? `${catalog.name} requires OAuth authorization. Open the authorization link to sign in: ${authorizationUrl}`
+        : `${catalog.name} requires OAuth authorization. Authorize this MCP from Extensions first.`,
+    }),
+    catalog.id,
+    catalog.name,
+    authorizationUrl,
+  );
+}
+
+function createOAuthProvider(input: {
+  catalog: McpCatalogRecord;
+  connection: McpConnectionRecord;
+  redirectUrl: string;
+  onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+  onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>;
+}) {
+  let connection = ensureOAuthConnection(input.catalog, input.connection);
+
+  const saveConnection = async (patch: Partial<McpOAuthStateRecord>) => {
+    connection = updateOAuthState(connection, patch);
+    await input.onConnectionUpdated?.(connection);
+  };
+
+  const provider: OAuthClientProvider = {
+    get redirectUrl() {
+      return input.redirectUrl;
+    },
+    get clientMetadata() {
+      return {
+        client_name: "TeamAligned",
+        redirect_uris: [input.redirectUrl],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      };
+    },
+    clientInformation() {
+      return connection.oauth?.clientInformation as OAuthClientInformationMixed | undefined;
+    },
+    async saveClientInformation(clientInformation) {
+      await saveConnection({
+        clientInformation: clientInformation as Record<string, unknown>,
+      });
+    },
+    tokens() {
+      return connection.oauth?.tokens as OAuthTokens | undefined;
+    },
+    async saveTokens(tokens) {
+      await saveConnection({
+        status: "authorized",
+        tokens: tokens as Record<string, unknown>,
+        authorizationUrl: null,
+        lastError: null,
+      });
+    },
+    async redirectToAuthorization(authorizationUrl) {
+      const url = authorizationUrl.toString();
+      await saveConnection({
+        status: "authorization_pending",
+        authorizationUrl: url,
+        lastError: null,
+      });
+      await input.onAuthorizationUrl?.(url);
+    },
+    async saveCodeVerifier(codeVerifier) {
+      await saveConnection({ codeVerifier });
+    },
+    codeVerifier() {
+      const codeVerifier = connection.oauth?.codeVerifier;
+      if (!codeVerifier) {
+        throw new Error("Missing OAuth code verifier.");
+      }
+      return codeVerifier;
+    },
+    async saveDiscoveryState(state: OAuthDiscoveryState) {
+      await saveConnection({ discoveryState: state as unknown as Record<string, unknown> });
+    },
+    discoveryState() {
+      return connection.oauth?.discoveryState as unknown as OAuthDiscoveryState | undefined;
+    },
+    async invalidateCredentials(scope) {
+      if (scope === "all") {
+        await saveConnection(createDefaultOAuthState());
+        return;
+      }
+      if (scope === "tokens") {
+        await saveConnection({ tokens: null, status: "unauthenticated" });
+      }
+      if (scope === "client") {
+        await saveConnection({ clientInformation: null });
+      }
+      if (scope === "verifier") {
+        await saveConnection({ codeVerifier: null });
+      }
+      if (scope === "discovery") {
+        await saveConnection({ discoveryState: null });
+      }
+    },
+  };
+
+  return {
+    provider,
+    getConnection: () => connection,
+  };
+}
+
 export function normalizeMcpError(
-  catalog: Pick<McpCatalogRecord, "slug" | "name" | "transport">,
+  catalog: Pick<McpCatalogRecord, "slug" | "name" | "transport" | "authType">,
   error: unknown,
   language: RuntimeLanguage = "zh",
 ) {
   const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    error instanceof McpOAuthAuthorizationRequiredError ||
+    catalog.authType === "oauth" && /unauthorized|401|authorization required|oauth|授权/i.test(message)
+  ) {
+    return byLanguage(language, {
+      zh: message.includes("http") ? message : `${catalog.name} 需要 OAuth 授权。请先完成授权后再重试。`,
+      en: message.includes("http") ? message : `${catalog.name} requires OAuth authorization. Authorize it first, then retry.`,
+    });
+  }
 
   if (/unauthorized|401/i.test(message)) {
     if (catalog.slug === "figma") {
@@ -90,6 +285,91 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
+function createOAuthCallbackServer(input: {
+  serverId: string;
+  responseLanguage: RuntimeLanguage;
+}) {
+  let server: Server | null = null;
+  let settled = false;
+  let resolveCode!: (code: string) => void;
+  let rejectCode!: (error: Error) => void;
+  const codePromise = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
+  });
+
+  const close = () =>
+    new Promise<void>((resolve) => {
+      if (!server || !server.listening) {
+        resolve();
+        return;
+      }
+      server.close(() => resolve());
+    });
+
+  const complete = (result: { code?: string; error?: string }) => {
+    if (settled) return;
+    settled = true;
+    if (result.code) {
+      resolveCode(result.code);
+      return;
+    }
+    rejectCode(new Error(result.error || "OAuth authorization failed."));
+  };
+
+  server = createServer((request, response) => {
+    const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+    const code = requestUrl.searchParams.get("code");
+    const error = requestUrl.searchParams.get("error");
+    const description = requestUrl.searchParams.get("error_description");
+    const okHtml = byLanguage(input.responseLanguage, {
+      zh: "TeamAligned 已收到授权结果，你可以回到应用继续使用 MCP。",
+      en: "TeamAligned received the authorization result. You can return to the app and continue using MCP.",
+    });
+    const errorHtml = byLanguage(input.responseLanguage, {
+      zh: "TeamAligned 授权失败，请回到应用重试。",
+      en: "TeamAligned authorization failed. Return to the app and try again.",
+    });
+
+    if (code) {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<html><body><h2>${okHtml}</h2></body></html>`);
+      complete({ code });
+      void close();
+      return;
+    }
+
+    if (error) {
+      response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<html><body><h2>${errorHtml}</h2><p>${description || error}</p></body></html>`);
+      complete({ error: description || error });
+      void close();
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Not found.");
+  });
+
+  const ready = new Promise<string>((resolveReady, rejectReady) => {
+    server?.once("error", rejectReady);
+    server?.listen(0, "127.0.0.1", () => {
+      const address = server?.address();
+      if (!address || typeof address === "string") {
+        rejectReady(new Error("Unable to start OAuth callback server."));
+        return;
+      }
+      resolveReady(`http://127.0.0.1:${address.port}/mcp/oauth/callback/${encodeURIComponent(input.serverId)}`);
+    });
+  });
+
+  return {
+    ready,
+    waitForCode: codePromise,
+    close,
+  };
+}
+
 function getRequiredConfigError(
   catalog: McpCatalogRecord,
   connection: McpConnectionRecord,
@@ -113,6 +393,13 @@ function getRequiredConfigError(
         en: `Missing required request headers: ${missing.map((field) => field.key).join(", ")}`,
       });
     }
+  }
+
+  if (catalog.authType === "oauth" && connection.oauth?.status !== "authorized") {
+    return byLanguage(language, {
+      zh: "需要先完成 OAuth 授权。",
+      en: "OAuth authorization is required first.",
+    });
   }
 
   if (catalog.transport === "stdio" && !connection.command?.trim()) {
@@ -164,6 +451,10 @@ async function withMcpClient<T>(
     catalog: McpCatalogRecord;
     connection: McpConnectionRecord;
     workspacePath: string;
+    responseLanguage?: RuntimeLanguage;
+    oauthRedirectUrl?: string;
+    onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+    onOAuthAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>;
   },
   execute: (client: Client, transport: StdioClientTransport | StreamableHTTPClientTransport) => Promise<T>,
 ) {
@@ -201,11 +492,26 @@ async function withMcpClient<T>(
     }
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(input.connection.url!), {
+  let latestConnection = ensureOAuthConnection(input.catalog, input.connection);
+  const oauth =
+    input.catalog.authType === "oauth"
+      ? createOAuthProvider({
+          catalog: input.catalog,
+          connection: latestConnection,
+          redirectUrl: input.oauthRedirectUrl ?? "http://127.0.0.1:37371/mcp/oauth/callback",
+          onConnectionUpdated: async (connection) => {
+            latestConnection = connection;
+            await input.onConnectionUpdated?.(connection);
+          },
+          onAuthorizationUrl: input.onOAuthAuthorizationUrl,
+        })
+      : null;
+  const transport = new StreamableHTTPClientTransport(new URL(latestConnection.url!), {
+    authProvider: oauth?.provider,
     requestInit: {
       signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
       headers: Object.fromEntries(
-        Object.entries(input.connection.headers).filter(([, value]) => value.trim().length > 0),
+        Object.entries(latestConnection.headers).filter(([, value]) => value.trim().length > 0),
       ),
     },
   });
@@ -220,6 +526,26 @@ async function withMcpClient<T>(
       MCP_TOOL_TIMEOUT_MS,
       `远端 MCP 操作超时（>${Math.round(MCP_TOOL_TIMEOUT_MS / 1000)}s）。`,
     );
+  } catch (error) {
+    if (input.catalog.authType === "oauth" && isUnauthorizedError(error)) {
+      const pendingConnection = {
+        ...(oauth?.getConnection() ?? latestConnection),
+        enabled: false,
+        status: "configured" as const,
+        lastCheckedAt: Date.now(),
+      };
+      const authorizationError = createOAuthRequiredError(
+        input.catalog,
+        pendingConnection,
+        input.responseLanguage ?? "zh",
+      );
+      await input.onConnectionUpdated?.({
+        ...pendingConnection,
+        lastError: authorizationError.message,
+      });
+      throw authorizationError;
+    }
+    throw error;
   } finally {
     await transport.close().catch(() => undefined);
   }
@@ -230,27 +556,51 @@ export async function checkMcpConnection(input: {
   connection: McpConnectionRecord;
   workspacePath: string;
   responseLanguage?: RuntimeLanguage;
-}) {
+  onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+}): Promise<McpConnectionRecord> {
   const responseLanguage = input.responseLanguage ?? "zh";
-  const requiredConfigError = getRequiredConfigError(input.catalog, input.connection, responseLanguage);
+  let latestConnection = ensureOAuthConnection(input.catalog, input.connection);
+  const requiredConfigError = getRequiredConfigError(input.catalog, latestConnection, responseLanguage);
   if (requiredConfigError) {
     return {
-      ...input.connection,
+      ...latestConnection,
       enabled: false,
       status: "configured" as const,
       lastCheckedAt: Date.now(),
       lastError: requiredConfigError,
+      oauth:
+        input.catalog.authType === "oauth"
+          ? {
+              ...(latestConnection.oauth ?? createDefaultOAuthState()),
+              status:
+                latestConnection.oauth?.status === "authorization_pending"
+                  ? "authorization_pending"
+                  : "unauthenticated" as McpOAuthStateRecord["status"],
+              lastError: requiredConfigError,
+              lastUpdatedAt: Date.now(),
+            }
+          : latestConnection.oauth,
     };
   }
 
   try {
-    const discoveredTools = await withMcpClient(input, async (client) => {
-      const result = await client.listTools();
-      return mapTools(result.tools as Array<Record<string, unknown>>);
-    });
+    const discoveredTools = await withMcpClient(
+      {
+        ...input,
+        connection: latestConnection,
+        onConnectionUpdated: async (connection) => {
+          latestConnection = connection;
+          await input.onConnectionUpdated?.(connection);
+        },
+      },
+      async (client) => {
+        const result = await client.listTools();
+        return mapTools(result.tools as Array<Record<string, unknown>>);
+      },
+    );
 
     return {
-      ...input.connection,
+      ...latestConnection,
       enabled: true,
       status: "connected" as const,
       discoveredTools,
@@ -259,12 +609,150 @@ export async function checkMcpConnection(input: {
     };
   } catch (error) {
     return {
-      ...input.connection,
+      ...latestConnection,
       enabled: false,
-      status: "error" as const,
+      status: error instanceof McpOAuthAuthorizationRequiredError ? "configured" as const : "error" as const,
       lastCheckedAt: Date.now(),
       lastError: normalizeMcpError(input.catalog, error, responseLanguage),
+      oauth:
+        input.catalog.authType === "oauth"
+          ? {
+              ...(latestConnection.oauth ?? createDefaultOAuthState()),
+              status:
+                error instanceof McpOAuthAuthorizationRequiredError
+                  ? "authorization_pending"
+                  : "error" as McpOAuthStateRecord["status"],
+              authorizationUrl:
+                error instanceof McpOAuthAuthorizationRequiredError
+                  ? error.authorizationUrl
+                  : latestConnection.oauth?.authorizationUrl ?? null,
+              lastError: normalizeMcpError(input.catalog, error, responseLanguage),
+              lastUpdatedAt: Date.now(),
+            }
+          : latestConnection.oauth,
     };
+  }
+}
+
+export async function authorizeMcpConnection(input: {
+  catalog: McpCatalogRecord;
+  connection: McpConnectionRecord;
+  workspacePath: string;
+  responseLanguage?: RuntimeLanguage;
+  openAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>;
+  onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+}): Promise<McpConnectionRecord> {
+  const responseLanguage = input.responseLanguage ?? "zh";
+  let latestConnection = ensureOAuthConnection(input.catalog, input.connection);
+
+  if (input.catalog.transport !== "http" || input.catalog.authType !== "oauth") {
+    return checkMcpConnection({
+      catalog: input.catalog,
+      connection: latestConnection,
+      workspacePath: input.workspacePath,
+      responseLanguage,
+      onConnectionUpdated: input.onConnectionUpdated,
+    });
+  }
+
+  const callback = createOAuthCallbackServer({
+    serverId: input.catalog.id,
+    responseLanguage,
+  });
+  const redirectUrl = await callback.ready;
+  let authorizationUrl = latestConnection.oauth?.authorizationUrl ?? null;
+  let authorizationOpened = false;
+
+  try {
+    const client = new Client({
+      name: "teamaligned",
+      version: "0.1.0",
+    });
+    const oauth = createOAuthProvider({
+      catalog: input.catalog,
+      connection: latestConnection,
+      redirectUrl,
+      onConnectionUpdated: async (connection) => {
+        latestConnection = connection;
+        await input.onConnectionUpdated?.(connection);
+      },
+      onAuthorizationUrl: async (url) => {
+        authorizationUrl = url;
+        authorizationOpened = true;
+        await input.openAuthorizationUrl?.(url);
+      },
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(latestConnection.url!), {
+      authProvider: oauth.provider,
+      requestInit: {
+        signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
+        headers: Object.fromEntries(
+          Object.entries(latestConnection.headers).filter(([, value]) => value.trim().length > 0),
+        ),
+      },
+    });
+
+    try {
+      await client.connect(transport);
+    } catch (error) {
+      if (!isUnauthorizedError(error)) {
+        throw error;
+      }
+      if (!authorizationUrl) {
+        authorizationUrl = oauth.getConnection().oauth?.authorizationUrl ?? null;
+      }
+      if (!authorizationUrl) {
+        throw createOAuthRequiredError(input.catalog, oauth.getConnection(), responseLanguage);
+      }
+      if (!authorizationOpened) {
+        authorizationOpened = true;
+        await input.openAuthorizationUrl?.(authorizationUrl);
+      }
+      const code = await withTimeout(
+        callback.waitForCode,
+        MCP_OAUTH_TIMEOUT_MS,
+        byLanguage(responseLanguage, {
+          zh: "等待 OAuth 授权超时，请重新发起授权。",
+          en: "Timed out waiting for OAuth authorization. Please start authorization again.",
+        }),
+      );
+      await transport.finishAuth(code);
+      latestConnection = oauth.getConnection();
+    } finally {
+      await transport.close().catch(() => undefined);
+    }
+
+    const checked = await checkMcpConnection({
+      catalog: input.catalog,
+      connection: latestConnection,
+      workspacePath: input.workspacePath,
+      responseLanguage,
+      onConnectionUpdated: async (connection) => {
+        latestConnection = connection;
+        await input.onConnectionUpdated?.(connection);
+      },
+    });
+    return checked;
+  } catch (error) {
+    const normalizedError = normalizeMcpError(input.catalog, error, responseLanguage);
+    const failedConnection = updateOAuthState(latestConnection, {
+      status:
+        error instanceof McpOAuthAuthorizationRequiredError || authorizationUrl
+          ? "authorization_pending"
+          : "error",
+      authorizationUrl,
+      lastError: normalizedError,
+    });
+    await input.onConnectionUpdated?.(failedConnection);
+    return {
+      ...failedConnection,
+      enabled: false,
+      status: "configured" as const,
+      lastCheckedAt: Date.now(),
+      lastError: normalizedError,
+    };
+  } finally {
+    await callback.close();
   }
 }
 
@@ -311,15 +799,28 @@ export async function callMcpTool(input: {
   workspacePath: string;
   toolName: string;
   args: Record<string, unknown>;
+  responseLanguage?: RuntimeLanguage;
+  onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
 }) {
-  return withMcpClient(input, async (client) => {
-    const result = await client.callTool({
-      name: input.toolName,
-      arguments: input.args,
-    });
+  try {
+    return await withMcpClient(
+      {
+        ...input,
+        responseLanguage: input.responseLanguage,
+        onConnectionUpdated: input.onConnectionUpdated,
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: input.toolName,
+          arguments: input.args,
+        });
 
-    return serializeCallToolResult(result);
-  });
+        return serializeCallToolResult(result);
+      },
+    );
+  } catch (error) {
+    throw new Error(normalizeMcpError(input.catalog, error, input.responseLanguage ?? "zh"));
+  }
 }
 
 function sanitizeToolName(value: string) {

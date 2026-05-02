@@ -2,7 +2,7 @@
 
 [English version](./en/todo.md)
 
-更新时间：2026-05-02
+更新时间：2026-05-03
 
 当前版本：`0.4.0-beta`
 
@@ -13,7 +13,7 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - 单聊 Agent：真实 Provider、流式输出、取消、重试、`/clear`、附件、图片理解、Markdown、右侧信息栏。
 - 群聊 Team：`@` 优先、planner 意图识别、handoff 接棒、并行/串行执行、过程消息、取消和上下文清理。
 - 本地工具：workspace 文件读写、搜索、命令执行、`web_search`、`web_fetch`。
-- 扩展：Skills、Prompt Alias、MCP catalog、stdio/http MCP、Agent 级 Skill/MCP 白名单。
+- 扩展：Skills、Prompt Alias、MCP catalog、stdio/http/OAuth MCP、Agent 级 Skill/MCP 白名单。
 - 本地数据：`~/.teamaligned`、SQLite、transcript、attachments、artifacts、tool invocations、run steps。
 - 系统能力：通知中心、系统通知、诊断导出、会话导出、长图分享、macOS 打包配置。
 
@@ -30,6 +30,7 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - [ ] 对真实 Provider 做单聊回归：流式输出、取消、重试、`/clear`、图片附件、Markdown 长内容。
 - [x] 对真实 Provider 做群聊回放：显式 `@`、无 `@` 自动选人、多轮 handoff、并行执行、依赖等待、图片附件、web 工具调用、取消、`/clear`。
 - [ ] 调整群聊过程消息密度，避免长任务静默，也避免工具过程刷屏。
+- [x] MCP OAuth 未授权失败会在聊天过程消息里引导用户授权，扩展页也提供授权入口。
 - [ ] 统一失败态文案：Provider 失败、MCP 失败、命令失败、图片理解失败、网络工具失败。
 - [ ] 验证最近消息摘要、未读数、通知中心与已读状态在单聊/群聊中一致。
 
@@ -38,7 +39,8 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 目标：让用户清楚每个 Agent 当前能用什么工具，以及高风险工具何时会被调用。
 
 - [ ] 增加 MCP tool 级白名单，避免一个 MCP 连接暴露全部工具。
-- [ ] 为 shell / 文件写入 / MCP 写操作增加更明确的风险提示和过程输出。
+- [x] 增加通用工具执行前 policy hook，文件写入、命令、网络、Skill、MCP 均可被统一拦截或要求确认。
+- [ ] 为 shell / 文件写入 / MCP 写操作补完整确认 UI 和更明确的风险提示。
 - [ ] 右侧信息栏继续聚焦真正有用的信息：token、workspace、打开目录、当前 Skill/MCP、最近工具调用。
 - [ ] 优化 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>` 的反馈，让它们继续保持“像聊天”而不是控制台。
 - [ ] 明确 TeamAligned Assistant 不能修改自身、不能删除、只绑定内置应用助手 Skill。
@@ -80,7 +82,7 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - 新增更多模型 Provider。
 - 大规模 marketplace 能力扩张。
 - 多用户在线协作。
-- OAuth 型 MCP 全量授权流。
+- OAuth 型 MCP 已有基础授权闭环；暂不优先的是完整审批队列、重授权打磨和 tool 级权限。
 
 ## 完成标准
 
@@ -90,5 +92,6 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - [x] 群聊真实 Provider 回放通过。
 - [ ] 取消、重试、`/clear` 在单聊和群聊中都稳定。
 - [ ] 工具过程可见但不过度刷屏。
+- [ ] 高风险工具确认 UI 可用，并且不会阻塞低风险读操作。
 - [ ] 用户能理解当前 Agent / Team 能做什么。
 - [ ] 诊断、导出、发布检查可以稳定执行。

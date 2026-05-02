@@ -66,6 +66,7 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:remove-prompt-alias", promptAliasId),
   refreshMcpCatalog: () => ipcRenderer.invoke("teamaligned:refresh-mcp-catalog"),
   connectMcp: (payload: ConnectMcpInput) => ipcRenderer.invoke("teamaligned:connect-mcp", payload),
+  authorizeMcp: (serverId: string) => ipcRenderer.invoke("teamaligned:authorize-mcp", serverId),
   checkMcpHealth: (serverId: string) => ipcRenderer.invoke("teamaligned:check-mcp-health", serverId),
   disconnectMcp: (serverId: string) => ipcRenderer.invoke("teamaligned:disconnect-mcp", serverId),
   toggleExtension: (extensionId: string) =>

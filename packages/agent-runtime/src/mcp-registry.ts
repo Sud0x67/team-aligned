@@ -26,7 +26,7 @@ type RemoteMcpCatalogEntry = {
     url?: string;
   };
   auth?: {
-    type?: "none" | "env" | "header";
+    type?: "none" | "env" | "header" | "oauth";
     fields?: Array<{
       key: string;
       label: string;
@@ -160,7 +160,8 @@ export function buildMcpConnection(catalog: McpCatalogRecord): McpConnectionReco
     catalog.authType === "header"
       ? Object.fromEntries(catalog.authFields.map((field) => [field.key, ""]))
       : {};
-  const needsConfiguration = catalog.authFields.some((field) => field.required);
+  const needsConfiguration =
+    catalog.authType === "oauth" || catalog.authFields.some((field) => field.required);
 
   return {
     serverId: catalog.id,
@@ -172,10 +173,28 @@ export function buildMcpConnection(catalog: McpCatalogRecord): McpConnectionReco
     envEntries,
     headers,
     cwd: null,
+    oauth:
+      catalog.authType === "oauth"
+        ? {
+            status: "unauthenticated",
+            authorizationUrl: null,
+            tokens: null,
+            clientInformation: null,
+            codeVerifier: null,
+            discoveryState: null,
+            lastUpdatedAt: null,
+            lastError: null,
+          }
+        : null,
     discoveredTools: createPlaceholderTools(catalog.declaredTools),
     status: needsConfiguration ? "configured" : "disconnected",
     lastCheckedAt: null,
-    lastError: needsConfiguration ? "需要先补全本地连接配置。" : null,
+    lastError:
+      catalog.authType === "oauth"
+        ? "需要先完成 OAuth 授权。"
+        : needsConfiguration
+          ? "需要先补全本地连接配置。"
+          : null,
   };
 }
 

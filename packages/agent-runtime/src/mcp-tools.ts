@@ -2,6 +2,8 @@ import { tool } from "@langchain/core/tools";
 import type { McpCatalogRecord, McpConnectionRecord } from "@teamaligned/shared";
 import { nanoid } from "nanoid";
 import { callMcpTool } from "./mcp-runtime.ts";
+import type { RuntimeLanguage } from "./runtime-language.ts";
+import type { ToolExecutionPolicy } from "./agent-tools.ts";
 
 function sanitizeToolName(serverSlug: string, toolName: string) {
   const normalized = `${serverSlug}_${toolName}`.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -64,6 +66,9 @@ export function buildMcpLangChainTools(input: {
   workspacePath: string;
   pinnedServerId?: string | null;
   onInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+  responseLanguage?: RuntimeLanguage;
+  approvalPolicy?: ToolExecutionPolicy;
 }) {
   const connectionMap =
     input.connectionsById ?? new Map((input.connections ?? []).map((item) => [item.serverId, item]));
@@ -83,6 +88,20 @@ export function buildMcpLangChainTools(input: {
       tool(
         async (toolInput) => {
           const args = (toolInput as Record<string, unknown>) ?? {};
+          const decision = input.approvalPolicy
+            ? await input.approvalPolicy({
+                serverId: server.id,
+                serverName: server.name,
+                toolName: toolItem.name,
+                operation: "mcp",
+                riskLevel: server.riskLevel,
+                args,
+                description: `Call MCP tool ${server.name}.${toolItem.name}.`,
+              })
+            : { allow: true as const };
+          if (!decision.allow) {
+            throw new Error(decision.reason);
+          }
           const invocationId = nanoid();
           const startedAt = Date.now();
 
@@ -102,6 +121,8 @@ export function buildMcpLangChainTools(input: {
               workspacePath: input.workspacePath,
               toolName: toolItem.name,
               args,
+              responseLanguage: input.responseLanguage,
+              onConnectionUpdated: input.onConnectionUpdated,
             });
             await input.onInvocation?.({
               phase: "success",

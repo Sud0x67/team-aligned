@@ -196,18 +196,21 @@ MCP 当前支持：
 
 - `stdio npx` 型 MCP。
 - `HTTP + headers` 型 MCP。
+- `HTTP + OAuth` 型 MCP 授权基础流：扩展页可发起授权，主进程打开浏览器，本地回调接收 code，runtime 保存 token 状态并重新做 tool discovery。
 - catalog 同步。
 - 本地连接配置。
 - 健康检查。
 - tool discovery。
 - Agent 级 MCP 白名单。
 - runtime 注入 discovered tools。
+- MCP 调用失败时，未授权/权限错误会进入聊天过程消息，引导用户回到扩展页授权后重试。
 
 当前尚未完成：
 
 - MCP tool 级白名单。
-- OAuth 型 MCP 授权流。
-- 更细的高风险 tool 确认机制。
+- 完整的工具确认 UI 队列。
+- OAuth 授权过期后的重新授权细节打磨。
+- 更细的高风险 tool 风险分级与用户提示。
 
 ## Web Tools
 
@@ -325,7 +328,7 @@ workspace 根目录留给用户生成和管理真实文件。
 - 群聊真实 Provider 回放覆盖不足。
 - 长任务 checkpoint / failure recovery 仍不完整。
 - MCP tool 级白名单尚未实现。
-- OAuth 型 MCP 尚未实现。
+- OAuth 型 MCP 已具备基础授权闭环，但缺少完整审批/重授权体验。
 - transcript / artifact / attachment 的项目包导出仍需完善。
 - 关键聊天 UI 组件测试和 Electron E2E 测试仍不足。
 

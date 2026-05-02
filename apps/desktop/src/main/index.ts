@@ -895,6 +895,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("teamaligned:connect-mcp", async (_event, payload: ConnectMcpInput) =>
     (await getReadyRuntime()).connectMcp(payload),
   );
+  ipcMain.handle("teamaligned:authorize-mcp", async (_event, serverId: string) =>
+    (await getReadyRuntime()).authorizeMcp(serverId, (authorizationUrl) =>
+      shell.openExternal(authorizationUrl),
+    ),
+  );
   ipcMain.handle("teamaligned:check-mcp-health", async (_event, serverId: string) =>
     (await getReadyRuntime()).checkMcpHealth(serverId),
   );

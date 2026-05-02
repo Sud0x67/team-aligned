@@ -367,6 +367,7 @@ const translations = {
       disconnect: "移除连接",
       configureConnection: "配置连接",
       healthCheck: "健康检查",
+      authorizeOAuth: "授权 OAuth",
       saveAndCheck: "保存并检测",
       connectionTitle: "MCP 连接配置",
       onePerLine: "每行一项",
@@ -415,6 +416,7 @@ const translations = {
         "如果远端 MCP 需要 Bearer Token 或自定义请求头，可以在这里直接填写 JSON 对象。",
       remoteMcpReadyHint:
         "远端 MCP 已支持真实 URL 握手和工具发现。部分托管服务可能还会限制允许接入的客户端，若检测失败，请检查服务本身的鉴权或接入限制。",
+      oauthPendingHint: "需要在浏览器完成 OAuth 授权后才能发现和调用工具。",
       close: "关闭",
       mcpDirectoryPickerTitle: "选择 MCP 工作目录",
     },
@@ -920,6 +922,7 @@ const translations = {
       disconnect: "Disconnect",
       configureConnection: "Configure",
       healthCheck: "Health check",
+      authorizeOAuth: "Authorize OAuth",
       saveAndCheck: "Save and check",
       connectionTitle: "MCP connection",
       onePerLine: "One item per line",
@@ -968,6 +971,7 @@ const translations = {
         "If the remote MCP needs a bearer token or custom request headers, provide them here as a JSON object.",
       remoteMcpReadyHint:
         "Remote MCP now supports real URL handshakes and tool discovery. Some hosted services may still restrict which clients are allowed to connect, so check the service auth and client restrictions if health checks fail.",
+      oauthPendingHint: "Finish OAuth authorization in the browser before discovering or calling tools.",
       close: "Close",
       mcpDirectoryPickerTitle: "Select MCP working directory",
     },

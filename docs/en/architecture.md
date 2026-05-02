@@ -196,18 +196,21 @@ MCP currently supports:
 
 - `stdio npx` MCP.
 - `HTTP + headers` MCP.
+- `HTTP + OAuth` MCP authorization foundation: the Extensions page can start auth, the main process opens the browser, a local callback receives the code, and the runtime stores token state before re-running tool discovery.
 - Catalog sync.
 - Local connection config.
 - Health checks.
 - Tool discovery.
 - Agent-level MCP allowlists.
 - Runtime injection for discovered tools.
+- MCP auth/permission failures surface as chat process messages so users can authorize from Extensions and retry.
 
 Not yet complete:
 
 - MCP tool-level allowlists.
-- OAuth MCP authorization flows.
-- Finer confirmation for high-risk tools.
+- Full tool-confirmation UI queue.
+- OAuth re-authorization polish after token expiry.
+- Finer high-risk tool classification and user-facing prompts.
 
 ## Web Tools
 
@@ -325,7 +328,7 @@ The architecture still needs improvement in:
 - Real-provider team-chat replay coverage.
 - Long-task checkpoint / failure recovery.
 - MCP tool-level allowlists.
-- OAuth MCP support.
+- OAuth MCP now has a foundational authorization loop, but still needs full approval and re-authorization UX.
 - Project-package export for transcripts, artifacts, and attachments.
 - Key chat UI component tests and Electron E2E tests.
 

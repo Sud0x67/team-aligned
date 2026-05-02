@@ -78,3 +78,40 @@ test("checkMcpConnection reports missing header configuration in selected langua
   assert.equal(checked.status, "configured");
   assert.match(checked.lastError ?? "", /Missing required request headers/i);
 });
+
+test("buildMcpConnection initializes OAuth MCP as pending authorization", () => {
+  const catalog = makeCatalog({ authType: "oauth" });
+  const connection = buildMcpConnection(catalog);
+
+  assert.equal(connection.enabled, false);
+  assert.equal(connection.status, "configured");
+  assert.equal(connection.oauth?.status, "unauthenticated");
+  assert.match(connection.lastError ?? "", /OAuth|授权/);
+});
+
+test("checkMcpConnection keeps OAuth MCP configured until authorization completes", async () => {
+  const catalog = makeCatalog({ authType: "oauth" });
+  const connection = buildMcpConnection(catalog);
+
+  const checked = await checkMcpConnection({
+    catalog,
+    connection,
+    workspacePath: "/tmp",
+    responseLanguage: "en",
+  });
+
+  assert.equal(checked.enabled, false);
+  assert.equal(checked.status, "configured");
+  assert.equal(checked.oauth?.status, "unauthenticated");
+  assert.match(checked.lastError ?? "", /OAuth authorization is required/i);
+});
+
+test("normalizeMcpError returns OAuth-specific guidance", () => {
+  const message = normalizeMcpError(
+    makeCatalog({ authType: "oauth" }),
+    new Error("401 Unauthorized"),
+    "en",
+  );
+
+  assert.match(message, /OAuth authorization/i);
+});

@@ -46,6 +46,55 @@ export type RuntimeToolInvocationEvent =
       error: string;
     };
 
+export type ToolExecutionOperation = "read" | "write" | "command" | "network" | "mcp" | "skill";
+export type ToolExecutionRisk = "low" | "medium" | "high";
+
+export type ToolExecutionPolicyRequest = {
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  operation: ToolExecutionOperation;
+  riskLevel: ToolExecutionRisk;
+  args: Record<string, unknown>;
+  description: string;
+};
+
+export type ToolExecutionPolicyDecision =
+  | { allow: true }
+  | {
+      allow: false;
+      reason: string;
+      requiresConfirmation?: boolean;
+    };
+
+export type ToolExecutionPolicy = (
+  request: ToolExecutionPolicyRequest,
+) => ToolExecutionPolicyDecision | Promise<ToolExecutionPolicyDecision>;
+
+export class ToolExecutionApprovalRequiredError extends Error {
+  constructor(
+    message: string,
+    readonly request: ToolExecutionPolicyRequest,
+  ) {
+    super(message);
+    this.name = "ToolExecutionApprovalRequiredError";
+  }
+}
+
+async function ensureToolExecutionAllowed(input: {
+  approvalPolicy?: ToolExecutionPolicy;
+  request?: ToolExecutionPolicyRequest;
+}) {
+  if (!input.approvalPolicy || !input.request) {
+    return;
+  }
+  const decision = await input.approvalPolicy(input.request);
+  if (decision.allow) {
+    return;
+  }
+  throw new ToolExecutionApprovalRequiredError(decision.reason, input.request);
+}
+
 function trimText(value: string, max: number) {
   const text = value.trim();
   return text.length <= max ? text : `${text.slice(0, max)}\n...`;
@@ -99,10 +148,16 @@ async function withInvocation<T>(
     toolName: string;
     args: Record<string, unknown>;
     onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+    approvalPolicy?: ToolExecutionPolicy;
+    policyRequest?: ToolExecutionPolicyRequest;
   },
   execute: () => Promise<T>,
   serialize: (result: T) => string,
 ) {
+  await ensureToolExecutionAllowed({
+    approvalPolicy: input.approvalPolicy,
+    request: input.policyRequest,
+  });
   const startedAt = Date.now();
   await input.onInvocation?.({
     phase: "start",
@@ -162,6 +217,7 @@ export function buildRuntimeLangChainTools(input: {
   responseLanguage: RuntimeLanguage;
   activeSkill: SkillCatalogRecord | null;
   onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
 }) {
   const workspaceRoot = resolve(input.workspacePath);
   const allowedRoots = [workspaceRoot, ...input.attachmentRoots.map((root) => resolve(root))];
@@ -181,6 +237,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "list_directory",
             args: { path },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-workspace",
+              serverName: "Workspace",
+              toolName: "list_directory",
+              operation: "read",
+              riskLevel: "low",
+              args: { path },
+              description: "List files in the current workspace or allowed attachment/skill roots.",
+            },
           },
           async () => {
             if (!existsSync(targetPath)) {
@@ -214,6 +280,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "read_text_file",
             args: { path },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-workspace",
+              serverName: "Workspace",
+              toolName: "read_text_file",
+              operation: "read",
+              riskLevel: "low",
+              args: { path },
+              description: "Read a text file from the current workspace or allowed attachment/skill roots.",
+            },
           },
           async () => {
             if (!existsSync(targetPath)) {
@@ -247,6 +323,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "write_text_file",
             args: { path },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-workspace",
+              serverName: "Workspace",
+              toolName: "write_text_file",
+              operation: "write",
+              riskLevel: "high",
+              args: { path },
+              description: "Write or overwrite a text file inside the current workspace.",
+            },
           },
           async () => {
             mkdirSync(dirname(targetPath), { recursive: true });
@@ -275,6 +361,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "search_workspace",
             args: { pattern, glob },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-search",
+              serverName: "Workspace Search",
+              toolName: "search_workspace",
+              operation: "read",
+              riskLevel: "low",
+              args: { pattern, glob },
+              description: "Search text in the current workspace.",
+            },
           },
           async () => {
             const searchArgs = ["--line-number", "--hidden", "--smart-case", pattern, workspaceRoot];
@@ -322,6 +418,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "run_workspace_command",
             args: { command },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-shell",
+              serverName: "Workspace Shell",
+              toolName: "run_workspace_command",
+              operation: "command",
+              riskLevel: "high",
+              args: { command },
+              description: "Run a shell command in the current workspace.",
+            },
           },
           async () => {
             try {
@@ -365,6 +471,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "web_fetch",
             args: { url, extractMode, maxChars },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-web",
+              serverName: "Web Fetch",
+              toolName: "web_fetch",
+              operation: "network",
+              riskLevel: "low",
+              args: { url, extractMode, maxChars },
+              description: "Fetch and extract content from a public webpage.",
+            },
           },
           async () => {
             const result = await runWebFetch({
@@ -409,6 +525,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "web_search",
             args: { query, maxResults },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: "local-web",
+              serverName: "Web Search",
+              toolName: "web_search",
+              operation: "network",
+              riskLevel: "low",
+              args: { query, maxResults },
+              description: "Search public web information.",
+            },
           },
           async () => {
             const result = await runWebSearch({
@@ -466,6 +592,16 @@ export function buildRuntimeLangChainTools(input: {
             toolName: "read_skill_bundle",
             args: { relativePath },
             onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: input.activeSkill!.id,
+              serverName: input.activeSkill!.displayName,
+              toolName: "read_skill_bundle",
+              operation: "skill",
+              riskLevel: "low",
+              args: { relativePath },
+              description: "Read bundled files from the active skill.",
+            },
           },
           async () => {
             if (!relativePath?.trim()) {
@@ -521,6 +657,16 @@ export function buildRuntimeLangChainTools(input: {
                 toolName,
                 args: { argumentsLine },
                 onInvocation: input.onInvocation,
+                approvalPolicy: input.approvalPolicy,
+                policyRequest: {
+                  serverId: input.activeSkill!.id,
+                  serverName: input.activeSkill!.displayName,
+                  toolName,
+                  operation: "skill",
+                  riskLevel: "medium",
+                  args: { argumentsLine },
+                  description: `Run bundled script ${basename(scriptPath)} from the active skill.`,
+                },
               },
               async () => {
                 const command = `${interpreter} "${scriptPath}" ${argumentsLine?.trim() || ""}`.trim();

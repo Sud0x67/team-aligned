@@ -4,6 +4,18 @@
 
 All notable changes to TeamAligned are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added foundational OAuth support for HTTP MCP servers, including browser authorization, local callback handling, token persistence, and post-auth tool discovery.
+- Added a generic pre-execution tool policy hook for workspace, web, Skill, and MCP tools so future confirmation UI can intercept high-risk actions consistently.
+
+### Improved
+
+- MCP authorization and permission failures now surface as natural chat process messages instead of silent tool failures.
+- Extensions UI now exposes an OAuth authorization action for MCP connections that require browser login.
+
 ## 0.4.0-beta - 2026-05-02
 
 ### Added

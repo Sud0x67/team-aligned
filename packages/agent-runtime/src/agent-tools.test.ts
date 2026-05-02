@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRuntimeLangChainTools } from "./agent-tools.ts";
+import { buildRuntimeLangChainTools, ToolExecutionApprovalRequiredError } from "./agent-tools.ts";
 
 function createTempWorkspace() {
   return mkdtempSync(join(tmpdir(), "teamaligned-agent-tools-"));
@@ -57,6 +57,38 @@ test("workspace_write_text_file rejects paths outside the workspace", async () =
         }),
       /访问路径超出允许范围/,
     );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace tools honor the generic execution policy before running", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+      approvalPolicy: (request) =>
+        request.operation === "write"
+          ? { allow: false, reason: "needs user confirmation", requiresConfirmation: true }
+          : { allow: true },
+    });
+    const writeTool = tools.find((tool) => tool.name === "workspace_write_text_file");
+    assert.ok(writeTool);
+
+    await assert.rejects(
+      () =>
+        writeTool.invoke({
+          path: "blocked.md",
+          content: "should not be written",
+        }),
+      ToolExecutionApprovalRequiredError,
+    );
+
+    assert.equal(existsSync(join(workspacePath, "blocked.md")), false);
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }

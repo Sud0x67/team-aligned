@@ -46,6 +46,7 @@ type AppStore = AppSnapshot & {
   removePromptAlias: (promptAliasId: string) => Promise<void>;
   refreshMcpCatalog: () => Promise<void>;
   connectMcp: (payload: ConnectMcpInput) => Promise<void>;
+  authorizeMcp: (serverId: string) => Promise<void>;
   checkMcpHealth: (serverId: string) => Promise<void>;
   disconnectMcp: (serverId: string) => Promise<void>;
   toggleExtension: (extensionId: string) => Promise<void>;
@@ -225,6 +226,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       runLoadingSnapshotAction(() => window.teamaligned.refreshMcpCatalog()),
     connectMcp: async (payload) =>
       runLoadingSnapshotAction(() => window.teamaligned.connectMcp(payload)),
+    authorizeMcp: async (serverId) =>
+      runLoadingSnapshotAction(() => window.teamaligned.authorizeMcp(serverId)),
     checkMcpHealth: async (serverId) =>
       runLoadingSnapshotAction(() => window.teamaligned.checkMcpHealth(serverId)),
     disconnectMcp: async (serverId) =>

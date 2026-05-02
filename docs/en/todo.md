@@ -2,7 +2,7 @@
 
 [中文版本](../todo.md)
 
-Updated: 2026-05-02
+Updated: 2026-05-03
 
 Current version: `0.4.0-beta`
 
@@ -13,7 +13,7 @@ TeamAligned has moved from feature wiring into beta hardening. The app now has a
 - Direct Agent chat: real providers, streaming, cancel, retry, `/clear`, attachments, image understanding, Markdown, and the right info panel.
 - Team chat: explicit `@` priority, planner intent detection, handoff continuity, parallel/sequential execution, process messages, cancel, and context clearing.
 - Local tools: workspace file read/write, search, command execution, `web_search`, and `web_fetch`.
-- Extensions: Skills, Prompt Alias, MCP catalog, stdio/http MCP, and Agent-level Skill/MCP allowlists.
+- Extensions: Skills, Prompt Alias, MCP catalog, stdio/http/OAuth MCP, and Agent-level Skill/MCP allowlists.
 - Local data: `~/.teamaligned`, SQLite, transcripts, attachments, artifacts, tool invocations, and run steps.
 - System features: notification center, system notifications, diagnostics export, conversation export, share-image export, and macOS packaging config.
 
@@ -30,6 +30,7 @@ Goal: users should clearly feel that Agents are working, cancellable, and recove
 - [ ] Run real-provider direct-chat regression: streaming, cancel, retry, `/clear`, image attachments, and long Markdown output.
 - [x] Run real-provider team-chat replay: explicit `@`, no-`@` speaker routing, multi-round handoff, parallel execution, dependency waiting, image attachments, web tool invocation, cancel, and `/clear`.
 - [ ] Tune team process-message density so long tasks are visible without flooding the chat.
+- [x] MCP OAuth authorization failures now surface in chat process messages, and Extensions provides an authorization entry point.
 - [ ] Unify failure copy for Provider, MCP, command, image-understanding, and web-tool failures.
 - [ ] Verify recent-message summaries, unread counts, notification center state, and read state across direct and team chats.
 
@@ -38,7 +39,8 @@ Goal: users should clearly feel that Agents are working, cancellable, and recove
 Goal: users should understand what each Agent can use and when high-risk tools are being called.
 
 - [ ] Add MCP tool-level allowlists so one MCP connection does not expose every discovered tool by default.
-- [ ] Add clearer risk prompts and process output for shell, file writes, and write-capable MCP tools.
+- [x] Add a generic pre-execution tool policy hook so file writes, commands, network tools, Skills, and MCP can be intercepted or require confirmation consistently.
+- [ ] Add the full confirmation UI and clearer risk prompts for shell, file writes, and write-capable MCP tools.
 - [ ] Keep the right info panel focused on useful information: tokens, workspace, open-folder action, active Skill/MCP, and recent tool calls.
 - [ ] Keep `/skills`, `/mcp`, `/<skill-id>`, and `/<prompt-alias>` responses conversational rather than console-like.
 - [ ] Keep TeamAligned Assistant non-editable, non-deletable, and locked to the built-in app-assistant Skill.
@@ -80,7 +82,7 @@ These should stay out of the next mainline unless user feedback strongly demands
 - Adding more model providers.
 - Large marketplace expansion.
 - Multi-user online collaboration.
-- Full OAuth MCP authorization flow.
+- OAuth MCP has a foundational authorization loop; the remaining lower-priority work is full approval queues, re-authorization polish, and tool-level permissions.
 
 ## Completion Criteria
 
@@ -90,5 +92,6 @@ The next hardening stage is done when:
 - [x] Team chat passes real-provider replay.
 - [ ] Cancel, retry, and `/clear` are stable in direct and team chat.
 - [ ] Tool progress is visible without flooding the chat.
+- [ ] High-risk tool confirmation UI is usable without blocking low-risk read operations.
 - [ ] Users can understand what the current Agent / Team can do.
 - [ ] Diagnostics, export, and release checks run reliably.

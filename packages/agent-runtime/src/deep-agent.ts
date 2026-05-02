@@ -700,6 +700,7 @@ export async function invokeSingleChatDeepAgent(input: {
   latestInput: string;
   attachments?: AttachmentAssetRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
@@ -732,6 +733,8 @@ export async function invokeSingleChatDeepAgent(input: {
     connectionsById: mcpConnectionMap,
     workspacePath,
     onInvocation: input.onMcpInvocation,
+    onConnectionUpdated: input.onMcpConnectionUpdated,
+    responseLanguage,
   });
   const tools = [...(additionalTools ?? []), ...mcpTools];
   const mcpToolSignature = JSON.stringify(

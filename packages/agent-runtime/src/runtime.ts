@@ -19,6 +19,7 @@ import type {
   EnsureConversationInput,
   EnsureConversationResult,
   McpCatalogRecord,
+  McpConnectionRecord,
   MessageVisibility,
   NotificationRecord,
   PromptAliasRecord,
@@ -60,7 +61,10 @@ import {
   fetchMcpCatalog,
   validateLocalMcpLauncher,
 } from "./mcp-registry.ts";
-import { checkMcpConnection as healthCheckMcpConnection } from "./mcp-runtime.ts";
+import {
+  authorizeMcpConnection,
+  checkMcpConnection as healthCheckMcpConnection,
+} from "./mcp-runtime.ts";
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
 import {
@@ -352,6 +356,11 @@ export class TeamalignedRuntime extends EventEmitter {
 
   getSnapshot(): AppSnapshot {
     return this.storage.getSnapshot();
+  }
+
+  private persistMcpConnectionUpdate(connection: McpConnectionRecord) {
+    this.storage.upsertMcpConnection(connection);
+    this.emitSnapshot();
   }
 
   getStartupSnapshot(): AppSnapshot {
@@ -1158,6 +1167,7 @@ export class TeamalignedRuntime extends EventEmitter {
           connection,
           workspacePath: connection.cwd || this.storage.workspaceRoot,
           responseLanguage,
+          onConnectionUpdated: (updatedConnection) => this.persistMcpConnectionUpdate(updatedConnection),
         });
 
     this.storage.upsertMcpConnection(checkedConnection);
@@ -1181,6 +1191,61 @@ export class TeamalignedRuntime extends EventEmitter {
                 zh: `${server.name} 连接失败：${checkedConnection.lastError ?? "未知错误"}`,
                 en: `${server.name} connection failed: ${checkedConnection.lastError ?? "unknown error"}`,
               }),
+      relatedConversationId: null,
+      relatedRunId: null,
+    });
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async authorizeMcp(
+    serverId: string,
+    openAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>,
+  ) {
+    const settingsLanguage = this.storage.getSnapshot().settings.language;
+    const responseLanguage: RuntimeLanguage = settingsLanguage === "en" ? "en" : "zh";
+    const server = this.storage.getMcpCatalogEntry(serverId);
+    const connection = this.storage.getMcpConnection(serverId);
+    if (!server || !connection) {
+      this.createAppNotification({
+        type: "system",
+        title: byLanguage(responseLanguage, { zh: "MCP 授权失败", en: "MCP authorization failed" }),
+        body: byLanguage(responseLanguage, {
+          zh: `未找到 MCP 连接：${serverId}`,
+          en: `MCP connection not found: ${serverId}`,
+        }),
+        relatedConversationId: null,
+        relatedRunId: null,
+      });
+      this.emitSnapshot();
+      return this.getSnapshot();
+    }
+
+    const checked = await authorizeMcpConnection({
+      catalog: server,
+      connection,
+      workspacePath: connection.cwd || this.storage.workspaceRoot,
+      responseLanguage,
+      openAuthorizationUrl,
+      onConnectionUpdated: (updatedConnection) => this.persistMcpConnectionUpdate(updatedConnection),
+    });
+    this.storage.upsertMcpConnection(checked);
+    this.createAppNotification({
+      type: checked.status === "connected" ? "extension" : "system",
+      title:
+        checked.status === "connected"
+          ? byLanguage(responseLanguage, { zh: "MCP 授权完成", en: "MCP authorized" })
+          : byLanguage(responseLanguage, { zh: "MCP 授权待完成", en: "MCP authorization pending" }),
+      body:
+        checked.status === "connected"
+          ? byLanguage(responseLanguage, {
+              zh: `${server.name} 已授权并连接成功，发现 ${checked.discoveredTools.length} 个工具。`,
+              en: `${server.name} is authorized and connected with ${checked.discoveredTools.length} tools discovered.`,
+            })
+          : byLanguage(responseLanguage, {
+              zh: `${server.name} 仍需完成授权：${checked.lastError ?? "请在浏览器完成登录后重试。"}`,
+              en: `${server.name} still needs authorization: ${checked.lastError ?? "Finish login in the browser, then retry."}`,
+            }),
       relatedConversationId: null,
       relatedRunId: null,
     });
@@ -1213,6 +1278,7 @@ export class TeamalignedRuntime extends EventEmitter {
       connection,
       workspacePath: connection.cwd || this.storage.workspaceRoot,
       responseLanguage,
+      onConnectionUpdated: (updatedConnection) => this.persistMcpConnectionUpdate(updatedConnection),
     });
     this.storage.upsertMcpConnection(checked);
     this.createAppNotification({
@@ -1490,6 +1556,11 @@ export class TeamalignedRuntime extends EventEmitter {
             zh: `${input.agent.name} 正在执行命令确认环境。`,
             en: `${input.agent.name} is running a command to verify the environment.`,
           });
+        } else if (!isLocalTool) {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 正在调用 ${sourceName} 的 ${toolName}。`,
+            en: `${input.agent.name} is calling ${toolName} from ${sourceName}.`,
+          });
         }
         if (!content) {
           return;
@@ -1521,6 +1592,11 @@ export class TeamalignedRuntime extends EventEmitter {
             zh: `${input.agent.name} 已完成网页抓取，正在基于来源回答。`,
             en: `${input.agent.name} finished webpage fetching and is preparing a source-grounded answer.`,
           });
+        } else if (!isLocalTool) {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.agent.name} 已拿到 ${sourceName}.${toolName} 的结果。`,
+            en: `${input.agent.name} got the result from ${sourceName}.${toolName}.`,
+          });
         }
         if (!content) {
           return;
@@ -1536,7 +1612,12 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       if (event.phase === "error") {
-        if (toolName !== "web_search" && toolName !== "web_fetch") {
+        const shouldSurfaceError =
+          toolName === "web_search" ||
+          toolName === "web_fetch" ||
+          !isLocalTool ||
+          /oauth|authorize|authorization|授权|权限|permission/i.test(event.error);
+        if (!shouldSurfaceError) {
           return;
         }
         const content = isLocalTool
@@ -2289,6 +2370,7 @@ export class TeamalignedRuntime extends EventEmitter {
               latestInput: input,
               attachments,
               onMcpInvocation: toolInvocationObserver,
+              onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
               onDeepAgentToolInvocation: toolInvocationObserver,
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
@@ -2940,6 +3022,7 @@ export class TeamalignedRuntime extends EventEmitter {
                       mcpConnections: availableMcpConnections,
                       responseLanguage,
                       onMcpInvocation: teamToolObserver,
+                      onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                       onDeepAgentToolInvocation: teamToolObserver,
                       onUpdate: ({ phase, content }) => {
                         if (!shouldContinueRun()) {
@@ -3258,6 +3341,7 @@ export class TeamalignedRuntime extends EventEmitter {
                 mcpServers: availableMcpServers,
                 mcpConnections: availableMcpConnections,
                 onMcpInvocation: teamToolObserver,
+                onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                 onDeepAgentToolInvocation: teamToolObserver,
                 onTextStream: async (aggregatedText) => {
                   if (!shouldContinueRun()) {

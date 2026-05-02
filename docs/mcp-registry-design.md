@@ -80,34 +80,36 @@ team-aligned-mcps/
 - 本地连接配置表单
 - `stdio npx` MCP 的真实健康检查和 tools/list
 - `HTTP + headers` MCP 的真实 URL 握手、超时控制和 tools/list
+- `HTTP + OAuth` MCP 的基础授权闭环：扩展页授权按钮、浏览器打开授权页、本地回调接收 code、token 状态保存、授权后重新发现工具
 - “连接并启用 / 添加并配置 / 移除连接” 的本地状态流
 - Agent 级 MCP 白名单
 - `/mcp`
 - `/mcp use <slug>`
 - `/mcp tools <slug>`
 - 单聊与群聊 runtime 已能注入 discovered MCP tools
+- MCP 未授权/权限错误会在聊天过程消息中提示用户授权后重试
+- runtime 已提供通用工具执行前 policy hook，可用于后续确认 UI
 
 ## 当前边界
 
 这一版还没有做：
 
-- OAuth 型 MCP 授权流程
-- 基于浏览器授权链接的远端登录绑定
+- OAuth token 过期后的重授权体验打磨
 - 更完整的 tool call 可视化和 run 详情
 - tool 级白名单
 - MCP 调用审计与历史记录
 - 群聊里对 MCP 使用过程的更丰富可视化
+- 通用工具确认 UI 队列
 
 也就是说，当前已经完成了第一版 MCP 主链路：
 
 - 支持 `stdio npx`
 - 支持 `HTTP + headers`
+- 支持 `HTTP + OAuth` 基础授权
 - 支持本地配置
 - 支持健康检查
 - 支持 Agent / Team 白名单
 - 支持 discovered tools 注入 runtime
-
-当前暂不支持 OAuth 型 MCP。
 
 ## 推荐开发顺序
 
@@ -115,4 +117,4 @@ team-aligned-mcps/
 2. 增加 tool 级白名单
 3. 增加更细粒度的错误提示与配置模板
 4. 在消息流中展示 MCP 调用过程与结果
-5. 视需要再评估 OAuth 型 MCP
+5. 补通用工具确认 UI 和 OAuth 重授权体验

@@ -5,6 +5,13 @@ export type AgentStatus = "online" | "busy" | "offline";
 export type ConversationKind = "agent" | "team";
 export type McpTransport = "stdio" | "http";
 export type McpConnectionStatus = "disconnected" | "configured" | "connected" | "error";
+export type McpAuthType = "none" | "env" | "header" | "oauth";
+export type McpOAuthStatus =
+  | "not_required"
+  | "unauthenticated"
+  | "authorization_pending"
+  | "authorized"
+  | "error";
 export type AvatarAssetScope = "profile" | "agents" | "teams";
 export type SenderKind = "user" | "agent" | "system";
 export type MessageType =
@@ -313,7 +320,7 @@ export interface McpCatalogRecord {
   launcherCommand: string | null;
   launcherArgs: string[];
   remoteUrl: string | null;
-  authType: "none" | "env" | "header";
+  authType: McpAuthType;
   authFields: McpAuthFieldRecord[];
   capabilities: string[];
   declaredTools: string[];
@@ -322,6 +329,17 @@ export interface McpCatalogRecord {
   docsUrl: string | null;
   homepage: string | null;
   metadata: Record<string, unknown> | null;
+}
+
+export interface McpOAuthStateRecord {
+  status: McpOAuthStatus;
+  authorizationUrl: string | null;
+  tokens: Record<string, unknown> | null;
+  clientInformation: Record<string, unknown> | null;
+  codeVerifier: string | null;
+  discoveryState: Record<string, unknown> | null;
+  lastUpdatedAt: number | null;
+  lastError: string | null;
 }
 
 export interface McpConnectionRecord {
@@ -334,6 +352,7 @@ export interface McpConnectionRecord {
   envEntries: Record<string, string>;
   headers: Record<string, string>;
   cwd: string | null;
+  oauth: McpOAuthStateRecord | null;
   discoveredTools: McpToolRecord[];
   status: McpConnectionStatus;
   lastCheckedAt: number | null;
@@ -579,6 +598,7 @@ export interface TeamalignedApi {
   removePromptAlias: (promptAliasId: string) => Promise<AppSnapshot>;
   refreshMcpCatalog: () => Promise<AppSnapshot>;
   connectMcp: (payload: ConnectMcpInput) => Promise<AppSnapshot>;
+  authorizeMcp: (serverId: string) => Promise<AppSnapshot>;
   checkMcpHealth: (serverId: string) => Promise<AppSnapshot>;
   disconnectMcp: (serverId: string) => Promise<AppSnapshot>;
   toggleExtension: (extensionId: string) => Promise<AppSnapshot>;

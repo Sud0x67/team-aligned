@@ -109,6 +109,7 @@ export function ExtensionsPage() {
     removePromptAlias,
     refreshMcpCatalog,
     connectMcp,
+    authorizeMcp,
     checkMcpHealth,
     disconnectMcp,
     settings,
@@ -611,6 +612,15 @@ export function ExtensionsPage() {
                         </button>
                         {connection ? (
                           <>
+                            {item.authType === "oauth" && connection.oauth?.status !== "authorized" ? (
+                              <button
+                                onClick={() => authorizeMcp(item.id)}
+                                className="inline-flex items-center gap-1 rounded-full bg-[var(--primary)] px-3 py-1 text-[12px] font-medium text-white transition hover:opacity-90"
+                              >
+                                <Link2 className="h-3.5 w-3.5" />
+                                {t.extensions("authorizeOAuth")}
+                              </button>
+                            ) : null}
                             <button
                               onClick={() => checkMcpHealth(item.id)}
                               className="inline-flex items-center gap-1 rounded-full bg-[var(--muted)] px-3 py-1 text-[12px] font-medium text-[var(--foreground)] transition hover:bg-[var(--panel-muted)]"
@@ -652,6 +662,9 @@ export function ExtensionsPage() {
                         {discoveredToolNames.join(listSeparator) || emptyListLabel}
                       </p>
                       {connection?.lastError ? <p className="text-red-500">{connection.lastError}</p> : null}
+                      {connection?.oauth?.authorizationUrl ? (
+                        <p className="text-[var(--primary)]">{t.extensions("oauthPendingHint")}</p>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -956,6 +969,14 @@ export function ExtensionsPage() {
                 >
                   {t.extensions("healthCheck")}
                 </button>
+                {editingMcp.authType === "oauth" && connectionMap.get(editingMcp.id) ? (
+                  <button
+                    onClick={() => authorizeMcp(editingMcp.id)}
+                    className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-[14px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+                  >
+                    {t.extensions("authorizeOAuth")}
+                  </button>
+                ) : null}
                 <button
                   onClick={() => void saveMcpConfig()}
                   className="rounded-lg bg-[var(--primary)] px-4 py-2.5 text-[14px] text-white transition hover:opacity-90"

@@ -677,6 +677,7 @@ function createEphemeralWorker(input: {
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
 }) {
   const tools = buildMcpLangChainTools({
@@ -684,6 +685,7 @@ function createEphemeralWorker(input: {
     connectionsById: new Map((input.mcpConnections ?? []).map((connection) => [connection.serverId, connection])),
     workspacePath: input.workspacePath,
     onInvocation: input.onMcpInvocation,
+    onConnectionUpdated: input.onMcpConnectionUpdated,
   });
   return createDeepAgent({
     name: input.name,
@@ -711,6 +713,7 @@ async function invokeWorkerText(input: {
   mcpServers?: McpCatalogRecord[];
   mcpConnections?: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
@@ -1443,6 +1446,7 @@ export async function executeNaturalTeamWorkItem(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onUpdate?: (event: {
     phase: "started" | "streaming" | "completed" | "failed";
@@ -1538,6 +1542,7 @@ export async function executeNaturalTeamWorkItem(input: {
       mcpServers: input.mcpServers,
       mcpConnections: input.mcpConnections,
       onMcpInvocation: input.onMcpInvocation,
+      onMcpConnectionUpdated: input.onMcpConnectionUpdated,
       onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       onTextStream: async (aggregatedText, deltaText) => {
         await input.onTextStream?.(aggregatedText, deltaText);
@@ -1612,6 +1617,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   mcpServers: McpCatalogRecord[];
   mcpConnections: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
+  onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
@@ -1721,6 +1727,7 @@ export async function generateNaturalTeamAgentMessage(input: {
           mcpServers: input.mcpServers,
           mcpConnections: input.mcpConnections,
           onMcpInvocation: input.onMcpInvocation,
+          onMcpConnectionUpdated: input.onMcpConnectionUpdated,
           onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
           onTextStream: input.onTextStream,
           responseLanguage,
