@@ -3178,63 +3178,66 @@ export class AppStorage {
       {
         id: "agent-coder",
         name: "Coder",
-        role: language === "en" ? "Full-stack Engineer" : "全栈开发",
+        role: language === "en" ? "Product Engineer" : "产品工程师",
         avatar: "C",
         color: agentPalette[1],
         status: "online" as const,
         description:
           language === "en"
-            ? "Builds frontend, backend, and local toolchain implementation."
-            : "负责前端、后端与本地工具链实现。",
-        capabilities: ["React", "Electron", "Node.js", "TypeScript"],
+            ? "Turns product requests into working Electron, React, and TypeScript changes with tests."
+            : "把产品需求落成可运行的 Electron、React 和 TypeScript 改动，并补充必要测试。",
+        capabilities:
+          language === "en"
+            ? ["Implementation", "Refactoring", "Debugging", "Tests"]
+            : ["功能实现", "代码重构", "问题修复", "测试验证"],
       },
       {
         id: "agent-designer",
         name: "Designer",
-        role: language === "en" ? "UI/UX Designer" : "UI/UX 设计师",
+        role: language === "en" ? "Product Designer" : "产品设计师",
         avatar: "D",
         color: agentPalette[2],
         status: "online" as const,
         description:
           language === "en"
-            ? "Turns complex workflows into clear and shippable interactions."
-            : "把复杂系统整理成清晰、可落地的交互。",
+            ? "Clarifies flows, layout, and visual hierarchy so features feel simple before implementation."
+            : "梳理流程、布局和视觉层级，让功能在实现前就更清晰易用。",
         capabilities:
           language === "en"
-            ? ["Information architecture", "Wireframing", "Visual system", "Interaction design"]
-            : ["信息架构", "原型设计", "视觉系统", "交互梳理"],
+            ? ["User flows", "Wireframes", "Interaction polish", "Design critique"]
+            : ["用户流程", "线框原型", "交互打磨", "设计评审"],
       },
       {
         id: "agent-planner",
         name: "Planner",
-        role: language === "en" ? "Project Manager" : "项目经理",
+        role: language === "en" ? "Delivery Planner" : "交付规划师",
         avatar: "P",
         color: agentPalette[3],
         status: "online" as const,
         description:
           language === "en"
-            ? "Strong at scoping, prioritization, and multi-agent coordination."
-            : "擅长拆任务、排优先级和组织多人协作。",
+            ? "Breaks fuzzy goals into owners, tradeoffs, checkpoints, and next actions."
+            : "把模糊目标拆成负责人、取舍、检查点和下一步行动。",
         capabilities:
           language === "en"
-            ? ["Task breakdown", "Milestones", "Risk alerts", "Collaboration rhythm"]
-            : ["任务拆解", "里程碑规划", "风险提示", "协作节奏"],
+            ? ["Task breakdown", "Prioritization", "Risk tracking", "Handoffs"]
+            : ["任务拆解", "优先级判断", "风险跟踪", "接棒安排"],
       },
       {
         id: "agent-researcher",
         name: "Researcher",
-        role: language === "en" ? "Researcher" : "研究员",
+        role: language === "en" ? "Market Researcher" : "市场研究员",
         avatar: "R",
         color: agentPalette[4],
         status: "online" as const,
         description:
           language === "en"
-            ? "Good at searching, synthesizing, and turning background into insights."
-            : "擅长检索、归纳与形成背景信息。",
+            ? "Searches the web and workspace, compares sources, and turns market or user context into briefs."
+            : "检索网页和工作区资料，对比来源，并把市场或用户背景整理成简报。",
         capabilities:
           language === "en"
-            ? ["Research search", "Trend analysis", "Competitive scan", "Long-form synthesis"]
-            : ["资料检索", "趋势分析", "竞品研究", "长文提炼"],
+            ? ["Web research", "Competitive scan", "User insights", "Brief writing"]
+            : ["网页研究", "竞品扫描", "用户洞察", "简报撰写"],
       },
     ];
 
@@ -3268,22 +3271,11 @@ export class AppStorage {
         name: language === "en" ? "Product Squad" : "产品开发组",
         description:
           language === "en"
-            ? "A starter squad to quickly collaborate on TeamAligned beta tasks."
-            : "围绕 teamaligned 的 MVP 体验快速协作。",
+            ? "Turns a product idea into a small usable slice: clarify scope, design the flow, implement, and verify."
+            : "把产品想法推进到一个可用的小版本：澄清范围、设计流程、实现并验证。",
         avatar: language === "en" ? "P" : "产",
         avatarColor: teamPalette[0],
         members: ["agent-planner", "agent-designer", "agent-coder"],
-      },
-      {
-        id: "team-research",
-        name: language === "en" ? "Research Squad" : "市场研究组",
-        description:
-          language === "en"
-            ? "Collects context and user feedback, then feeds insights to product delivery."
-            : "负责背景研究、用户反馈与方案补充。",
-        avatar: language === "en" ? "R" : "研",
-        avatarColor: teamPalette[1],
-        members: ["agent-researcher", "agent-planner", "agent-designer"],
       },
     ];
 
@@ -3326,8 +3318,8 @@ export class AppStorage {
         unread: 1,
         lastMessage:
           language === "en"
-            ? "Planner: Let’s align on the first beta milestone."
-            : "Planner: 现在优先把单聊命令和群聊编排体验打通。",
+            ? "Planner: Share the goal and we will turn it into a small shippable plan."
+            : "Planner: 告诉我们目标，我们会把它拆成一个可交付的小计划。",
         lastActivityAt: timestamp - 1000 * 60 * 4,
         meta: { ...defaultConversationMeta },
       },
@@ -3369,7 +3361,7 @@ export class AppStorage {
               senderKind: "agent",
               messageType: "agent",
               visibility: "public",
-              content: "Team, let's align on the first beta milestone and split responsibilities.",
+              content: "Share the product goal when you are ready. I will clarify scope, Designer can shape the flow, and Coder can implement the first working slice.",
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 10,
               runId: null,
@@ -3410,7 +3402,7 @@ export class AppStorage {
               senderKind: "agent",
               messageType: "agent",
               visibility: "public",
-              content: "大家今天先集中做 MVP 的 0.1 核心交互。",
+              content: "有产品目标时直接发到群里。我会先澄清范围，Designer 梳理体验，Coder 推进第一版可运行实现。",
               mentions: [],
               createdAt: timestamp - 1000 * 60 * 10,
               runId: null,

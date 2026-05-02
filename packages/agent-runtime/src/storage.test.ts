@@ -22,8 +22,14 @@ test("init seeds starter agents and teams for a brand-new workspace", () => {
     storage.init();
     const snapshot = storage.getSnapshot();
     assert.ok(snapshot.agents.length >= 5);
-    assert.ok(snapshot.teams.length >= 2);
+    assert.equal(snapshot.teams.length, 1);
     assert.ok(snapshot.conversations.length >= 2);
+    assert.ok(snapshot.agents.some((agent) => agent.id === "agent-coder" && agent.role === "产品工程师"));
+    assert.ok(snapshot.agents.some((agent) => agent.id === "agent-researcher" && agent.role === "市场研究员"));
+    assert.deepEqual(
+      snapshot.teams.map((team) => team.id),
+      ["team-product"],
+    );
     assert.ok(snapshot.conversations.some((conversation) => conversation.id === "conv-team-product"));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -118,8 +124,12 @@ test("init backfills starter agents and teams when only settings exist", () => {
     storage.init();
     const snapshot = storage.getSnapshot();
     assert.ok(snapshot.agents.length >= 5);
-    assert.ok(snapshot.teams.length >= 2);
+    assert.equal(snapshot.teams.length, 1);
     assert.ok(snapshot.conversations.some((conversation) => conversation.title === "Product Squad"));
+    assert.deepEqual(
+      snapshot.teams.map((team) => team.name),
+      ["Product Squad"],
+    );
     assert.ok(
       snapshot.messages[TEAMALIGNED_ASSISTANT_CONVERSATION_ID]?.some(
         (message) => message.senderName === "You",
