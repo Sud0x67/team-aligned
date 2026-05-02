@@ -139,6 +139,8 @@ function trimHeadline(text: string, max = 120) {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
 }
 
+const workspaceInternalDirName = ".team-aligned";
+
 function serializeRuntimeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -2076,7 +2078,7 @@ export class TeamalignedRuntime extends EventEmitter {
           );
           const memoryPath = this.appendMemory(
             workspacePath,
-            "memory/MEMORY.md",
+            `${workspaceInternalDirName}/memory/MEMORY.md`,
             byLanguage(responseLanguage, {
               zh: `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response.text)}`,
               en: `- ${this.formatTimestamp()} | task: ${trimHeadline(input)} | output: ${trimHeadline(response.text)}`,
@@ -3236,7 +3238,7 @@ export class TeamalignedRuntime extends EventEmitter {
               : turnMessages.at(-1)?.content ?? "";
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
-            "shared-memory.md",
+            `${workspaceInternalDirName}/shared-memory.md`,
             byLanguage(responseLanguage, {
               zh: `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${activeSpeakers.join("、") || "无"} | 结论：${trimHeadline(finalLine)}`,
               en: `- ${this.formatTimestamp()} | topic: ${trimHeadline(input)} | speakers: ${activeSpeakers.join(", ") || "none"} | conclusion: ${trimHeadline(finalLine)}`,
@@ -3907,7 +3909,7 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   private getArtifactDir(workspacePath: string) {
-    return join(workspacePath, "artifacts");
+    return join(workspacePath, workspaceInternalDirName, "artifacts");
   }
 
   private getArtifactPath(workspacePath: string, fileName: string) {
@@ -3915,10 +3917,12 @@ export class TeamalignedRuntime extends EventEmitter {
   }
 
   private ensureWorkspaceFolders(workspacePath: string) {
+    const internalPath = join(workspacePath, workspaceInternalDirName);
     mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(internalPath, { recursive: true });
     mkdirSync(this.getArtifactDir(workspacePath), { recursive: true });
-    mkdirSync(join(workspacePath, "memory"), { recursive: true });
-    mkdirSync(join(workspacePath, "sessions"), { recursive: true });
+    mkdirSync(join(internalPath, "memory"), { recursive: true });
+    mkdirSync(join(internalPath, "sessions"), { recursive: true });
   }
 
   private writeTextFile(filePath: string, content: string) {

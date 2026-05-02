@@ -87,6 +87,29 @@ test("init leaves default provider api keys empty for first-time setup", () => {
   }
 });
 
+test("workspace runtime files are created under .team-aligned only", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const snapshot = storage.getSnapshot();
+    const team = snapshot.teams.find((item) => item.id === "team-product") ?? snapshot.teams[0];
+    assert.ok(team);
+
+    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "artifacts")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "sessions")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "shared-memory.md")), true);
+
+    assert.equal(existsSync(join(team.workspacePath, "artifacts")), false);
+    assert.equal(existsSync(join(team.workspacePath, "memory")), false);
+    assert.equal(existsSync(join(team.workspacePath, "sessions")), false);
+    assert.equal(existsSync(join(team.workspacePath, "shared-memory.md")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("init backfills starter agents and teams when only settings exist", () => {
   const root = createTempRoot();
   try {
@@ -381,8 +404,8 @@ test("clearConversationHistory resets team context and team memory files for gro
         updatedAt: Date.now(),
       },
     });
-    writeFileSync(join(team.workspacePath, "memory", "MEMORY.md"), "old team memory", "utf8");
-    writeFileSync(join(team.workspacePath, "shared-memory.md"), "old shared memory", "utf8");
+    writeFileSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md"), "old team memory", "utf8");
+    writeFileSync(join(team.workspacePath, ".team-aligned", "shared-memory.md"), "old shared memory", "utf8");
 
     storage.clearConversationHistory(conversationId);
 
@@ -401,11 +424,15 @@ test("clearConversationHistory resets team context and team memory files for gro
     assert.equal((nextTeam.context.handoff?.reason ?? "").includes("/clear"), true);
     assert.equal((nextTeam.context.handoff?.revision ?? 0) > 8, true);
     assert.equal(
-      readFileSync(join(team.workspacePath, "memory", "MEMORY.md"), "utf8").includes("会话上下文已通过 /clear 重置"),
+      readFileSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md"), "utf8").includes(
+        "会话上下文已通过 /clear 重置",
+      ),
       true,
     );
     assert.equal(
-      readFileSync(join(team.workspacePath, "shared-memory.md"), "utf8").includes("会话上下文已通过 /clear 重置"),
+      readFileSync(join(team.workspacePath, ".team-aligned", "shared-memory.md"), "utf8").includes(
+        "会话上下文已通过 /clear 重置",
+      ),
       true,
     );
   } finally {
@@ -501,7 +528,7 @@ test("saveAttachmentAsset stores valid files under conversation attachment direc
     assert.equal(attachment.mimeType, "text/plain");
     assert.equal(attachment.sizeBytes, 5);
     assert.ok(existsSync(attachment.path));
-    assert.equal(attachment.path.includes(join("artifacts", "attachments")), true);
+    assert.equal(attachment.path.includes(join(".team-aligned", "artifacts", "attachments")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

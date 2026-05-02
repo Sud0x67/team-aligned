@@ -783,7 +783,7 @@ export async function invokeSingleChatDeepAgent(input: {
               virtualMode: true,
             }),
             checkpointer: new MemorySaver(),
-            memory: ["/memory/MEMORY.md"],
+            memory: ["/.team-aligned/memory/MEMORY.md"],
           }),
         }
       : cached;

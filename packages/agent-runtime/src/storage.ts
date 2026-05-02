@@ -85,6 +85,7 @@ type PersistedState = {
 
 type WorkspaceLayout = {
   workspacePath: string;
+  internalPath: string;
   artifactsPath: string;
   attachmentsPath: string;
   memoryPath: string;
@@ -121,6 +122,7 @@ type StoredAttachmentRecord = AttachmentAssetRecord & {
 };
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const workspaceInternalDirName = ".team-aligned";
 
 const placeholderApiKeys = new Set(["sk-qwen-demo-key", "sk-openai-demo-key"]);
 
@@ -2560,14 +2562,16 @@ export class AppStorage {
     workspacePath: string,
     options: { type: "agent" | "team"; title: string; summary: string },
   ): WorkspaceLayout {
-    const artifactsPath = join(workspacePath, "artifacts");
+    const internalPath = join(workspacePath, workspaceInternalDirName);
+    const artifactsPath = join(internalPath, "artifacts");
     const attachmentsPath = join(artifactsPath, "attachments");
-    const memoryPath = join(workspacePath, "memory");
-    const sessionsPath = join(workspacePath, "sessions");
+    const memoryPath = join(internalPath, "memory");
+    const sessionsPath = join(internalPath, "sessions");
     const memoryFilePath = join(memoryPath, "MEMORY.md");
-    const sharedMemoryPath = join(workspacePath, "shared-memory.md");
+    const sharedMemoryPath = join(internalPath, "shared-memory.md");
 
     mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(internalPath, { recursive: true });
     mkdirSync(artifactsPath, { recursive: true });
     mkdirSync(attachmentsPath, { recursive: true });
     mkdirSync(memoryPath, { recursive: true });
@@ -2605,6 +2609,7 @@ export class AppStorage {
 
     return {
       workspacePath,
+      internalPath,
       artifactsPath,
       attachmentsPath,
       memoryPath,
