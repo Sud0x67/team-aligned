@@ -1,6 +1,23 @@
-import { useEffect, useMemo, useRef } from "react";
-import { Bot, Paperclip, ShieldAlert } from "lucide-react";
-import type { AgentRecord, AttachmentAssetRecord, MessageRecord, RunRecord, TeamRecord, UserProfile } from "@shared";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  Bot,
+  Copy,
+  ImagePlus,
+  Paperclip,
+  PencilLine,
+  Redo2,
+  ShieldAlert,
+  StopCircle,
+  X,
+} from "lucide-react";
+import type {
+  AgentRecord,
+  AttachmentAssetRecord,
+  MessageRecord,
+  RunRecord,
+  TeamRecord,
+  UserProfile,
+} from "@shared";
 import { createTranslator } from "../../i18n";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { useAppStore } from "../../store/use-app-store";
@@ -113,6 +130,10 @@ function resolveMentionLabel(
   return mention.replace(/^agent-/, "");
 }
 
+function isMessageSelectable(message: MessageRecord) {
+  return message.visibility === "public";
+}
+
 export function ChatMessageThread({
   conversationId,
   messages,
@@ -125,6 +146,15 @@ export function ChatMessageThread({
   profile,
   agents,
   teams,
+  selectedMessageIds,
+  selectedMessagesExportState,
+  isConversationBusy,
+  onCopyMessage,
+  onToggleMessageSelection,
+  onClearMessageSelection,
+  onExportSelectedMessages,
+  onEditUserMessage,
+  onRetryUserMessage,
 }: {
   conversationId: string;
   messages: MessageRecord[];
@@ -142,6 +172,18 @@ export function ChatMessageThread({
   profile: UserProfile;
   agents: AgentRecord[];
   teams: TeamRecord[];
+  selectedMessageIds: string[];
+  selectedMessagesExportState: {
+    status: "idle" | "exporting" | "success" | "error";
+    message: string | null;
+  };
+  isConversationBusy: boolean;
+  onCopyMessage: (message: MessageRecord) => Promise<void> | void;
+  onToggleMessageSelection: (message: MessageRecord) => void;
+  onClearMessageSelection: () => void;
+  onExportSelectedMessages: () => Promise<void> | void;
+  onEditUserMessage: (message: MessageRecord, options: { stopActiveRun: boolean }) => Promise<void> | void;
+  onRetryUserMessage: (message: MessageRecord) => Promise<void> | void;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -150,8 +192,15 @@ export function ChatMessageThread({
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const lastRunIdRef = useRef<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    message: MessageRecord;
+    x: number;
+    y: number;
+  } | null>(null);
   const agentMap = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const selectedMessageSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds]);
+  const selectedMessageCount = selectedMessageIds.length;
   const hasStreamingVisibleMessage = useMemo(() => {
     return visibleMessages.some(
       (message) =>
@@ -167,15 +216,34 @@ export function ChatMessageThread({
       return compacted;
     }
     const normalizedPending = pendingSystemMessage.trim();
-    return compacted.filter((item, index) => !(item === normalizedPending && index === compacted.length - 1));
+    return compacted.filter(
+      (item, index) => !(item === normalizedPending && index === compacted.length - 1),
+    );
   }, [pendingSystemMessage, pendingSystemUpdates]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeMenu = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("blur", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [contextMenu]);
 
   const updateShouldStickToBottom = () => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const distanceToBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     shouldStickToBottomRef.current = distanceToBottom <= 80;
   };
 
@@ -202,6 +270,20 @@ export function ChatMessageThread({
     shouldStickToBottomRef.current = true;
   }, [showInternalMessages]);
 
+  const openContextMenu = (event: MouseEvent, message: MessageRecord) => {
+    event.preventDefault();
+    setContextMenu({
+      message,
+      x: Math.min(event.clientX, window.innerWidth - 260),
+      y: Math.min(event.clientY, window.innerHeight - 240),
+    });
+  };
+
+  const contextMessage = contextMenu?.message ?? null;
+  const contextMessageSelectable = contextMessage ? isMessageSelectable(contextMessage) : false;
+  const contextMessageSelected = contextMessage ? selectedMessageSet.has(contextMessage.id) : false;
+  const contextMessageIsUser = contextMessage?.senderKind === "user" && contextMessage.visibility === "public";
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -210,6 +292,46 @@ export function ChatMessageThread({
         className="min-h-0 flex-1 overflow-y-auto bg-[var(--background)] px-5 py-4"
       >
         <div className="space-y-4">
+          {selectedMessageCount > 0 ? (
+            <div className="sticky top-0 z-20 rounded-2xl border border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[color-mix(in_srgb,var(--card)_92%,var(--primary)_8%)] px-4 py-3 shadow-sm backdrop-blur">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--primary)_14%,transparent)] px-2.5 py-1 text-xs font-semibold text-[var(--primary)]">
+                  {t.chat("selectedMessagesLabel").replace("{{count}}", String(selectedMessageCount))}
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void onExportSelectedMessages()}
+                  disabled={selectedMessagesExportState.status === "exporting"}
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {selectedMessagesExportState.status === "exporting"
+                    ? t.chat("exportingSelectedMessages")
+                    : t.chat("exportSelectedMessages")}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                  onClick={onClearMessageSelection}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {t.chat("clearSelection")}
+                </button>
+              </div>
+              {selectedMessagesExportState.message ? (
+                <p
+                  className={`mt-2 text-xs ${
+                    selectedMessagesExportState.status === "error"
+                      ? "text-[var(--danger)]"
+                      : "text-[var(--muted-foreground)]"
+                  }`}
+                >
+                  {selectedMessagesExportState.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {visibleMessages.map((message) => {
             const isUser = message.senderKind === "user";
             const isInternal = message.visibility === "internal";
@@ -218,11 +340,13 @@ export function ChatMessageThread({
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
             const avatar = buildAvatarProps(message, { language, profile, agentMap, teamMap });
+            const selected = selectedMessageSet.has(message.id);
 
             return (
               <div
                 key={message.id}
                 className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                onContextMenu={(event) => openContextMenu(event, message)}
               >
                 <div className={`flex max-w-[72%] items-start gap-2.5 ${isUser ? "flex-row-reverse" : ""}`}>
                   {avatar ? (
@@ -235,134 +359,128 @@ export function ChatMessageThread({
                       textClassName={avatar.textClassName}
                     />
                   ) : null}
-                  <div
-                    className={[
-                      "min-w-0",
-                      isUser ? "items-end" : "",
-                    ].join(" ")}
-                  >
-                  {!isUser ? (
-                    <div className="mb-1.5 flex items-center gap-1.5 pl-0.5 text-[11px]">
-                      <span className="truncate font-medium text-[var(--foreground)]">
-                        {message.senderName}
-                      </span>
-                      <span className="text-[var(--muted-foreground)]">·</span>
-                      <span className="text-[var(--muted-foreground)]">
-                        {formatTime(message.createdAt)}
-                      </span>
-                    </div>
-                  ) : null}
+                  <div className={["min-w-0", isUser ? "items-end" : ""].join(" ")}>
+                    {!isUser ? (
+                      <div className="mb-1.5 flex items-center gap-1.5 pl-0.5 text-[11px]">
+                        <span className="truncate font-medium text-[var(--foreground)]">
+                          {message.senderName}
+                        </span>
+                        <span className="text-[var(--muted-foreground)]">·</span>
+                        <span className="text-[var(--muted-foreground)]">{formatTime(message.createdAt)}</span>
+                      </div>
+                    ) : null}
 
-                  <div
-                    className={[
-                      "rounded-2xl border px-4 py-2.5 text-[14px] leading-7 shadow-sm",
-                      isUser
-                        ? "rounded-tr-md border-transparent bg-[var(--primary)] text-white"
-                        : isNotification
-                          ? "rounded-tl-md border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--accent)] text-[var(--accent-foreground)]"
-                          : "rounded-tl-md",
-                      !isUser && !isNotification ? messageTone(message) : "",
-                    ].join(" ")}
-                  >
-                    {isCommandCard ? (
-                      <div className="mb-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)]">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-semibold">{String(message.metadata?.shellCommand ?? "command")}</p>
-                          <span className="text-xs text-[var(--muted-foreground)]">
-                            exit {String(message.metadata?.code ?? 0)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs leading-6 text-[var(--muted-foreground)]">
-                          {String(message.metadata?.workspacePath ?? "")}
-                        </p>
-                        {typeof message.metadata?.artifactPath === "string" ? (
-                          <a
-                            href={resolveAssetSrc(String(message.metadata.artifactPath)) ?? "#"}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-2 inline-flex text-xs font-medium text-[var(--primary)] hover:underline"
-                          >
-                            {t.chat("commandResultViewFull")}
-                          </a>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {isNotification ? (
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-[var(--primary)]">
-                        <Bot className="h-3.5 w-3.5" />
-                        {message.metadata?.directFromSpecialist
-                          ? `${t.chat("notificationLabel")} · ${t.chat("specialistDirectQuestion")}`
-                          : message.metadata?.relayedByManager
-                            ? `${t.chat("notificationLabel")} · ${t.chat("managerRelayQuestion")}`
-                            : t.chat("notificationLabel")}
-                      </div>
-                    ) : null}
-                    {!isCommandCard ? (
-                      <ChatMarkdownContent content={message.content} inverted={isUser} />
-                    ) : null}
-                    {isStreaming ? (
-                      <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
-                        {t.chat("generating")}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {attachments.length > 0 ? (
-                    <div className="mt-2 flex flex-col gap-2">
-                      {attachments.map((attachment) => (
-                        <a
-                          key={attachment.path}
-                          href={resolveAssetSrc(attachment.path) ?? "#"}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="max-w-full rounded-2xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Paperclip className="h-4 w-4 shrink-0" />
-                            <span className="truncate">{attachment.name}</span>
-                            <span className="ml-auto shrink-0 text-xs text-[var(--muted-foreground)]">
-                              {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB
+                    <div
+                      className={[
+                        "rounded-2xl border px-4 py-2.5 text-[14px] leading-7 shadow-sm",
+                        isUser
+                          ? "rounded-tr-md border-transparent bg-[var(--primary)] text-white"
+                          : isNotification
+                            ? "rounded-tl-md border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--accent)] text-[var(--accent-foreground)]"
+                            : "rounded-tl-md",
+                        !isUser && !isNotification ? messageTone(message) : "",
+                        selected
+                          ? "ring-2 ring-[color-mix(in_srgb,var(--primary)_35%,transparent)] ring-offset-1 ring-offset-[var(--background)]"
+                          : "",
+                      ].join(" ")}
+                    >
+                      {isCommandCard ? (
+                        <div className="mb-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)]">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-semibold">{String(message.metadata?.shellCommand ?? "command")}</p>
+                            <span className="text-xs text-[var(--muted-foreground)]">
+                              exit {String(message.metadata?.code ?? 0)}
                             </span>
                           </div>
-                          {isImageAttachment(attachment) ? (
-                            <img
-                              src={resolveAssetSrc(attachment.path) ?? undefined}
-                              alt={attachment.name}
-                              className="mt-3 max-h-48 rounded-xl border border-[var(--border)] object-cover"
-                            />
+                          <p className="mt-1 text-xs leading-6 text-[var(--muted-foreground)]">
+                            {String(message.metadata?.workspacePath ?? "")}
+                          </p>
+                          {typeof message.metadata?.artifactPath === "string" ? (
+                            <a
+                              href={resolveAssetSrc(String(message.metadata.artifactPath)) ?? "#"}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex text-xs font-medium text-[var(--primary)] hover:underline"
+                            >
+                              {t.chat("commandResultViewFull")}
+                            </a>
                           ) : null}
-                        </a>
-                      ))}
+                        </div>
+                      ) : null}
+                      {isNotification ? (
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] text-[var(--primary)]">
+                          <Bot className="h-3.5 w-3.5" />
+                          {message.metadata?.directFromSpecialist
+                            ? `${t.chat("notificationLabel")} · ${t.chat("specialistDirectQuestion")}`
+                            : message.metadata?.relayedByManager
+                              ? `${t.chat("notificationLabel")} · ${t.chat("managerRelayQuestion")}`
+                              : t.chat("notificationLabel")}
+                        </div>
+                      ) : null}
+                      {!isCommandCard ? <ChatMarkdownContent content={message.content} inverted={isUser} /> : null}
+                      {isStreaming ? (
+                        <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
+                          {t.chat("generating")}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
 
-                  {showMentions && message.mentions.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {message.mentions.map((mention) => (
-                        <span
-                          key={mention}
-                          className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]"
-                        >
-                          @{resolveMentionLabel(mention, { language, profile, agentMap, teamMap })}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
+                    {attachments.length > 0 ? (
+                      <div className="mt-2 flex flex-col gap-2">
+                        {attachments.map((attachment) => (
+                          <a
+                            key={attachment.path}
+                            href={resolveAssetSrc(attachment.path) ?? "#"}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="max-w-full rounded-2xl border border-[var(--border)] bg-[var(--card)] px-3 py-3 text-sm text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                          >
+                            <div className="flex items-center gap-2">
+                              <Paperclip className="h-4 w-4 shrink-0" />
+                              <span className="truncate">{attachment.name}</span>
+                              <span className="ml-auto shrink-0 text-xs text-[var(--muted-foreground)]">
+                                {Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB
+                              </span>
+                            </div>
+                            {isImageAttachment(attachment) ? (
+                              <img
+                                src={resolveAssetSrc(attachment.path) ?? undefined}
+                                alt={attachment.name}
+                                className="mt-3 max-h-48 rounded-xl border border-[var(--border)] object-cover"
+                              />
+                            ) : null}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
 
-                  {isInternal ? (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-[var(--warning)]">
-                      <ShieldAlert className="h-3.5 w-3.5" />
-                      {t.chat("internalMessage")}
-                    </div>
-                  ) : null}
+                    {showMentions && message.mentions.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {message.mentions.map((mention) => (
+                          <span
+                            key={mention}
+                            className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-medium text-[var(--primary)]"
+                          >
+                            @{resolveMentionLabel(mention, { language, profile, agentMap, teamMap })}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
 
-                  {isUser ? (
-                    <span className="mt-1.5 block pr-0.5 text-right text-[11px] text-[var(--muted-foreground)]">
-                      {formatTime(message.createdAt)}
-                    </span>
-                  ) : null}
-                </div>
+                    {isInternal ? (
+                      <div className="mt-2 flex items-center gap-2 text-xs text-[var(--warning)]">
+                        <ShieldAlert className="h-3.5 w-3.5" />
+                        {t.chat("internalMessage")}
+                      </div>
+                    ) : null}
+
+                    {isUser ? (
+                      <span className="mt-1.5 block pr-0.5 text-right text-[11px] text-[var(--muted-foreground)]">
+                        {formatTime(message.createdAt)}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             );
@@ -387,9 +505,7 @@ export function ChatMessageThread({
                       {pendingActor?.name ?? t.chat("systemThinking")}
                     </span>
                     <span className="text-[var(--muted-foreground)]">·</span>
-                    <span className="text-[var(--muted-foreground)]">
-                      {t.chat("systemThinking")}
-                    </span>
+                    <span className="text-[var(--muted-foreground)]">{t.chat("systemThinking")}</span>
                   </div>
                   <div className="rounded-2xl rounded-tl-md border border-transparent bg-[var(--muted)] px-4 py-3 text-[14px] leading-7 text-[var(--foreground)] shadow-sm">
                     <div className="mb-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
@@ -400,10 +516,7 @@ export function ChatMessageThread({
                     {visiblePendingUpdates.length > 0 ? (
                       <div className="mt-3 space-y-1">
                         {visiblePendingUpdates.map((line, index) => (
-                          <p
-                            key={`${line}-${index}`}
-                            className="text-xs leading-6 text-[var(--muted-foreground)]"
-                          >
+                          <p key={`${line}-${index}`} className="text-xs leading-6 text-[var(--muted-foreground)]">
                             {line}
                           </p>
                         ))}
@@ -418,6 +531,103 @@ export function ChatMessageThread({
           <div ref={bottomAnchorRef} />
         </div>
       </div>
+
+      {contextMessage ? (
+        <div
+          className="fixed z-50 w-56 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] py-1 shadow-2xl"
+          style={{ left: contextMenu?.x ?? 0, top: contextMenu?.y ?? 0 }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              void onCopyMessage(contextMessage);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+          >
+            <Copy className="h-4 w-4 text-[var(--muted-foreground)]" />
+            {t.chat("contextMenuCopyMessage")}
+          </button>
+
+          {contextMessageIsUser ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  void onEditUserMessage(contextMessage, { stopActiveRun: isConversationBusy });
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+              >
+                {isConversationBusy ? (
+                  <StopCircle className="h-4 w-4 text-[var(--muted-foreground)]" />
+                ) : (
+                  <PencilLine className="h-4 w-4 text-[var(--muted-foreground)]" />
+                )}
+                {isConversationBusy ? t.chat("contextMenuStopAndEditMessage") : t.chat("contextMenuEditMessage")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void onRetryUserMessage(contextMessage);
+                  setContextMenu(null);
+                }}
+                disabled={isConversationBusy}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+              >
+                <Redo2 className="h-4 w-4 text-[var(--muted-foreground)]" />
+                {t.chat("contextMenuRetryMessage")}
+              </button>
+              <div className="my-1 h-px bg-[var(--border)]" />
+            </>
+          ) : null}
+
+          {contextMessageSelectable ? (
+            <button
+              type="button"
+              onClick={() => {
+                onToggleMessageSelection(contextMessage);
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            >
+              <ImagePlus className="h-4 w-4 text-[var(--muted-foreground)]" />
+              {contextMessageSelected ? t.chat("contextMenuUnselectMessage") : t.chat("contextMenuSelectMessage")}
+            </button>
+          ) : null}
+
+          {selectedMessageCount > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  void onExportSelectedMessages();
+                  setContextMenu(null);
+                }}
+                disabled={selectedMessagesExportState.status === "exporting"}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+              >
+                <ImagePlus className="h-4 w-4 text-[var(--muted-foreground)]" />
+                {selectedMessagesExportState.status === "exporting"
+                  ? t.chat("exportingSelectedMessages")
+                  : t.chat("exportSelectedMessages")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClearMessageSelection();
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              >
+                <X className="h-4 w-4" />
+                {t.chat("clearSelection")}
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

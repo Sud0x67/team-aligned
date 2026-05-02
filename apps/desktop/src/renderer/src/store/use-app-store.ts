@@ -4,6 +4,8 @@ import type {
   AppSnapshot,
   ConnectMcpInput,
   ConversationExportResult,
+  ConversationImageExportInput,
+  ConversationImageExportResult,
   CreateAgentInput,
   CreateTeamInput,
   EnsureConversationInput,
@@ -54,6 +56,7 @@ type AppStore = AppSnapshot & {
   updateProvider: (payload: UpdateProviderInput) => Promise<void>;
   testProviderConnection: (payload: ProviderConnectionTestInput) => Promise<ProviderConnectionTestResult>;
   exportConversationData: (conversationId: string) => Promise<ConversationExportResult>;
+  exportConversationImage: (payload: ConversationImageExportInput) => Promise<ConversationImageExportResult>;
   markNotificationsRead: () => Promise<void>;
   markConversationRead: (conversationId: string) => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
@@ -240,6 +243,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       runSnapshotAction(() => window.teamaligned.updateProvider(payload)),
     testProviderConnection: (payload) => window.teamaligned.testProviderConnection(payload),
     exportConversationData: (conversationId) => window.teamaligned.exportConversationData(conversationId),
+    exportConversationImage: (payload) => window.teamaligned.exportConversationImage(payload),
     markNotificationsRead: async () => {
       set({ notifications: [] });
       await runSnapshotAction(() => window.teamaligned.markNotificationsRead());

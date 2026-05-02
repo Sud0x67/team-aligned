@@ -4,6 +4,8 @@ import type {
   AppSnapshot,
   ConnectMcpInput,
   ConversationExportResult,
+  ConversationImageExportInput,
+  ConversationImageExportResult,
   CreateAgentInput,
   CreateTeamInput,
   DiagnosticsExportResult,
@@ -88,6 +90,10 @@ const api: TeamalignedApi = {
     ipcRenderer.invoke("teamaligned:save-attachment-asset", payload),
   exportConversationData: (conversationId: string): Promise<ConversationExportResult> =>
     ipcRenderer.invoke("teamaligned:export-conversation-data", conversationId),
+  exportConversationImage: (
+    payload: ConversationImageExportInput,
+  ): Promise<ConversationImageExportResult> =>
+    ipcRenderer.invoke("teamaligned:export-conversation-image", payload),
   exportDiagnostics: (): Promise<DiagnosticsExportResult> =>
     ipcRenderer.invoke("teamaligned:export-diagnostics"),
   openDiagnosticsFolder: () => ipcRenderer.invoke("teamaligned:open-diagnostics-folder"),

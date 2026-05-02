@@ -15,6 +15,12 @@ type SlashSuggestion = {
   kind?: "command" | "skill" | "prompt" | "file";
 };
 
+export type ComposerPrefill = {
+  revision: number;
+  input: string;
+  attachments: AttachmentAssetRecord[];
+};
+
 const maxAttachmentCount = 8;
 const maxAttachmentBytes = 20 * 1024 * 1024;
 const minTextareaHeight = 88;
@@ -83,6 +89,7 @@ export function ChatComposer({
   slashSuggestions,
   busy,
   onCancel,
+  prefill,
   className,
 }: {
   conversationId: string;
@@ -91,6 +98,7 @@ export function ChatComposer({
   slashSuggestions: SlashSuggestion[];
   busy: boolean;
   onCancel: () => Promise<void>;
+  prefill: ComposerPrefill | null;
   className?: string;
 }) {
   const language = useAppStore((state) => state.settings.language);
@@ -188,6 +196,21 @@ export function ChatComposer({
       window.clearTimeout(timer);
     };
   }, [conversationId, input]);
+
+  useEffect(() => {
+    if (!prefill) return;
+    setInput(prefill.input);
+    setAttachments(prefill.attachments);
+    setFeedback(null);
+    setEmojiOpen(false);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.selectionStart = textarea.value.length;
+      textarea.selectionEnd = textarea.value.length;
+    });
+  }, [prefill]);
 
   const suggestionState = useMemo(() => {
     if (!activeToken) return null;

@@ -11,7 +11,7 @@ import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
 import { AvatarBadge } from "../components/avatar-badge";
 import { ChatConversationList } from "../components/chat/chat-conversation-list";
-import { ChatComposer } from "../components/chat/chat-composer";
+import { ChatComposer, type ComposerPrefill } from "../components/chat/chat-composer";
 import { ChatConversationSidebar } from "../components/chat/chat-conversation-sidebar";
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
@@ -63,6 +63,7 @@ export function ChatPage() {
     deleteConversation,
     markConversationRead,
     exportConversationData,
+    exportConversationImage,
     openWorkspace,
     settings,
   } = useAppStore();
@@ -87,6 +88,12 @@ export function ChatPage() {
     status: "idle" | "exporting" | "success" | "error";
     message: string | null;
   }>({ status: "idle", message: null });
+  const [selectedMessagesExportState, setSelectedMessagesExportState] = useState<{
+    status: "idle" | "exporting" | "success" | "error";
+    message: string | null;
+  }>({ status: "idle", message: null });
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [composerPrefill, setComposerPrefill] = useState<ComposerPrefill | null>(null);
   const [retryingLastMessage, setRetryingLastMessage] = useState(false);
   const [messageAndComposerPaneHeight, setMessageAndComposerPaneHeight] = useState(0);
 
@@ -170,8 +177,17 @@ export function ChatPage() {
 
   useEffect(() => {
     setConversationExportState({ status: "idle", message: null });
+    setSelectedMessagesExportState({ status: "idle", message: null });
+    setSelectedMessageIds([]);
+    setComposerPrefill(null);
     setRetryingLastMessage(false);
   }, [activeConversationId]);
+
+  useEffect(() => {
+    if (selectedMessagesExportState.status === "exporting") return;
+    if (selectedMessagesExportState.status === "idle" && selectedMessagesExportState.message === null) return;
+    setSelectedMessagesExportState({ status: "idle", message: null });
+  }, [selectedMessageIds, selectedMessagesExportState.message, selectedMessagesExportState.status]);
 
   useEffect(() => {
     const pane = messageAndComposerPaneRef.current;
@@ -590,6 +606,127 @@ export function ChatPage() {
     return message.content;
   };
 
+  const copyText = async (value: string) => {
+    const text = value.trim();
+    if (!text) return;
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  };
+
+  const handleCopyMessage = async (message: MessageRecord) => {
+    try {
+      await copyText(message.content);
+    } catch (error) {
+      window.alert(
+        error instanceof Error && error.message.trim().length > 0
+          ? `${t.chat("copyMessageFailed")} ${error.message}`
+          : t.chat("copyMessageFailed"),
+      );
+    }
+  };
+
+  const handleToggleMessageSelection = (message: MessageRecord) => {
+    if (message.visibility !== "public") return;
+    setSelectedMessageIds((current) => {
+      if (current.includes(message.id)) {
+        return current.filter((id) => id !== message.id);
+      }
+      return [...current, message.id];
+    });
+  };
+
+  const handleClearMessageSelection = () => {
+    setSelectedMessageIds([]);
+    setSelectedMessagesExportState({ status: "idle", message: null });
+  };
+
+  const prefillComposerWithMessage = (
+    message: MessageRecord,
+    options: { stopActiveRun: boolean },
+  ) => {
+    const applyPrefill = () => {
+      setComposerPrefill({
+        revision: Date.now(),
+        input: getRetryInput(message),
+        attachments: getMessageAttachments(message),
+      });
+    };
+
+    if (!options.stopActiveRun || !activeConversation || !isConversationBusy) {
+      applyPrefill();
+      return;
+    }
+
+    void controlRun({ conversationId: activeConversation.id, action: "cancel" })
+      .catch((error) => {
+        window.alert(
+          error instanceof Error && error.message.trim().length > 0
+            ? `${t.chat("stopBeforeEditFailed")} ${error.message}`
+            : t.chat("stopBeforeEditFailed"),
+        );
+      })
+      .finally(() => {
+        applyPrefill();
+      });
+  };
+
+  const handleRetryUserMessage = async (message: MessageRecord) => {
+    if (!activeConversation || isConversationBusy) {
+      window.alert(t.chat("awaitingReply"));
+      return;
+    }
+
+    try {
+      await sendInput({
+        conversationId: activeConversation.id,
+        input: getRetryInput(message),
+        attachments: getMessageAttachments(message),
+      });
+    } catch (error) {
+      window.alert(
+        error instanceof Error && error.message.trim().length > 0
+          ? `${t.chat("retryLastMessageFailed")} ${error.message}`
+          : t.chat("retryLastMessageFailed"),
+      );
+    }
+  };
+
+  const handleExportSelectedMessages = async () => {
+    if (!activeConversation || selectedMessageIds.length === 0) return;
+    if (selectedMessagesExportState.status === "exporting") return;
+    setSelectedMessagesExportState({ status: "exporting", message: null });
+    try {
+      const result = await exportConversationImage({
+        conversationId: activeConversation.id,
+        messageIds: selectedMessageIds,
+      });
+      setSelectedMessagesExportState({
+        status: "success",
+        message: `${t.chat("selectedMessagesExported")} ${result.filePath}`,
+      });
+    } catch (error) {
+      setSelectedMessagesExportState({
+        status: "error",
+        message:
+          error instanceof Error && error.message.trim().length > 0
+            ? `${t.chat("selectedMessagesExportFailed")} ${error.message}`
+            : t.chat("selectedMessagesExportFailed"),
+      });
+    }
+  };
+
   const handleRetryLastMessage = async () => {
     if (!activeConversation || isConversationBusy || !retryableUserMessage || retryingLastMessage) {
       return;
@@ -778,6 +915,15 @@ export function ChatPage() {
                   profile={profile}
                   agents={agents}
                   teams={teams}
+                  selectedMessageIds={selectedMessageIds}
+                  selectedMessagesExportState={selectedMessagesExportState}
+                  isConversationBusy={isConversationBusy}
+                  onCopyMessage={handleCopyMessage}
+                  onToggleMessageSelection={handleToggleMessageSelection}
+                  onClearMessageSelection={handleClearMessageSelection}
+                  onExportSelectedMessages={handleExportSelectedMessages}
+                  onEditUserMessage={prefillComposerWithMessage}
+                  onRetryUserMessage={handleRetryUserMessage}
                 />
               </div>
 
@@ -802,6 +948,7 @@ export function ChatPage() {
                   slashSuggestions={availableSlashSuggestions}
                   busy={isConversationBusy}
                   onCancel={handleCancel}
+                  prefill={composerPrefill}
                   className="h-full"
                 />
               </div>

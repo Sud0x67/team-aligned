@@ -521,6 +521,18 @@ export interface ConversationExportResult {
   toolInvocationCount: number;
 }
 
+export interface ConversationImageExportInput {
+  conversationId: string;
+  messageIds: string[];
+}
+
+export interface ConversationImageExportResult {
+  conversationId: string;
+  filePath: string;
+  exportedAt: number;
+  messageCount: number;
+}
+
 export type FeedbackChannel = "github" | "email";
 
 export interface DiagnosticsExportResult {
@@ -581,6 +593,9 @@ export interface TeamalignedApi {
   saveAvatarAsset: (payload: SaveAvatarAssetInput) => Promise<string>;
   saveAttachmentAsset: (payload: SaveAttachmentAssetInput) => Promise<AttachmentAssetRecord>;
   exportConversationData: (conversationId: string) => Promise<ConversationExportResult>;
+  exportConversationImage: (
+    payload: ConversationImageExportInput,
+  ) => Promise<ConversationImageExportResult>;
   exportDiagnostics: () => Promise<DiagnosticsExportResult>;
   openDiagnosticsFolder: () => Promise<boolean>;
   openFeedbackChannel: (channel: FeedbackChannel) => Promise<boolean>;
