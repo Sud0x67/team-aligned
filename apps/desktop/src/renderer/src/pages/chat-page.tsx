@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import {
   isTeamAlignedAssistantAgentId,
@@ -15,6 +15,31 @@ import { ChatComposer } from "../components/chat/chat-composer";
 import { ChatConversationSidebar } from "../components/chat/chat-conversation-sidebar";
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
+import { ResizeHandle } from "../components/layout/resize-handle";
+
+const conversationPaneWidthStorageKey = "chat.layout.conversationPaneWidth";
+const composerPaneHeightStorageKey = "chat.layout.composerPaneHeight.v2";
+const conversationSidebarWidthStorageKey = "chat.layout.conversationSidebarWidth";
+const composerPaneMinHeight = 144;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function readStoredNumber(key: string, fallback: number, min: number, max: number) {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(key);
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return clamp(parsed, min, max);
+}
 
 export function ChatPage() {
   const location = useLocation();
@@ -49,11 +74,26 @@ export function ChatPage() {
   const [search, setSearch] = useState("");
   const [internalVisible, setInternalVisible] = useState<Record<string, boolean>>({});
   const [conversationInfoExpanded, setConversationInfoExpanded] = useState(false);
+  const [conversationPaneWidth, setConversationPaneWidth] = useState(() =>
+    readStoredNumber(conversationPaneWidthStorageKey, 300, 200, 520),
+  );
+  const [composerPaneHeight, setComposerPaneHeight] = useState(() =>
+    readStoredNumber(composerPaneHeightStorageKey, 196, composerPaneMinHeight, 520),
+  );
+  const [conversationSidebarWidth, setConversationSidebarWidth] = useState(() =>
+    readStoredNumber(conversationSidebarWidthStorageKey, 304, 256, 520),
+  );
   const [conversationExportState, setConversationExportState] = useState<{
     status: "idle" | "exporting" | "success" | "error";
     message: string | null;
   }>({ status: "idle", message: null });
   const [retryingLastMessage, setRetryingLastMessage] = useState(false);
+  const [messageAndComposerPaneHeight, setMessageAndComposerPaneHeight] = useState(0);
+
+  const messageAndComposerPaneRef = useRef<HTMLDivElement | null>(null);
+  const conversationWidthResizeStartRef = useRef<number | null>(null);
+  const composerHeightResizeStartRef = useRef<number | null>(null);
+  const conversationSidebarWidthResizeStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!requestedConversationId) return;
@@ -114,9 +154,51 @@ export function ChatPage() {
   }, [activeConversation, markConversationRead]);
 
   useEffect(() => {
+    window.localStorage.setItem(conversationPaneWidthStorageKey, String(conversationPaneWidth));
+  }, [conversationPaneWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(composerPaneHeightStorageKey, String(composerPaneHeight));
+  }, [composerPaneHeight]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      conversationSidebarWidthStorageKey,
+      String(conversationSidebarWidth),
+    );
+  }, [conversationSidebarWidth]);
+
+  useEffect(() => {
     setConversationExportState({ status: "idle", message: null });
     setRetryingLastMessage(false);
   }, [activeConversationId]);
+
+  useEffect(() => {
+    const pane = messageAndComposerPaneRef.current;
+    if (!pane || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setMessageAndComposerPaneHeight(entry.contentRect.height);
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [activeConversationId]);
+
+  const composerPaneMaxHeight = useMemo(() => {
+    if (messageAndComposerPaneHeight <= 0) return 560;
+    return Math.max(composerPaneMinHeight, Math.round(messageAndComposerPaneHeight * 0.62));
+  }, [messageAndComposerPaneHeight]);
+
+  const effectiveComposerPaneHeight = useMemo(
+    () => clamp(composerPaneHeight, composerPaneMinHeight, composerPaneMaxHeight),
+    [composerPaneHeight, composerPaneMaxHeight],
+  );
+
+  useEffect(() => {
+    if (effectiveComposerPaneHeight === composerPaneHeight) return;
+    setComposerPaneHeight(effectiveComposerPaneHeight);
+  }, [composerPaneHeight, effectiveComposerPaneHeight]);
 
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
   const isConversationBusy = Boolean(activeRun);
@@ -551,9 +633,35 @@ export function ChatPage() {
     }
   };
 
+  const handleConversationPaneResize = (delta: number) => {
+    if (conversationWidthResizeStartRef.current === null) return;
+    setConversationPaneWidth(clamp(conversationWidthResizeStartRef.current + delta, 200, 520));
+  };
+
+  const handleConversationSidebarResize = (delta: number) => {
+    if (conversationSidebarWidthResizeStartRef.current === null) return;
+    setConversationSidebarWidth(
+      clamp(conversationSidebarWidthResizeStartRef.current - delta, 256, 520),
+    );
+  };
+
+  const handleComposerPaneResize = (delta: number) => {
+    if (composerHeightResizeStartRef.current === null) return;
+    setComposerPaneHeight(
+      clamp(
+        composerHeightResizeStartRef.current - delta,
+        composerPaneMinHeight,
+        composerPaneMaxHeight,
+      ),
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 bg-[var(--background)]">
-      <aside className="w-[300px] shrink-0 border-r border-[var(--border)] bg-[var(--card)]">
+      <aside
+        className="shrink-0 border-r border-[var(--border)] bg-[var(--card)]"
+        style={{ width: `${conversationPaneWidth}px` }}
+      >
         <div className="h-full min-h-0">
           <ChatConversationList
             conversations={filteredConversations}
@@ -567,6 +675,19 @@ export function ChatPage() {
           />
         </div>
       </aside>
+
+      <ResizeHandle
+        axis="x"
+        className="hidden shrink-0 bg-[var(--card)] lg:block"
+        onResizeStart={() => {
+          conversationWidthResizeStartRef.current = conversationPaneWidth;
+        }}
+        onResize={handleConversationPaneResize}
+        onResizeEnd={() => {
+          conversationWidthResizeStartRef.current = null;
+        }}
+        ariaLabel={settings.language === "zh" ? "拖动调整会话列表宽度" : "Resize conversation list"}
+      />
 
       <section className="flex min-w-0 flex-1 flex-col">
         {activeConversation ? (
@@ -636,31 +757,54 @@ export function ChatPage() {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ChatMessageThread
-                conversationId={activeConversation.id}
-                messages={activeMessages}
-                run={activeRun}
-                showInternalMessages={showInternal}
-                pendingSystemMessage={pendingSystemMessage}
-                pendingSystemUpdates={pendingSystemUpdates}
-                pendingActor={pendingActor}
-                showMentions={activeConversation.kind === "team"}
-                profile={profile}
-                agents={agents}
-                teams={teams}
-              />
-            </div>
+            <div
+              ref={messageAndComposerPaneRef}
+              className="min-h-0 flex-1 overflow-hidden"
+              style={{
+                display: "grid",
+                gridTemplateRows: `minmax(0,1fr) 8px ${effectiveComposerPaneHeight}px`,
+              }}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <ChatMessageThread
+                  conversationId={activeConversation.id}
+                  messages={activeMessages}
+                  run={activeRun}
+                  showInternalMessages={showInternal}
+                  pendingSystemMessage={pendingSystemMessage}
+                  pendingSystemUpdates={pendingSystemUpdates}
+                  pendingActor={pendingActor}
+                  showMentions={activeConversation.kind === "team"}
+                  profile={profile}
+                  agents={agents}
+                  teams={teams}
+                />
+              </div>
 
-            <div className="border-t border-[var(--border)] bg-[var(--card)] px-5 pb-4 pt-3">
-              <ChatComposer
-                conversationId={activeConversation.id}
-                onSend={handleSend}
-                mentionCandidates={mentionCandidates}
-                slashSuggestions={availableSlashSuggestions}
-                busy={isConversationBusy}
-                onCancel={handleCancel}
+              <ResizeHandle
+                axis="y"
+                className="shrink-0 bg-[var(--card)]"
+                onResizeStart={() => {
+                  composerHeightResizeStartRef.current = effectiveComposerPaneHeight;
+                }}
+                onResize={handleComposerPaneResize}
+                onResizeEnd={() => {
+                  composerHeightResizeStartRef.current = null;
+                }}
+                ariaLabel={settings.language === "zh" ? "拖动调整输入区域高度" : "Resize composer"}
               />
+
+              <div className="min-h-0 overflow-hidden border-t border-[var(--border)] bg-[var(--card)] px-5 pb-4 pt-3">
+                <ChatComposer
+                  conversationId={activeConversation.id}
+                  onSend={handleSend}
+                  mentionCandidates={mentionCandidates}
+                  slashSuggestions={availableSlashSuggestions}
+                  busy={isConversationBusy}
+                  onCancel={handleCancel}
+                  className="h-full"
+                />
+              </div>
             </div>
           </>
         ) : (
@@ -678,9 +822,25 @@ export function ChatPage() {
         )}
       </section>
 
+      {activeConversation && conversationInfoExpanded ? (
+        <ResizeHandle
+          axis="x"
+          className="hidden shrink-0 bg-[var(--card)] lg:block"
+          onResizeStart={() => {
+            conversationSidebarWidthResizeStartRef.current = conversationSidebarWidth;
+          }}
+          onResize={handleConversationSidebarResize}
+          onResizeEnd={() => {
+            conversationSidebarWidthResizeStartRef.current = null;
+          }}
+          ariaLabel={settings.language === "zh" ? "拖动调整信息栏宽度" : "Resize conversation info"}
+        />
+      ) : null}
+
       {activeConversation ? (
         <ChatConversationSidebar
           expanded={conversationInfoExpanded}
+          expandedWidth={conversationSidebarWidth}
           onExpandedChange={setConversationInfoExpanded}
           conversationKind={activeConversation.kind}
           tokenUsage={conversationTokenUsage}

@@ -17,6 +17,11 @@ type SlashSuggestion = {
 
 const maxAttachmentCount = 8;
 const maxAttachmentBytes = 20 * 1024 * 1024;
+const minTextareaHeight = 88;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
 const emojiChoices = [
   "😀",
@@ -78,6 +83,7 @@ export function ChatComposer({
   slashSuggestions,
   busy,
   onCancel,
+  className,
 }: {
   conversationId: string;
   onSend: (payload: { input: string; attachments: AttachmentAssetRecord[] }) => Promise<void>;
@@ -85,6 +91,7 @@ export function ChatComposer({
   slashSuggestions: SlashSuggestion[];
   busy: boolean;
   onCancel: () => Promise<void>;
+  className?: string;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -106,8 +113,11 @@ export function ChatComposer({
   );
   const [loadingWorkspaceReferencePreview, setLoadingWorkspaceReferencePreview] = useState(false);
   const [loadingWorkspaceFileSuggestions, setLoadingWorkspaceFileSuggestions] = useState(false);
+  const [textareaMaxHeight, setTextareaMaxHeight] = useState(220);
   const fileInputId = useId();
   const emojiPanelRef = useRef<HTMLDivElement | null>(null);
+  const composerRootRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const activeToken = useMemo(() => {
     const match = input.match(/(?:^|\s)([@/#][^\s]*)$/);
@@ -246,6 +256,28 @@ export function ChatComposer({
     window.addEventListener("mousedown", handlePointerDown);
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [emojiOpen]);
+
+  useEffect(() => {
+    const root = composerRootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextMax = clamp(Math.round(entry.contentRect.height * 0.55), 120, 340);
+      setTextareaMaxHeight(nextMax);
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = clamp(textarea.scrollHeight, minTextareaHeight, textareaMaxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > textareaMaxHeight ? "auto" : "hidden";
+  }, [input, textareaMaxHeight]);
 
   const applySuggestion = (value: string) => {
     if (!activeToken) return;
@@ -404,7 +436,10 @@ export function ChatComposer({
   };
 
   return (
-    <div className="relative rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
+    <div
+      ref={composerRootRef}
+      className={`relative flex h-full min-h-0 flex-col overflow-auto rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
+    >
         {showFileSuggestionsPanel ? (
           <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
             <div className="max-h-72 overflow-y-auto overscroll-contain pr-1">
@@ -445,6 +480,7 @@ export function ChatComposer({
         ) : null}
 
         <textarea
+          ref={textareaRef}
           value={input}
           onChange={(event) => {
             if (busy) {
@@ -526,7 +562,7 @@ export function ChatComposer({
           }}
           rows={3}
           placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
-          className="min-h-[104px] w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
+          className="w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
         />
 
         <div className="mt-3 flex items-end justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">

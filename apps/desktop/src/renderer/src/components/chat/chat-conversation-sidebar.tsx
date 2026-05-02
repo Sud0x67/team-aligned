@@ -21,6 +21,7 @@ function trimMiddle(value: string, max = 42) {
 
 export function ChatConversationSidebar({
   expanded,
+  expandedWidth,
   onExpandedChange,
   conversationKind,
   tokenUsage,
@@ -35,6 +36,7 @@ export function ChatConversationSidebar({
   onRetryLastMessage,
 }: {
   expanded: boolean;
+  expandedWidth?: number;
   onExpandedChange: (expanded: boolean) => void;
   conversationKind: ConversationKind;
   tokenUsage: { total: number; tracked: boolean };
@@ -71,7 +73,10 @@ export function ChatConversationSidebar({
   }
 
   return (
-    <aside className="hidden w-[304px] shrink-0 border-l border-[var(--border)] bg-[var(--card)] lg:flex lg:min-h-0 lg:flex-col">
+    <aside
+      className="hidden shrink-0 border-l border-[var(--border)] bg-[var(--card)] lg:flex lg:min-h-0 lg:flex-col"
+      style={expandedWidth ? { width: `${expandedWidth}px` } : undefined}
+    >
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
         <div className="flex items-center gap-2">
           <div className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--muted)] text-[var(--primary)]">
