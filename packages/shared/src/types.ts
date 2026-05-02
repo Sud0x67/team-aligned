@@ -420,6 +420,30 @@ export interface SendInputPayload {
   attachments?: AttachmentAssetRecord[];
 }
 
+export interface SearchWorkspaceFilesInput {
+  conversationId: string;
+  query: string;
+  limit?: number;
+}
+
+export interface WorkspaceFileSuggestion {
+  path: string;
+  absolutePath: string;
+  score: number;
+}
+
+export interface PreviewWorkspaceReferencesInput {
+  conversationId: string;
+  content: string;
+}
+
+export interface WorkspaceReferencePreview {
+  token: string;
+  path: string | null;
+  absolutePath: string | null;
+  status: "resolved" | "missing" | "outside" | "not_file" | "unreadable";
+}
+
 export interface RunControlPayload {
   conversationId: string;
   action: "pause" | "resume" | "cancel";
@@ -523,6 +547,10 @@ export interface TeamalignedApi {
   loadConversationData: (conversationId: string) => Promise<AppSnapshot>;
   reportRendererError: (payload: RendererErrorReport) => Promise<boolean>;
   sendInput: (payload: SendInputPayload) => Promise<AppSnapshot>;
+  searchWorkspaceFiles: (payload: SearchWorkspaceFilesInput) => Promise<WorkspaceFileSuggestion[]>;
+  previewWorkspaceReferences: (
+    payload: PreviewWorkspaceReferencesInput,
+  ) => Promise<WorkspaceReferencePreview[]>;
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;

@@ -13,8 +13,10 @@ import type {
   FeedbackChannel,
   NotificationRecord,
   ProviderId,
+  PreviewWorkspaceReferencesInput,
   RendererErrorReport,
   RunControlPayload,
+  SearchWorkspaceFilesInput,
   SaveAttachmentAssetInput,
   SavePromptAliasInput,
   SendInputPayload,
@@ -515,6 +517,12 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("teamaligned:send-input", async (_event, payload: SendInputPayload) =>
     (await getReadyRuntime()).sendInput(payload),
+  );
+  ipcMain.handle("teamaligned:search-workspace-files", async (_event, payload: SearchWorkspaceFilesInput) =>
+    (await getReadyRuntime()).searchWorkspaceFiles(payload),
+  );
+  ipcMain.handle("teamaligned:preview-workspace-references", async (_event, payload: PreviewWorkspaceReferencesInput) =>
+    (await getReadyRuntime()).previewWorkspaceReferences(payload),
   );
   ipcMain.handle("teamaligned:control-run", async (_event, payload: RunControlPayload) =>
     (await getReadyRuntime()).controlRun(payload),

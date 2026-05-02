@@ -1,6 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { AtSign, Paperclip, Send, SmilePlus, Square, X } from "lucide-react";
-import type { AttachmentAssetRecord } from "@shared";
+import { AtSign, FileText, Hash, Paperclip, Send, SmilePlus, Square, X } from "lucide-react";
+import type {
+  AttachmentAssetRecord,
+  WorkspaceFileSuggestion,
+  WorkspaceReferencePreview,
+} from "@shared";
 import { resolveAssetSrc } from "../../lib/asset-src";
 import { createTranslator } from "../../i18n";
 import { useAppStore } from "../../store/use-app-store";
@@ -8,7 +12,7 @@ import { useAppStore } from "../../store/use-app-store";
 type SlashSuggestion = {
   name: string;
   description: string;
-  kind?: "command" | "skill" | "prompt";
+  kind?: "command" | "skill" | "prompt" | "file";
 };
 
 const maxAttachmentCount = 8;
@@ -63,6 +67,10 @@ function formatFileSize(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function formatWorkspaceReference(path: string) {
+  return /\s/.test(path) ? `#[${path}] ` : `#${path} `;
+}
+
 export function ChatComposer({
   conversationId,
   onSend,
@@ -90,13 +98,86 @@ export function ChatComposer({
   } | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [workspaceFileSuggestions, setWorkspaceFileSuggestions] = useState<WorkspaceFileSuggestion[]>(
+    [],
+  );
+  const [workspaceReferencePreview, setWorkspaceReferencePreview] = useState<WorkspaceReferencePreview[]>(
+    [],
+  );
+  const [loadingWorkspaceReferencePreview, setLoadingWorkspaceReferencePreview] = useState(false);
+  const [loadingWorkspaceFileSuggestions, setLoadingWorkspaceFileSuggestions] = useState(false);
   const fileInputId = useId();
   const emojiPanelRef = useRef<HTMLDivElement | null>(null);
 
   const activeToken = useMemo(() => {
-    const match = input.match(/(?:^|\s)([@/][^\s]*)$/);
+    const match = input.match(/(?:^|\s)([@/#][^\s]*)$/);
     return match ? match[1] : null;
   }, [input]);
+
+  useEffect(() => {
+    if (!activeToken || !activeToken.startsWith("#")) {
+      setWorkspaceFileSuggestions([]);
+      setLoadingWorkspaceFileSuggestions(false);
+      return;
+    }
+
+    const query = activeToken.slice(1).replace(/^\[/, "").trim();
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoadingWorkspaceFileSuggestions(true);
+      window.teamaligned
+        .searchWorkspaceFiles({ conversationId, query, limit: 24 })
+        .then((items) => {
+          if (cancelled) return;
+          setWorkspaceFileSuggestions(items);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setWorkspaceFileSuggestions([]);
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setLoadingWorkspaceFileSuggestions(false);
+        });
+    }, 90);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeToken, conversationId]);
+
+  useEffect(() => {
+    if (!input.includes("#")) {
+      setWorkspaceReferencePreview([]);
+      setLoadingWorkspaceReferencePreview(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoadingWorkspaceReferencePreview(true);
+      window.teamaligned
+        .previewWorkspaceReferences({ conversationId, content: input })
+        .then((items) => {
+          if (cancelled) return;
+          setWorkspaceReferencePreview(items);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setWorkspaceReferencePreview([]);
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setLoadingWorkspaceReferencePreview(false);
+        });
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [conversationId, input]);
 
   const suggestionState = useMemo(() => {
     if (!activeToken) return null;
@@ -135,8 +216,21 @@ export function ChatComposer({
       };
     }
 
+    if (activeToken.startsWith("#")) {
+      return {
+        type: "file" as const,
+        items: workspaceFileSuggestions.map((item) => ({
+          key: item.absolutePath,
+          title: `#${item.path}`,
+          subtitle: item.absolutePath,
+          value: formatWorkspaceReference(item.path),
+          kind: "file" as const,
+        })),
+      };
+    }
+
     return null;
-  }, [activeToken, slashSuggestions, mentionCandidates]);
+  }, [activeToken, mentionCandidates, slashSuggestions, workspaceFileSuggestions]);
 
   useEffect(() => {
     setActiveSuggestionIndex(0);
@@ -156,14 +250,27 @@ export function ChatComposer({
   const applySuggestion = (value: string) => {
     if (!activeToken) return;
     setFeedback(null);
-    setInput((current) => current.replace(/(?:^|\s)([@/][^\s]*)$/, (match, token: string) => match.replace(token, value)));
+    setInput((current) =>
+      current.replace(/(?:^|\s)([@/#][^\s]*)$/, (match, token: string) => match.replace(token, value)),
+    );
   };
 
-  const getSuggestionKindLabel = (kind: "command" | "skill" | "prompt" | "mention") => {
+  const getSuggestionKindLabel = (kind: "command" | "skill" | "prompt" | "mention" | "file") => {
     if (kind === "skill") return "Skill";
     if (kind === "prompt") return "Prompt";
     if (kind === "mention") return "@";
+    if (kind === "file") return t.chat("workspaceFile");
     return language === "zh" ? "内置" : "Built-in";
+  };
+
+  const removeWorkspaceReference = (token: string) => {
+    setInput((current) =>
+      current
+        .replace(new RegExp(`(^|\\s)#\\[${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\](?=\\s|$)`, "g"), "$1")
+        .replace(new RegExp(`(^|\\s)#${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`, "g"), "$1")
+        .replace(/\s{2,}/g, " ")
+        .trimStart(),
+    );
   };
 
   const submit = async () => {
@@ -199,6 +306,12 @@ export function ChatComposer({
 
   const showMentionButton = mentionCandidates.length > 0;
   const interactionLocked = busy || uploading;
+  const showFileSuggestionsPanel =
+    !busy &&
+    !!suggestionState &&
+    (suggestionState.items.length > 0 ||
+      (activeToken?.startsWith("#") &&
+        (loadingWorkspaceFileSuggestions || activeToken.slice(1).trim().length > 0)));
 
   const uploadFiles = async (files: File[], successMessage: string) => {
     if (files.length === 0) return;
@@ -292,7 +405,7 @@ export function ChatComposer({
 
   return (
     <div className="relative rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm">
-        {!busy && suggestionState && suggestionState.items.length > 0 ? (
+        {showFileSuggestionsPanel ? (
           <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
             <div className="max-h-72 overflow-y-auto overscroll-contain pr-1">
               <div className="space-y-1">
@@ -317,6 +430,16 @@ export function ChatComposer({
                   </button>
                 ))}
               </div>
+              {activeToken?.startsWith("#") && !loadingWorkspaceFileSuggestions && suggestionState?.items.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                  {t.chat("workspaceNoFiles")}
+                </p>
+              ) : null}
+              {activeToken?.startsWith("#") && loadingWorkspaceFileSuggestions ? (
+                <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                  {t.chat("workspaceSearching")}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -418,6 +541,16 @@ export function ChatComposer({
                 <AtSign className="h-5 w-5" />
               </button>
             ) : null}
+            <button
+              type="button"
+              className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+              disabled={interactionLocked}
+              onClick={() => setInput((current) => `${current}${current ? " " : ""}#`)}
+              aria-label={t.chat("workspaceFile")}
+              title={t.chat("workspaceFile")}
+            >
+              <Hash className="h-5 w-5" />
+            </button>
             <div ref={emojiPanelRef} className="relative">
               <button
                 type="button"
@@ -537,6 +670,52 @@ export function ChatComposer({
                 </button>
               </span>
             ))}
+          </div>
+        ) : null}
+
+        {workspaceReferencePreview.length > 0 || loadingWorkspaceReferencePreview ? (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs text-[var(--muted-foreground)]">{t.chat("workspaceReferencePreview")}</p>
+            <div className="flex flex-wrap gap-2">
+              {workspaceReferencePreview.map((reference) => {
+                const resolved = reference.status === "resolved";
+                return (
+                  <span
+                    key={`${reference.token}-${reference.status}`}
+                    className={`inline-flex max-w-full items-center gap-2 rounded-2xl border px-3 py-2 text-xs ${
+                      resolved
+                        ? "border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                        : "border-[color-mix(in_srgb,var(--warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-[var(--warning)]"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {resolved ? `#${reference.path}` : `#${reference.token}`}
+                    </span>
+                    {!resolved ? (
+                      <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--warning)_20%,transparent)] px-1.5 py-0.5 text-[10px]">
+                        {t.chat("workspaceUnresolved")}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                      onClick={() => removeWorkspaceReference(reference.token)}
+                      aria-label={t.chat("workspaceRemoveReference")}
+                      title={t.chat("workspaceRemoveReference")}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                );
+              })}
+              {loadingWorkspaceReferencePreview ? (
+                <span className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                  {t.chat("workspaceResolving")}
+                </span>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

@@ -24,7 +24,9 @@ import type {
   PromptAliasRecord,
   ProviderConnectionTestInput,
   ProviderConfig,
+  PreviewWorkspaceReferencesInput,
   RunControlPayload,
+  SearchWorkspaceFilesInput,
   SavePromptAliasInput,
   SaveAttachmentAssetInput,
   RunRecord,
@@ -79,6 +81,11 @@ import {
   type NaturalTeamAgentMessage,
 } from "./team-runtime.ts";
 import { byLanguage, detectRuntimeLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
+import {
+  previewWorkspaceReferences,
+  resolveWorkspaceReferences,
+  searchWorkspaceFiles as searchWorkspaceFilesInWorkspace,
+} from "./workspace-file-search.ts";
 
 type RunStep = {
   label: string;
@@ -219,6 +226,46 @@ function buildRuntimePrompt(
     zh: `${body}\n\n附件列表：\n${attachmentLines}`,
     en: `${body}\n\nAttachment list:\n${attachmentLines}`,
   });
+}
+
+function buildWorkspaceReferencePrompt(input: {
+  baseInput: string;
+  references: ReturnType<typeof resolveWorkspaceReferences>;
+  responseLanguage: RuntimeLanguage;
+}) {
+  const { baseInput, references, responseLanguage } = input;
+  const sections: string[] = [];
+
+  if (references.resolved.length > 0) {
+    const referenceBlocks = references.resolved.map((reference) =>
+      byLanguage(responseLanguage, {
+        zh: `- #${reference.path}${reference.truncated ? "（已截断）" : ""}\n\`\`\`\n${reference.content}\n\`\`\``,
+        en: `- #${reference.path}${reference.truncated ? " (truncated)" : ""}\n\`\`\`\n${reference.content}\n\`\`\``,
+      }),
+    );
+    sections.push(
+      byLanguage(responseLanguage, {
+        zh: `用户通过 # 引用了以下 workspace 文件，请优先基于这些内容回复：\n${referenceBlocks.join("\n\n")}`,
+        en: `The user referenced these workspace files via #. Prioritize them in your response:\n${referenceBlocks.join("\n\n")}`,
+      }),
+    );
+  }
+
+  if (references.unresolved.length > 0) {
+    sections.push(
+      byLanguage(responseLanguage, {
+        zh: `以下 # 引用未解析，请明确告知用户并引导确认路径：${references.unresolved
+          .map((value) => `#${value}`)
+          .join("、")}`,
+        en: `These # references could not be resolved. Tell the user clearly and ask to verify paths: ${references.unresolved
+          .map((value) => `#${value}`)
+          .join(", ")}`,
+      }),
+    );
+  }
+
+  if (sections.length === 0) return baseInput;
+  return `${baseInput}\n\n${sections.join("\n\n")}`;
 }
 
 function extractSlashAliases(input: string) {
@@ -448,6 +495,15 @@ export class TeamalignedRuntime extends EventEmitter {
     }
 
     const slashDirectives = this.resolveSlashDirectives(conversation, payload.input);
+    const workspacePath = this.getWorkspaceForConversation(
+      conversation,
+      snapshot.agents,
+      snapshot.teams,
+    );
+    const workspaceReferences = resolveWorkspaceReferences({
+      workspacePath,
+      content: slashDirectives.cleanedInput,
+    });
 
     const mentionResolution = resolveMentionedMembers(payload.input, snapshot.agents);
     const mentionedAgentIds = mentionResolution.matchedIds;
@@ -465,6 +521,19 @@ export class TeamalignedRuntime extends EventEmitter {
       metadata: {
         rawInput: payload.input,
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(workspaceReferences.resolved.length > 0
+          ? {
+              workspaceReferences: workspaceReferences.resolved.map((reference) => ({
+                token: reference.token,
+                path: reference.path,
+                absolutePath: reference.absolutePath,
+                truncated: reference.truncated,
+              })),
+            }
+          : {}),
+        ...(workspaceReferences.unresolved.length > 0
+          ? { unresolvedWorkspaceReferences: workspaceReferences.unresolved }
+          : {}),
         ...(slashDirectives.skill
           ? { temporarySkill: slashDirectives.skill.id, temporarySkillSlug: slashDirectives.skill.slug }
           : {}),
@@ -477,7 +546,11 @@ export class TeamalignedRuntime extends EventEmitter {
 
     const runtimeInput = this.buildSlashEnhancedRuntimeInput(
       conversation,
-      buildRuntimePrompt(slashDirectives.cleanedInput, attachments, responseLanguage),
+      buildWorkspaceReferencePrompt({
+        baseInput: buildRuntimePrompt(slashDirectives.cleanedInput, attachments, responseLanguage),
+        references: workspaceReferences,
+        responseLanguage,
+      }),
       slashDirectives,
       responseLanguage,
     );
@@ -619,6 +692,41 @@ export class TeamalignedRuntime extends EventEmitter {
 
     this.emitSnapshot();
     return this.getSnapshot();
+  }
+
+  async searchWorkspaceFiles(payload: SearchWorkspaceFilesInput) {
+    const snapshot = this.storage.getSnapshot();
+    const conversation = snapshot.conversations.find((item) => item.id === payload.conversationId);
+    if (!conversation) return [];
+
+    const workspacePath = this.getWorkspaceForConversation(
+      conversation,
+      snapshot.agents,
+      snapshot.teams,
+    );
+
+    return searchWorkspaceFilesInWorkspace({
+      workspacePath,
+      query: payload.query,
+      limit: payload.limit,
+    });
+  }
+
+  async previewWorkspaceReferences(payload: PreviewWorkspaceReferencesInput) {
+    const snapshot = this.storage.getSnapshot();
+    const conversation = snapshot.conversations.find((item) => item.id === payload.conversationId);
+    if (!conversation) return [];
+
+    const workspacePath = this.getWorkspaceForConversation(
+      conversation,
+      snapshot.agents,
+      snapshot.teams,
+    );
+
+    return previewWorkspaceReferences({
+      workspacePath,
+      content: payload.content,
+    });
   }
 
   async createAgent(payload: Parameters<AppStorage["createAgent"]>[0]) {

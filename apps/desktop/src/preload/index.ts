@@ -14,6 +14,7 @@ import type {
   ProviderId,
   RendererErrorReport,
   RunControlPayload,
+  SearchWorkspaceFilesInput,
   SaveAttachmentAssetInput,
   SaveAvatarAssetInput,
   SavePromptAliasInput,
@@ -21,6 +22,7 @@ import type {
   TeamalignedApi,
   ProviderConnectionTestInput,
   ProviderConnectionTestResult,
+  PreviewWorkspaceReferencesInput,
   SelectDirectoryInput,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
@@ -38,6 +40,10 @@ const api: TeamalignedApi = {
   reportRendererError: (payload: RendererErrorReport) =>
     ipcRenderer.invoke("teamaligned:report-renderer-error", payload),
   sendInput: (payload: SendInputPayload) => ipcRenderer.invoke("teamaligned:send-input", payload),
+  searchWorkspaceFiles: (payload: SearchWorkspaceFilesInput) =>
+    ipcRenderer.invoke("teamaligned:search-workspace-files", payload),
+  previewWorkspaceReferences: (payload: PreviewWorkspaceReferencesInput) =>
+    ipcRenderer.invoke("teamaligned:preview-workspace-references", payload),
   controlRun: (payload: RunControlPayload) => ipcRenderer.invoke("teamaligned:control-run", payload),
   createAgent: (payload: CreateAgentInput) => ipcRenderer.invoke("teamaligned:create-agent", payload),
   createTeam: (payload: CreateTeamInput) => ipcRenderer.invoke("teamaligned:create-team", payload),
