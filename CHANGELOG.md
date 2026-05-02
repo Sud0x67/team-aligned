@@ -17,6 +17,7 @@ All notable changes to TeamAligned are documented in this file.
 - MCP authorization and permission failures now surface as natural chat process messages instead of silent tool failures.
 - Extensions UI now exposes an OAuth authorization action for MCP connections that require browser login.
 - OAuth MCP token-expiry and re-auth failures now reset stale token state and guide the user back through authorization.
+- OAuth MCP servers that do not support dynamic client registration now fall back to a manual Client ID/Secret setup flow, with clearer UI copy and Slack-specific guidance.
 
 ## 0.4.0-beta - 2026-05-02
 

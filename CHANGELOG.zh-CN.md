@@ -17,6 +17,7 @@ TeamAligned 的重要变更会记录在此文件中。
 - MCP 未授权和权限失败会以自然聊天过程消息展示，不再像静默工具失败。
 - 扩展页为需要浏览器登录的 MCP 连接提供 OAuth 授权入口。
 - OAuth MCP token 过期或需要重新授权时会清理过期 token 状态，并引导用户重新授权。
+- 不支持动态 Client 注册的 OAuth MCP 会自动切换到手动填写 Client ID/Secret 的流程，并提供更友好的错误提示和 Slack 专属配置引导。
 
 ## 0.4.0-beta - 2026-05-02
 

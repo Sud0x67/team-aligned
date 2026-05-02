@@ -24,11 +24,14 @@ MCP setup should be explicit, recoverable, and easy to understand in UI and runt
 - `stdio npx` MCP servers with health check and `tools/list`.
 - `HTTP + headers` MCP servers with real URL handshakes, timeout handling, and `tools/list`.
 - `HTTP + OAuth` MCP foundation: Extensions can start authorization, the browser is opened by the main process, a local callback receives the authorization code, token state is persisted, and tool discovery is retried after authorization.
+- OAuth MCP servers that do not support dynamic client registration fall back to a manual Client ID/Secret setup flow.
+- Slack-style OAuth services show compatibility guidance with the fixed Redirect URL, Client ID, and Client Secret fields.
 - Local connection state for connect, configure, health check, and disconnect.
 - Agent-level MCP allowlists.
 - `/mcp`, `/mcp use <slug>`, and `/mcp tools <slug>`.
 - Runtime injection for discovered MCP tools in direct and team chats.
 - Auth and permission errors surface as chat process messages so users can authorize and retry.
+- Dynamic-client-registration incompatibility errors are translated into friendly manual setup guidance instead of exposing the raw provider error.
 - OAuth token-expiry and re-auth-required failures clear stale token state and prompt users to authorize again.
 - A generic runtime pre-execution policy hook exists.
 - In-chat approval cards and an approve/deny queue are wired for high-risk MCP tool calls.

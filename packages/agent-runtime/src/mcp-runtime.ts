@@ -24,9 +24,111 @@ import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 const MCP_CONNECT_TIMEOUT_MS = 15_000;
 const MCP_TOOL_TIMEOUT_MS = 30_000;
 const MCP_OAUTH_TIMEOUT_MS = 180_000;
+const MCP_OAUTH_CALLBACK_PORT = 37371;
+
+const OAUTH_CLIENT_ID_KEYS = new Set([
+  "clientid",
+  "client_id",
+  "oauthclientid",
+  "oauth_client_id",
+  "slackclientid",
+  "slack_client_id",
+]);
+const OAUTH_CLIENT_SECRET_KEYS = new Set([
+  "clientsecret",
+  "client_secret",
+  "oauthclientsecret",
+  "oauth_client_secret",
+  "slackclientsecret",
+  "slack_client_secret",
+]);
 
 function compact(text: string) {
   return text.trim().replace(/\s+/g, " ");
+}
+
+function normalizeConfigKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+}
+
+function findConfiguredValue(entries: Record<string, string>, keys: Set<string>) {
+  for (const [key, value] of Object.entries(entries)) {
+    const normalized = normalizeConfigKey(key);
+    if (keys.has(normalized) && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function getOAuthRedirectUrl(catalog: Pick<McpCatalogRecord, "id">) {
+  return `http://127.0.0.1:${MCP_OAUTH_CALLBACK_PORT}/mcp/oauth/callback/${encodeURIComponent(catalog.id)}`;
+}
+
+function getOAuthTokenEndpointAuthMethod(catalog: Pick<McpCatalogRecord, "slug" | "metadata">) {
+  const metadataMethod =
+    catalog.metadata && typeof catalog.metadata.oauthTokenEndpointAuthMethod === "string"
+      ? catalog.metadata.oauthTokenEndpointAuthMethod
+      : null;
+  if (metadataMethod) return metadataMethod;
+  if (catalog.slug === "slack") return "client_secret_post";
+  return null;
+}
+
+function readStoredOAuthClientInformation(
+  connection: Pick<McpConnectionRecord, "oauth">,
+  redirectUrl?: string,
+) {
+  const stored = connection.oauth?.clientInformation;
+  if (!stored || typeof stored.client_id !== "string" || !stored.client_id.trim()) {
+    return undefined;
+  }
+
+  if (redirectUrl && Array.isArray(stored.redirect_uris)) {
+    const hasMatchingRedirect = stored.redirect_uris.some((uri) => uri === redirectUrl);
+    if (!hasMatchingRedirect) {
+      return undefined;
+    }
+  }
+
+  return stored as OAuthClientInformationMixed;
+}
+
+export function resolveOAuthClientInformation(
+  catalog: Pick<McpCatalogRecord, "slug" | "metadata">,
+  connection: Pick<McpConnectionRecord, "envEntries" | "oauth">,
+  redirectUrl?: string,
+): OAuthClientInformationMixed | undefined {
+  const clientId = findConfiguredValue(connection.envEntries, OAUTH_CLIENT_ID_KEYS);
+  const clientSecret = findConfiguredValue(connection.envEntries, OAUTH_CLIENT_SECRET_KEYS);
+  if (clientId) {
+    const tokenEndpointAuthMethod = getOAuthTokenEndpointAuthMethod(catalog);
+    return {
+      client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+      ...(tokenEndpointAuthMethod ? { token_endpoint_auth_method: tokenEndpointAuthMethod } : {}),
+    } as OAuthClientInformationMixed;
+  }
+
+  return readStoredOAuthClientInformation(connection, redirectUrl);
+}
+
+export function getManualOAuthClientSetupMessage(
+  catalog: Pick<McpCatalogRecord, "id" | "slug" | "name">,
+  language: RuntimeLanguage = "zh",
+) {
+  const redirectUrl = getOAuthRedirectUrl(catalog);
+  if (catalog.slug === "slack") {
+    return byLanguage(language, {
+      zh: `Slack 不支持自动注册 OAuth 客户端。请先在 Slack API 的 Your Apps 页面创建或打开应用，把 Redirect URL 设置为 ${redirectUrl}，然后回到 TeamAligned 的 Slack MCP 配置里填写 Client ID 和 Client Secret，再重新授权。`,
+      en: `Slack does not support automatic OAuth client registration. Create or open an app in Slack API Your Apps, set the Redirect URL to ${redirectUrl}, then enter the Client ID and Client Secret in TeamAligned's Slack MCP configuration and authorize again.`,
+    });
+  }
+
+  return byLanguage(language, {
+    zh: `${catalog.name} 不支持自动注册 OAuth 客户端。请在该服务后台创建 OAuth App，把 Redirect URL 设置为 ${redirectUrl}，填写 Client ID 和 Client Secret 后重新授权。`,
+    en: `${catalog.name} does not support automatic OAuth client registration. Create an OAuth app in that service, set the Redirect URL to ${redirectUrl}, then enter the Client ID and Client Secret and authorize again.`,
+  });
 }
 
 export class McpOAuthAuthorizationRequiredError extends Error {
@@ -84,6 +186,13 @@ function isUnauthorizedError(error: unknown) {
   );
 }
 
+function isDynamicClientRegistrationUnsupported(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /dynamic client registration|registration_endpoint|client registration.*not support|does not support registering clients/i.test(
+    message,
+  );
+}
+
 function createOAuthRequiredError(
   catalog: McpCatalogRecord,
   connection: McpConnectionRecord,
@@ -133,7 +242,7 @@ function createOAuthProvider(input: {
       };
     },
     clientInformation() {
-      return connection.oauth?.clientInformation as OAuthClientInformationMixed | undefined;
+      return resolveOAuthClientInformation(input.catalog, connection, input.redirectUrl);
     },
     async saveClientInformation(clientInformation) {
       await saveConnection({
@@ -203,11 +312,22 @@ function createOAuthProvider(input: {
 }
 
 export function normalizeMcpError(
-  catalog: Pick<McpCatalogRecord, "slug" | "name" | "transport" | "authType">,
+  catalog: Pick<McpCatalogRecord, "id" | "slug" | "name" | "transport" | "authType">,
   error: unknown,
   language: RuntimeLanguage = "zh",
 ) {
   const message = error instanceof Error ? error.message : String(error);
+
+  if (catalog.authType === "oauth" && isDynamicClientRegistrationUnsupported(error)) {
+    return getManualOAuthClientSetupMessage(catalog, language);
+  }
+
+  if (catalog.authType === "oauth" && /EADDRINUSE|address already in use/i.test(message)) {
+    return byLanguage(language, {
+      zh: `OAuth 本地回调端口 ${MCP_OAUTH_CALLBACK_PORT} 被占用。请先完成或关闭其他 TeamAligned OAuth 授权窗口后重试。`,
+      en: `OAuth callback port ${MCP_OAUTH_CALLBACK_PORT} is already in use. Finish or close any other TeamAligned OAuth authorization flow, then try again.`,
+    });
+  }
 
   if (
     error instanceof McpOAuthAuthorizationRequiredError ||
@@ -288,6 +408,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 function createOAuthCallbackServer(input: {
   serverId: string;
   responseLanguage: RuntimeLanguage;
+  preferredPort?: number;
 }) {
   let server: Server | null = null;
   let settled = false;
@@ -353,7 +474,7 @@ function createOAuthCallbackServer(input: {
 
   const ready = new Promise<string>((resolveReady, rejectReady) => {
     server?.once("error", rejectReady);
-    server?.listen(0, "127.0.0.1", () => {
+    server?.listen(input.preferredPort ?? 0, "127.0.0.1", () => {
       const address = server?.address();
       if (!address || typeof address === "string") {
         rejectReady(new Error("Unable to start OAuth callback server."));
@@ -498,7 +619,7 @@ async function withMcpClient<T>(
       ? createOAuthProvider({
           catalog: input.catalog,
           connection: latestConnection,
-          redirectUrl: input.oauthRedirectUrl ?? "http://127.0.0.1:37371/mcp/oauth/callback",
+          redirectUrl: input.oauthRedirectUrl ?? getOAuthRedirectUrl(input.catalog),
           onConnectionUpdated: async (connection) => {
             latestConnection = connection;
             await input.onConnectionUpdated?.(connection);
@@ -669,6 +790,7 @@ export async function authorizeMcpConnection(input: {
   const callback = createOAuthCallbackServer({
     serverId: input.catalog.id,
     responseLanguage,
+    preferredPort: MCP_OAUTH_CALLBACK_PORT,
   });
   const redirectUrl = await callback.ready;
   let authorizationUrl = latestConnection.oauth?.authorizationUrl ?? null;

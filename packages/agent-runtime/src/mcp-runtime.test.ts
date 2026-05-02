@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { McpCatalogRecord, McpConnectionRecord } from "@teamaligned/shared";
 import { buildMcpConnection } from "./mcp-registry.ts";
-import { checkMcpConnection, normalizeMcpError } from "./mcp-runtime.ts";
+import {
+  checkMcpConnection,
+  getManualOAuthClientSetupMessage,
+  normalizeMcpError,
+  resolveOAuthClientInformation,
+} from "./mcp-runtime.ts";
 
 function makeCatalog(input?: Partial<McpCatalogRecord>): McpCatalogRecord {
   return {
@@ -114,4 +119,46 @@ test("normalizeMcpError returns OAuth-specific guidance", () => {
   );
 
   assert.match(message, /OAuth authorization/i);
+});
+
+test("normalizeMcpError explains manual OAuth client setup when dynamic registration is unsupported", () => {
+  const message = normalizeMcpError(
+    makeCatalog({ id: "mcp-slack", slug: "slack", name: "Slack", authType: "oauth" }),
+    new Error("Incompatible auth server: does not support dynamic client registration"),
+    "zh",
+  );
+
+  assert.match(message, /Slack/);
+  assert.match(message, /Client ID/);
+  assert.match(message, /127\.0\.0\.1:37371/);
+});
+
+test("resolveOAuthClientInformation reads manual OAuth client fields", () => {
+  const catalog = makeCatalog({ slug: "slack", authType: "oauth" });
+  const connection = {
+    ...buildMcpConnection(catalog),
+    envEntries: {
+      client_id: "client-123",
+      client_secret: "secret-456",
+    },
+  };
+
+  const clientInformation = resolveOAuthClientInformation(catalog, connection);
+
+  assert.equal(clientInformation?.client_id, "client-123");
+  assert.equal(clientInformation?.client_secret, "secret-456");
+  assert.equal(
+    (clientInformation as Record<string, unknown> | undefined)?.token_endpoint_auth_method,
+    "client_secret_post",
+  );
+});
+
+test("manual OAuth setup message includes server-specific redirect URL", () => {
+  const message = getManualOAuthClientSetupMessage(
+    makeCatalog({ id: "mcp-custom", name: "Custom MCP", authType: "oauth" }),
+    "en",
+  );
+
+  assert.match(message, /Custom MCP/);
+  assert.match(message, /http:\/\/127\.0\.0\.1:37371\/mcp\/oauth\/callback\/mcp-custom/);
 });

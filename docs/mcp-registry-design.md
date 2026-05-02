@@ -81,6 +81,8 @@ team-aligned-mcps/
 - `stdio npx` MCP 的真实健康检查和 tools/list
 - `HTTP + headers` MCP 的真实 URL 握手、超时控制和 tools/list
 - `HTTP + OAuth` MCP 的基础授权闭环：扩展页授权按钮、浏览器打开授权页、本地回调接收 code、token 状态保存、授权后重新发现工具
+- 不支持动态 Client 注册的 OAuth MCP 会自动切换到手动 Client ID/Secret 配置流程
+- Slack 这类 OAuth 服务会展示专属兼容引导，包括固定 Redirect URL、Client ID 和 Client Secret 填写说明
 - “连接并启用 / 添加并配置 / 移除连接” 的本地状态流
 - Agent 级 MCP 白名单
 - `/mcp`
@@ -88,6 +90,7 @@ team-aligned-mcps/
 - `/mcp tools <slug>`
 - 单聊与群聊 runtime 已能注入 discovered MCP tools
 - MCP 未授权/权限错误会在聊天过程消息中提示用户授权后重试
+- OAuth 动态注册不兼容错误会转换成友好的手动配置提示，不再直接暴露底层英文错误
 - OAuth token 过期或需要重新授权时，会清理过期 token 并提示用户重新授权
 - runtime 已提供通用工具执行前 policy hook
 - 聊天内确认卡片和 approve/deny 队列已接入高风险 MCP 调用
@@ -107,6 +110,7 @@ team-aligned-mcps/
 - 支持 `stdio npx`
 - 支持 `HTTP + headers`
 - 支持 `HTTP + OAuth` 基础授权
+- 支持 OAuth 手动 Client ID/Secret fallback
 - 支持本地配置
 - 支持健康检查
 - 支持 Agent / Team 白名单

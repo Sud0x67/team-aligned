@@ -425,6 +425,14 @@ const translations = {
       remoteMcpReadyHint:
         "远端 MCP 已支持真实 URL 握手和工具发现。部分托管服务可能还会限制允许接入的客户端，若检测失败，请检查服务本身的鉴权或接入限制。",
       oauthPendingHint: "需要在浏览器完成 OAuth 授权后才能发现和调用工具。",
+      oauthManualClientTitle: "手动 OAuth Client",
+      oauthManualSetupHint:
+        "如果该服务不支持自动注册，请先在服务后台创建 OAuth App，配置下方 Redirect URL，再填写 Client ID 和 Client Secret 后重新授权。",
+      slackOAuthManualSetupHint:
+        "Slack 需要手动创建 OAuth App。请在 Slack API 的 Your Apps 中创建或打开应用，配置 Redirect URL，然后填写 Client ID 和 Client Secret 后重新授权。",
+      slackOAuthRedirectHint: "Slack Redirect URL：{{url}}",
+      oauthRedirectUrl: "Redirect URL",
+      requiredField: "必填",
       close: "关闭",
       mcpDirectoryPickerTitle: "选择 MCP 工作目录",
     },
@@ -988,6 +996,14 @@ const translations = {
       remoteMcpReadyHint:
         "Remote MCP now supports real URL handshakes and tool discovery. Some hosted services may still restrict which clients are allowed to connect, so check the service auth and client restrictions if health checks fail.",
       oauthPendingHint: "Finish OAuth authorization in the browser before discovering or calling tools.",
+      oauthManualClientTitle: "Manual OAuth Client",
+      oauthManualSetupHint:
+        "If this service does not support automatic registration, create an OAuth app in the service console, configure the Redirect URL below, then enter the Client ID and Client Secret and authorize again.",
+      slackOAuthManualSetupHint:
+        "Slack requires a manually created OAuth app. Create or open an app in Slack API Your Apps, configure the Redirect URL, then enter the Client ID and Client Secret and authorize again.",
+      slackOAuthRedirectHint: "Slack Redirect URL: {{url}}",
+      oauthRedirectUrl: "Redirect URL",
+      requiredField: "Required",
       close: "Close",
       mcpDirectoryPickerTitle: "Select MCP working directory",
     },

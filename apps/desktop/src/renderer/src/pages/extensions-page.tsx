@@ -21,6 +21,7 @@ import {
 import {
   isSystemBuiltinSkill,
   type ConnectMcpInput,
+  type McpAuthFieldRecord,
   type McpCatalogRecord,
   type PromptAliasRecord,
   type SavePromptAliasInput,
@@ -94,6 +95,38 @@ function resolveLocalizedDescription(
     if (language === "zh" && zh) return zh;
   }
   return input.description;
+}
+
+function getOAuthRedirectUrl(serverId: string) {
+  return `http://127.0.0.1:37371/mcp/oauth/callback/${encodeURIComponent(serverId)}`;
+}
+
+function getOAuthClientFields(server: McpCatalogRecord): McpAuthFieldRecord[] {
+  if (server.authType !== "oauth") return [];
+  if (server.authFields.length > 0) return server.authFields;
+
+  return [
+    {
+      key: "client_id",
+      label: "Client ID",
+      required: true,
+      secret: false,
+      placeholder: server.slug === "slack" ? "Slack Client ID" : "OAuth Client ID",
+    },
+    {
+      key: "client_secret",
+      label: "Client Secret",
+      required: server.slug === "slack",
+      secret: true,
+      placeholder: server.slug === "slack" ? "Slack Client Secret" : "OAuth Client Secret",
+    },
+  ];
+}
+
+function isDynamicClientRegistrationError(message: string) {
+  return /dynamic client registration|registration_endpoint|client registration.*not support|does not support registering clients/i.test(
+    message,
+  );
 }
 
 export function ExtensionsPage() {
@@ -253,6 +286,12 @@ export function ExtensionsPage() {
 
   const openMcpEditor = (server: McpCatalogRecord) => {
     const existing = connectionMap.get(server.id);
+    const defaultEnvEntries = Object.fromEntries(
+      (server.authType === "env" ? server.authFields : getOAuthClientFields(server)).map((field) => [
+        field.key,
+        "",
+      ]),
+    );
     setMcpFormError(null);
     setCustomHeadersText(serializeHeaders(existing?.headers));
     setEditingMcp(server);
@@ -262,10 +301,12 @@ export function ExtensionsPage() {
       args: existing?.args ?? server.launcherArgs,
       url: existing?.url ?? server.remoteUrl,
       envEntries:
-        existing?.envEntries ??
-        Object.fromEntries(
-          server.authType === "env" ? server.authFields.map((field) => [field.key, ""]) : [],
-        ),
+        server.authType === "env" || server.authType === "oauth"
+          ? {
+              ...defaultEnvEntries,
+              ...(existing?.envEntries ?? {}),
+            }
+          : existing?.envEntries ?? {},
       headers:
         existing?.headers ??
         Object.fromEntries(
@@ -561,6 +602,13 @@ export function ExtensionsPage() {
               const discoveredToolNames =
                 connection?.discoveredTools.map((toolItem) => toolItem.name) ?? item.declaredTools;
               const localizedDescription = resolveLocalizedDescription(item, settings.language);
+              const lastError = connection?.lastError ?? "";
+              const friendlyLastError =
+                item.authType === "oauth" && isDynamicClientRegistrationError(lastError)
+                  ? item.slug === "slack"
+                    ? t.extensions("slackOAuthManualSetupHint")
+                    : t.extensions("oauthManualSetupHint")
+                  : lastError;
 
               return (
                 <div
@@ -661,7 +709,10 @@ export function ExtensionsPage() {
                         {t.extensions("mcpTools")}:{" "}
                         {discoveredToolNames.join(listSeparator) || emptyListLabel}
                       </p>
-                      {connection?.lastError ? <p className="text-red-500">{connection.lastError}</p> : null}
+                      {friendlyLastError ? <p className="text-red-500">{friendlyLastError}</p> : null}
+                      {item.authType === "oauth" && item.slug === "slack" ? (
+                        <p>{t.extensions("slackOAuthRedirectHint").replace("{{url}}", getOAuthRedirectUrl(item.id))}</p>
+                      ) : null}
                       {connection?.oauth?.authorizationUrl ? (
                         <p className="text-[var(--primary)]">{t.extensions("oauthPendingHint")}</p>
                       ) : null}
@@ -919,6 +970,48 @@ export function ExtensionsPage() {
                             }))
                           }
                           className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {editingMcp.authType === "oauth" ? (
+                  <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-4">
+                    <div className="space-y-1">
+                      <p className="text-[13px] font-medium text-[var(--foreground)]">
+                        {t.extensions("oauthManualClientTitle")}
+                      </p>
+                      <p className="text-[12px] leading-5 text-[var(--muted-foreground)]">
+                        {editingMcp.slug === "slack"
+                          ? t.extensions("slackOAuthManualSetupHint")
+                          : t.extensions("oauthManualSetupHint")}
+                      </p>
+                      <p className="break-all rounded-lg bg-[var(--muted)] px-3 py-2 font-mono text-[11px] text-[var(--muted-foreground)]">
+                        {t.extensions("oauthRedirectUrl")}: {getOAuthRedirectUrl(editingMcp.id)}
+                      </p>
+                    </div>
+
+                    {getOAuthClientFields(editingMcp).map((field) => (
+                      <div key={field.key}>
+                        <label className="mb-1.5 block text-[12px] text-[var(--muted-foreground)]">
+                          {field.label}
+                          {field.required ? ` · ${t.extensions("requiredField")}` : ""}
+                        </label>
+                        <input
+                          type={field.secret ? "password" : "text"}
+                          value={mcpForm.envEntries?.[field.key] ?? ""}
+                          placeholder={field.placeholder}
+                          onChange={(event) =>
+                            setMcpForm((current) => ({
+                              ...(current as ConnectMcpInput),
+                              envEntries: {
+                                ...((current as ConnectMcpInput).envEntries ?? {}),
+                                [field.key]: event.target.value,
+                              },
+                            }))
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5 text-[14px] text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_30%,transparent)]"
                         />
                       </div>
                     ))}
