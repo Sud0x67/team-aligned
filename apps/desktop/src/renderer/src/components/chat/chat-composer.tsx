@@ -461,7 +461,7 @@ export function ChatComposer({
   return (
     <div
       ref={composerRootRef}
-      className={`relative flex h-full min-h-0 flex-col overflow-auto rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
+      className={`relative grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
     >
         {showFileSuggestionsPanel ? (
           <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
@@ -502,93 +502,186 @@ export function ChatComposer({
           </div>
         ) : null}
 
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(event) => {
-            if (busy) {
-              return;
-            }
-            setInput(event.target.value);
-            if (feedback?.tone === "error") {
-              setFeedback(null);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) {
-              return;
-            }
+        <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(event) => {
+              if (busy) {
+                return;
+              }
+              setInput(event.target.value);
+              if (feedback?.tone === "error") {
+                setFeedback(null);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) {
+                return;
+              }
 
-            if (busy) {
+              if (busy) {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  setFeedback({
+                    tone: "info",
+                    message: t.chat("awaitingReply"),
+                  });
+                }
+                return;
+              }
+
+              if (suggestionState && suggestionState.items.length > 0) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveSuggestionIndex((current) =>
+                    (current + 1) % suggestionState.items.length,
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveSuggestionIndex((current) =>
+                    (current - 1 + suggestionState.items.length) % suggestionState.items.length,
+                  );
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  applySuggestion(suggestionState.items[activeSuggestionIndex]?.value ?? "");
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setActiveSuggestionIndex(0);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            readOnly={busy}
+            onPaste={(event) => {
+              if (busy) {
                 event.preventDefault();
                 setFeedback({
                   tone: "info",
                   message: t.chat("awaitingReply"),
                 });
+                return;
               }
-              return;
-            }
+              const imageFiles = Array.from(event.clipboardData.items)
+                .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                .map((item, index) => item.getAsFile() ?? new File([], `clipboard-image-${index + 1}.png`))
+                .filter((file): file is File => file.size > 0);
 
-            if (suggestionState && suggestionState.items.length > 0) {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setActiveSuggestionIndex((current) =>
-                  (current + 1) % suggestionState.items.length,
-                );
+              if (imageFiles.length === 0) {
                 return;
               }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setActiveSuggestionIndex((current) =>
-                  (current - 1 + suggestionState.items.length) % suggestionState.items.length,
-                );
-                return;
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                applySuggestion(suggestionState.items[activeSuggestionIndex]?.value ?? "");
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setActiveSuggestionIndex(0);
-                return;
-              }
-            }
-            if (event.key === "Enter" && !event.shiftKey) {
+
               event.preventDefault();
-              void submit();
-            }
-          }}
-          readOnly={busy}
-          onPaste={(event) => {
-            if (busy) {
-              event.preventDefault();
-              setFeedback({
-                tone: "info",
-                message: t.chat("awaitingReply"),
-              });
-              return;
-            }
-            const imageFiles = Array.from(event.clipboardData.items)
-              .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-              .map((item, index) => item.getAsFile() ?? new File([], `clipboard-image-${index + 1}.png`))
-              .filter((file): file is File => file.size > 0);
+              void uploadFiles(imageFiles, t.chat("pastedImagesReady"));
+            }}
+            rows={3}
+            placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
+            className="w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
+          />
 
-            if (imageFiles.length === 0) {
-              return;
-            }
+          {attachments.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <span
+                  key={attachment.path}
+                  className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)]"
+                >
+                  {attachment.mimeType.startsWith("image/") ? (
+                    <img
+                      src={resolveAssetSrc(attachment.path) ?? undefined}
+                      alt={attachment.name}
+                      className="h-10 w-10 shrink-0 rounded-xl object-cover"
+                    />
+                  ) : (
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" />
+                  )}
+                  <span className="truncate">{attachment.name}</span>
+                  <button
+                    type="button"
+                    className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                    onClick={() =>
+                      setAttachments((current) =>
+                        current.filter((item) => item.path !== attachment.path),
+                      )
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
 
-            event.preventDefault();
-            void uploadFiles(imageFiles, t.chat("pastedImagesReady"));
-          }}
-          rows={3}
-          placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
-          className="w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
-        />
+          {workspaceReferencePreview.length > 0 || loadingWorkspaceReferencePreview ? (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-[var(--muted-foreground)]">{t.chat("workspaceReferencePreview")}</p>
+              <div className="flex flex-wrap gap-2">
+                {workspaceReferencePreview.map((reference) => {
+                  const resolved = reference.status === "resolved";
+                  return (
+                    <span
+                      key={`${reference.token}-${reference.status}`}
+                      className={`inline-flex max-w-full items-center gap-2 rounded-2xl border px-3 py-2 text-xs ${
+                        resolved
+                          ? "border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                          : "border-[color-mix(in_srgb,var(--warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-[var(--warning)]"
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {resolved ? `#${reference.path}` : `#${reference.token}`}
+                      </span>
+                      {!resolved ? (
+                        <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--warning)_20%,transparent)] px-1.5 py-0.5 text-[10px]">
+                          {t.chat("workspaceUnresolved")}
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                        onClick={() => removeWorkspaceReference(reference.token)}
+                        aria-label={t.chat("workspaceRemoveReference")}
+                        title={t.chat("workspaceRemoveReference")}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  );
+                })}
+                {loadingWorkspaceReferencePreview ? (
+                  <span className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    {t.chat("workspaceResolving")}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
-        <div className="mt-3 flex items-end justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
+          {feedback ? (
+            <div
+              className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${
+                feedback.tone === "error"
+                  ? "border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[color-mix(in_srgb,var(--danger)_8%,transparent)] text-[var(--danger)]"
+                  : "border-[color-mix(in_srgb,var(--primary)_16%,transparent)] bg-[color-mix(in_srgb,var(--primary)_8%,transparent)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              {feedback.message}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 flex h-[52px] items-center justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
             {showMentionButton ? (
               <button
@@ -698,97 +791,6 @@ export function ChatComposer({
             </button>
           )}
         </div>
-
-        {attachments.length > 0 ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {attachments.map((attachment) => (
-              <span
-                key={attachment.path}
-                className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)]"
-              >
-                {attachment.mimeType.startsWith("image/") ? (
-                  <img
-                    src={resolveAssetSrc(attachment.path) ?? undefined}
-                    alt={attachment.name}
-                    className="h-10 w-10 shrink-0 rounded-xl object-cover"
-                  />
-                ) : (
-                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" />
-                )}
-                <span className="truncate">{attachment.name}</span>
-                <button
-                  type="button"
-                  className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-                  onClick={() =>
-                    setAttachments((current) =>
-                      current.filter((item) => item.path !== attachment.path),
-                    )
-                  }
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        {workspaceReferencePreview.length > 0 || loadingWorkspaceReferencePreview ? (
-          <div className="mt-3 space-y-2">
-            <p className="text-xs text-[var(--muted-foreground)]">{t.chat("workspaceReferencePreview")}</p>
-            <div className="flex flex-wrap gap-2">
-              {workspaceReferencePreview.map((reference) => {
-                const resolved = reference.status === "resolved";
-                return (
-                  <span
-                    key={`${reference.token}-${reference.status}`}
-                    className={`inline-flex max-w-full items-center gap-2 rounded-2xl border px-3 py-2 text-xs ${
-                      resolved
-                        ? "border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
-                        : "border-[color-mix(in_srgb,var(--warning)_28%,transparent)] bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-[var(--warning)]"
-                    }`}
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">
-                      {resolved ? `#${reference.path}` : `#${reference.token}`}
-                    </span>
-                    {!resolved ? (
-                      <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--warning)_20%,transparent)] px-1.5 py-0.5 text-[10px]">
-                        {t.chat("workspaceUnresolved")}
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-                      onClick={() => removeWorkspaceReference(reference.token)}
-                      aria-label={t.chat("workspaceRemoveReference")}
-                      title={t.chat("workspaceRemoveReference")}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                );
-              })}
-              {loadingWorkspaceReferencePreview ? (
-                <span className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
-                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                  {t.chat("workspaceResolving")}
-                </span>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {feedback ? (
-          <div
-            className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${
-              feedback.tone === "error"
-                ? "border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[color-mix(in_srgb,var(--danger)_8%,transparent)] text-[var(--danger)]"
-                : "border-[color-mix(in_srgb,var(--primary)_16%,transparent)] bg-[color-mix(in_srgb,var(--primary)_8%,transparent)] text-[var(--muted-foreground)]"
-            }`}
-          >
-            {feedback.message}
-          </div>
-        ) : null}
     </div>
   );
 }
