@@ -14,7 +14,7 @@ import type {
   ProviderConfig,
   UserProfile,
 } from "@teamaligned/shared";
-import type { RuntimeToolInvocationEvent } from "./agent-tools.ts";
+import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-tools.ts";
 import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
@@ -702,6 +702,7 @@ export async function invokeSingleChatDeepAgent(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
@@ -735,6 +736,7 @@ export async function invokeSingleChatDeepAgent(input: {
     onInvocation: input.onMcpInvocation,
     onConnectionUpdated: input.onMcpConnectionUpdated,
     responseLanguage,
+    approvalPolicy: input.approvalPolicy,
   });
   const tools = [...(additionalTools ?? []), ...mcpTools];
   const mcpToolSignature = JSON.stringify(

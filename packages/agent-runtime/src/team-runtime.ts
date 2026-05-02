@@ -19,7 +19,7 @@ import {
   normalizeProviderErrorMessage,
   normalizeMessageContent,
 } from "./deep-agent.ts";
-import type { RuntimeToolInvocationEvent } from "./agent-tools.ts";
+import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-tools.ts";
 import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
@@ -678,6 +678,7 @@ function createEphemeralWorker(input: {
   mcpConnections?: McpConnectionRecord[];
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
   additionalTools?: StructuredToolInterface[];
 }) {
   const tools = buildMcpLangChainTools({
@@ -686,6 +687,7 @@ function createEphemeralWorker(input: {
     workspacePath: input.workspacePath,
     onInvocation: input.onMcpInvocation,
     onConnectionUpdated: input.onMcpConnectionUpdated,
+    approvalPolicy: input.approvalPolicy,
   });
   return createDeepAgent({
     name: input.name,
@@ -715,6 +717,7 @@ async function invokeWorkerText(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   responseLanguage?: RuntimeLanguage;
@@ -1448,6 +1451,7 @@ export async function executeNaturalTeamWorkItem(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
   onUpdate?: (event: {
     phase: "started" | "streaming" | "completed" | "failed";
     owner: AgentRecord;
@@ -1544,6 +1548,7 @@ export async function executeNaturalTeamWorkItem(input: {
       onMcpInvocation: input.onMcpInvocation,
       onMcpConnectionUpdated: input.onMcpConnectionUpdated,
       onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
+      approvalPolicy: input.approvalPolicy,
       onTextStream: async (aggregatedText, deltaText) => {
         await input.onTextStream?.(aggregatedText, deltaText);
         if (!announcedStreaming && deltaText.trim().length > 0) {
@@ -1619,6 +1624,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
   responseLanguage?: RuntimeLanguage;
@@ -1729,6 +1735,7 @@ export async function generateNaturalTeamAgentMessage(input: {
           onMcpInvocation: input.onMcpInvocation,
           onMcpConnectionUpdated: input.onMcpConnectionUpdated,
           onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
+          approvalPolicy: input.approvalPolicy,
           onTextStream: input.onTextStream,
           responseLanguage,
           additionalTools: input.additionalTools,

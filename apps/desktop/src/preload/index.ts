@@ -47,6 +47,8 @@ const api: TeamalignedApi = {
   previewWorkspaceReferences: (payload: PreviewWorkspaceReferencesInput) =>
     ipcRenderer.invoke("teamaligned:preview-workspace-references", payload),
   controlRun: (payload: RunControlPayload) => ipcRenderer.invoke("teamaligned:control-run", payload),
+  resolveToolExecutionApproval: (payload) =>
+    ipcRenderer.invoke("teamaligned:resolve-tool-execution-approval", payload),
   createAgent: (payload: CreateAgentInput) => ipcRenderer.invoke("teamaligned:create-agent", payload),
   createTeam: (payload: CreateTeamInput) => ipcRenderer.invoke("teamaligned:create-team", payload),
   deleteAgent: (agentId: string) => ipcRenderer.invoke("teamaligned:delete-agent", agentId),

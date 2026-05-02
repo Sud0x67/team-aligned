@@ -24,6 +24,7 @@ import type {
   SaveAttachmentAssetInput,
   SavePromptAliasInput,
   SendInputPayload,
+  ToolExecutionApprovalInput,
   ProviderConnectionTestInput,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
@@ -849,6 +850,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("teamaligned:control-run", async (_event, payload: RunControlPayload) =>
     (await getReadyRuntime()).controlRun(payload),
+  );
+  ipcMain.handle("teamaligned:resolve-tool-execution-approval", async (_event, payload: ToolExecutionApprovalInput) =>
+    (await getReadyRuntime()).resolveToolExecutionApproval(payload),
   );
   ipcMain.handle("teamaligned:create-agent", async (_event, payload: CreateAgentInput) =>
     (await getReadyRuntime()).createAgent(payload),

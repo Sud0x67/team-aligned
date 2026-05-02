@@ -88,18 +88,19 @@ team-aligned-mcps/
 - `/mcp tools <slug>`
 - 单聊与群聊 runtime 已能注入 discovered MCP tools
 - MCP 未授权/权限错误会在聊天过程消息中提示用户授权后重试
-- runtime 已提供通用工具执行前 policy hook，可用于后续确认 UI
+- OAuth token 过期或需要重新授权时，会清理过期 token 并提示用户重新授权
+- runtime 已提供通用工具执行前 policy hook
+- 聊天内确认卡片和 approve/deny 队列已接入高风险 MCP 调用
 
 ## 当前边界
 
 这一版还没有做：
 
-- OAuth token 过期后的重授权体验打磨
+- OAuth token 过期、scope 变化、用户 revoke 等重授权状态的更细提示
 - 更完整的 tool call 可视化和 run 详情
 - tool 级白名单
 - MCP 调用审计与历史记录
 - 群聊里对 MCP 使用过程的更丰富可视化
-- 通用工具确认 UI 队列
 
 也就是说，当前已经完成了第一版 MCP 主链路：
 
@@ -110,6 +111,7 @@ team-aligned-mcps/
 - 支持健康检查
 - 支持 Agent / Team 白名单
 - 支持 discovered tools 注入 runtime
+- 支持聊天内确认高风险 MCP 工具
 
 ## 推荐开发顺序
 
@@ -117,4 +119,4 @@ team-aligned-mcps/
 2. 增加 tool 级白名单
 3. 增加更细粒度的错误提示与配置模板
 4. 在消息流中展示 MCP 调用过程与结果
-5. 补通用工具确认 UI 和 OAuth 重授权体验
+5. 继续打磨 OAuth 重授权体验

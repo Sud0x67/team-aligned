@@ -122,6 +122,12 @@ export function ChatComposer({
   const [loadingWorkspaceReferencePreview, setLoadingWorkspaceReferencePreview] = useState(false);
   const [loadingWorkspaceFileSuggestions, setLoadingWorkspaceFileSuggestions] = useState(false);
   const [textareaMaxHeight, setTextareaMaxHeight] = useState(220);
+  const [suggestionPanelStyle, setSuggestionPanelStyle] = useState<{
+    left: number;
+    width: number;
+    bottom: number;
+    maxHeight: number;
+  } | null>(null);
   const fileInputId = useId();
   const emojiPanelRef = useRef<HTMLDivElement | null>(null);
   const composerRootRef = useRef<HTMLDivElement | null>(null);
@@ -368,6 +374,41 @@ export function ChatComposer({
       (activeToken?.startsWith("#") &&
         (loadingWorkspaceFileSuggestions || activeToken.slice(1).trim().length > 0)));
 
+  useEffect(() => {
+    if (!showFileSuggestionsPanel) {
+      setSuggestionPanelStyle(null);
+      return;
+    }
+
+    const updatePanelPosition = () => {
+      const root = composerRootRef.current;
+      if (!root) return;
+      const rect = root.getBoundingClientRect();
+      setSuggestionPanelStyle({
+        left: rect.left,
+        width: rect.width,
+        bottom: Math.max(12, window.innerHeight - rect.top + 8),
+        maxHeight: clamp(Math.round(rect.top - 24), 96, 288),
+      });
+    };
+
+    updatePanelPosition();
+    window.addEventListener("resize", updatePanelPosition);
+    window.addEventListener("scroll", updatePanelPosition, true);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && composerRootRef.current) {
+      observer = new ResizeObserver(updatePanelPosition);
+      observer.observe(composerRootRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updatePanelPosition);
+      window.removeEventListener("scroll", updatePanelPosition, true);
+      observer?.disconnect();
+    };
+  }, [showFileSuggestionsPanel, suggestionState?.items.length]);
+
   const uploadFiles = async (files: File[], successMessage: string) => {
     if (files.length === 0) return;
     const remainingSlots = Math.max(0, maxAttachmentCount - attachments.length);
@@ -461,11 +502,21 @@ export function ChatComposer({
   return (
     <div
       ref={composerRootRef}
-      className={`relative grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
+      className={`relative grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
     >
-        {showFileSuggestionsPanel ? (
-          <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl">
-            <div className="max-h-72 overflow-y-auto overscroll-contain pr-1">
+        {showFileSuggestionsPanel && suggestionPanelStyle ? (
+          <div
+            className="fixed z-[80] rounded-[18px] border border-[var(--border)] bg-[var(--card)] p-2 shadow-2xl"
+            style={{
+              left: `${suggestionPanelStyle.left}px`,
+              width: `${suggestionPanelStyle.width}px`,
+              bottom: `${suggestionPanelStyle.bottom}px`,
+            }}
+          >
+            <div
+              className="overflow-y-auto overscroll-contain pr-1"
+              style={{ maxHeight: `${suggestionPanelStyle.maxHeight}px` }}
+            >
               <div className="space-y-1">
                 {suggestionState.items.map((item, index) => (
                   <button

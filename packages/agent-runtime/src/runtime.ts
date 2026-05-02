@@ -36,6 +36,7 @@ import type {
   SkillCatalogRecord,
   TeamContext,
   TeamRecord,
+  ToolExecutionApprovalInput,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
@@ -66,7 +67,13 @@ import {
   checkMcpConnection as healthCheckMcpConnection,
 } from "./mcp-runtime.ts";
 import type { McpInvocationEvent } from "./mcp-tools.ts";
-import { buildRuntimeLangChainTools, type RuntimeToolInvocationEvent } from "./agent-tools.ts";
+import {
+  buildRuntimeLangChainTools,
+  type RuntimeToolInvocationEvent,
+  type ToolExecutionPolicy,
+  type ToolExecutionPolicyDecision,
+  type ToolExecutionPolicyRequest,
+} from "./agent-tools.ts";
 import {
   buildNextHandoffState,
   buildExecutionBatches,
@@ -123,6 +130,17 @@ type RuntimeErrorLog = {
   metadata: Record<string, unknown> | null;
 };
 
+type PendingToolApproval = {
+  id: string;
+  conversationId: string;
+  runId: string;
+  messageId: string;
+  request: ToolExecutionPolicyRequest;
+  actorName: string;
+  responseLanguage: RuntimeLanguage;
+  resolve: (decision: ToolExecutionPolicyDecision) => void;
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -152,6 +170,30 @@ function trimHeadline(text: string, max = 120) {
 }
 
 const workspaceInternalDirName = ".team-aligned";
+
+function previewToolArgs(args: Record<string, unknown>, max = 1400) {
+  try {
+    const json = JSON.stringify(args, null, 2);
+    if (!json) return "{}";
+    return json.length <= max ? json : `${json.slice(0, max)}\n...`;
+  } catch {
+    return "[unserializable input]";
+  }
+}
+
+function shouldRequireToolApproval(request: ToolExecutionPolicyRequest) {
+  if (request.operation === "read" || request.operation === "network") {
+    return request.riskLevel === "high";
+  }
+
+  return (
+    request.operation === "write" ||
+    request.operation === "command" ||
+    request.operation === "mcp" ||
+    request.operation === "skill" ||
+    request.riskLevel === "high"
+  );
+}
 
 function serializeRuntimeError(error: unknown) {
   if (error instanceof Error) {
@@ -327,6 +369,7 @@ function chooseTeamRepresentative(team: TeamRecord, agents: AgentRecord[]) {
 export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
+  private readonly pendingToolApprovals = new Map<string, PendingToolApproval>();
   private readonly conversationReadPresence = new Map<string, number>();
   private catalogSyncStarted = false;
   private static readonly notificationPresenceWindowMs = 15_000;
@@ -723,6 +766,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
     if (payload.action === "cancel") {
       this.stopRunController(latest.id);
+      this.cancelPendingToolApprovalsForRun(latest.id, responseLanguage);
       this.finalizeStreamingMessagesForRun(payload.conversationId, latest.id, "cancelled");
       this.storage.updateRun(latest.id, { status: "cancelled" });
       this.storage.cancelPendingRunSteps(latest.id);
@@ -739,6 +783,51 @@ export class TeamalignedRuntime extends EventEmitter {
       this.addTeamCancellationMessage(payload.conversationId, latest.id, responseLanguage);
     }
 
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  async resolveToolExecutionApproval(payload: ToolExecutionApprovalInput) {
+    const pending = this.pendingToolApprovals.get(payload.approvalId);
+    if (!pending) {
+      return this.getSnapshot();
+    }
+
+    this.pendingToolApprovals.delete(payload.approvalId);
+    const approved = payload.decision === "approved";
+    const content = approved
+      ? byLanguage(pending.responseLanguage, {
+          zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
+          en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}.`,
+        })
+      : byLanguage(pending.responseLanguage, {
+          zh: `已拒绝 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
+          en: `Denied ${pending.actorName} from running ${pending.request.serverName}.${pending.request.toolName}.`,
+        });
+
+    const message = this.storage
+      .listMessages(pending.conversationId)
+      .find((item) => item.id === pending.messageId);
+    this.storage.updateMessage(pending.messageId, {
+      content,
+      metadata: {
+        ...(message?.metadata ?? {}),
+        approvalStatus: payload.decision,
+        resolvedAt: Date.now(),
+      },
+    });
+
+    pending.resolve(
+      approved
+        ? { allow: true }
+        : {
+            allow: false,
+            reason: byLanguage(pending.responseLanguage, {
+              zh: "用户拒绝了这次工具执行。",
+              en: "The user denied this tool execution.",
+            }),
+          },
+    );
     this.emitSnapshot();
     return this.getSnapshot();
   }
@@ -1478,6 +1567,110 @@ export class TeamalignedRuntime extends EventEmitter {
     };
   }
 
+  private createToolExecutionPolicy(input: {
+    conversationId: string;
+    runId: string;
+    actorName: string;
+    responseLanguage: RuntimeLanguage;
+  }): ToolExecutionPolicy {
+    return async (request) => {
+      if (!shouldRequireToolApproval(request)) {
+        return { allow: true };
+      }
+
+      if (this.isRunTerminal(input.runId)) {
+        return {
+          allow: false,
+          reason: byLanguage(input.responseLanguage, {
+            zh: "当前任务已经结束，无法继续执行工具。",
+            en: "This run has already ended, so the tool cannot continue.",
+          }),
+        };
+      }
+
+      const approvalId = `approval-${nanoid(8)}`;
+      const argsPreview = previewToolArgs(request.args);
+      const message = this.storage.addMessage(
+        {
+          conversationId: input.conversationId,
+          senderId: "system",
+          senderName: "TeamAligned",
+          senderKind: "system",
+          messageType: "notification",
+          visibility: "system",
+          content: byLanguage(input.responseLanguage, {
+            zh: `${input.actorName} 想执行 ${request.serverName}.${request.toolName}，需要你确认。`,
+            en: `${input.actorName} wants to run ${request.serverName}.${request.toolName}. Please confirm.`,
+          }),
+          mentions: [],
+          runId: input.runId,
+          metadata: {
+            cardType: "tool_approval",
+            approvalId,
+            approvalStatus: "pending",
+            actorName: input.actorName,
+            serverId: request.serverId,
+            serverName: request.serverName,
+            toolName: request.toolName,
+            operation: request.operation,
+            riskLevel: request.riskLevel,
+            description: request.description,
+            argsPreview,
+          },
+          createdAt: Date.now(),
+        },
+        { skipTranscript: true },
+      );
+      this.emitSnapshot();
+
+      return await new Promise<ToolExecutionPolicyDecision>((resolve) => {
+        this.pendingToolApprovals.set(approvalId, {
+          id: approvalId,
+          conversationId: input.conversationId,
+          runId: input.runId,
+          messageId: message.id,
+          request,
+          actorName: input.actorName,
+          responseLanguage: input.responseLanguage,
+          resolve,
+        });
+      });
+    };
+  }
+
+  private cancelPendingToolApprovalsForRun(
+    runId: string,
+    responseLanguage: RuntimeLanguage,
+    reason?: string,
+  ) {
+    for (const pending of [...this.pendingToolApprovals.values()]) {
+      if (pending.runId !== runId) {
+        continue;
+      }
+      this.pendingToolApprovals.delete(pending.id);
+      const content = reason ??
+        byLanguage(responseLanguage, {
+          zh: "任务已结束，这次工具确认已取消。",
+          en: "The run ended, so this tool approval was cancelled.",
+        });
+      const message = this.storage
+        .listMessages(pending.conversationId)
+        .find((item) => item.id === pending.messageId);
+      this.storage.updateMessage(pending.messageId, {
+        content,
+        metadata: {
+          ...(message?.metadata ?? {}),
+          approvalStatus: "cancelled",
+          resolvedAt: Date.now(),
+        },
+      });
+      pending.resolve({
+        allow: false,
+        reason: content,
+      });
+    }
+  }
+
   private createToolInvocationObserver(conversationId: string, runId: string) {
     return async (event: McpInvocationEvent | RuntimeToolInvocationEvent) => {
       if (this.isRunTerminal(runId)) {
@@ -1612,11 +1805,12 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       if (event.phase === "error") {
+        const isAuthError = /oauth|authorize|authorization|授权|权限|permission|401|unauthorized/i.test(event.error);
         const shouldSurfaceError =
           toolName === "web_search" ||
           toolName === "web_fetch" ||
           !isLocalTool ||
-          /oauth|authorize|authorization|授权|权限|permission/i.test(event.error);
+          isAuthError;
         if (!shouldSurfaceError) {
           return;
         }
@@ -1635,6 +1829,12 @@ export class TeamalignedRuntime extends EventEmitter {
           sourceName,
           local: isLocalTool,
           error: event.error,
+	          ...(!isLocalTool && isAuthError
+	            ? {
+	                cardType: "mcp_oauth",
+	                serverId: event.server.id,
+	              }
+	            : {}),
         });
         this.emitSnapshot();
       }
@@ -1814,6 +2014,7 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       if (event.phase === "error") {
+        const isAuthError = /oauth|authorize|authorization|授权|权限|permission|401|unauthorized/i.test(event.error);
         const content = isLocalTool
           ? byLanguage(input.responseLanguage, {
               zh: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`,
@@ -1829,6 +2030,12 @@ export class TeamalignedRuntime extends EventEmitter {
           sourceName,
           local: isLocalTool,
           error: event.error,
+	          ...(!isLocalTool && isAuthError
+	            ? {
+	                cardType: "mcp_oauth",
+	                serverId: event.server.id,
+	              }
+	            : {}),
         };
         addPublicProcessMessage(content, metadata);
         input.onUpdate?.(content, metadata);
@@ -2008,6 +2215,7 @@ export class TeamalignedRuntime extends EventEmitter {
         );
       for (const run of nonTerminalRuns) {
         this.stopRunController(run.id);
+        this.cancelPendingToolApprovalsForRun(run.id, responseLanguage);
         this.finalizeStreamingMessagesForRun(conversation.id, run.id, "cancelled");
         this.storage.updateRun(run.id, { status: "cancelled" });
         this.storage.cancelPendingRunSteps(run.id);
@@ -2302,6 +2510,12 @@ export class TeamalignedRuntime extends EventEmitter {
       agent,
       responseLanguage,
     });
+    const approvalPolicy = this.createToolExecutionPolicy({
+      conversationId: conversation.id,
+      runId,
+      actorName: agent.name,
+      responseLanguage,
+    });
     const runtimeTools = buildRuntimeLangChainTools({
       workspacePath,
       attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
@@ -2309,6 +2523,7 @@ export class TeamalignedRuntime extends EventEmitter {
       responseLanguage,
       activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
       onInvocation: toolInvocationObserver,
+      approvalPolicy,
     });
     const steps: RunStep[] = [
       {
@@ -2372,6 +2587,7 @@ export class TeamalignedRuntime extends EventEmitter {
               onMcpInvocation: toolInvocationObserver,
               onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
               onDeepAgentToolInvocation: toolInvocationObserver,
+              approvalPolicy,
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
               responseLanguage,
@@ -2613,16 +2829,23 @@ export class TeamalignedRuntime extends EventEmitter {
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const attachmentRoots = this.storage.getConversationAttachmentRoots(conversation.id);
-    const createTeamRuntimeTools = (
-      onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>,
-    ) =>
+    const createTeamRuntimeTools = (input: {
+      actorName: string;
+      onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+    }) =>
       buildRuntimeLangChainTools({
         workspacePath,
         attachmentRoots,
         provider,
         responseLanguage,
         activeSkill: null,
-        onInvocation,
+        onInvocation: input.onInvocation,
+        approvalPolicy: this.createToolExecutionPolicy({
+          conversationId: conversation.id,
+          runId,
+          actorName: input.actorName,
+          responseLanguage,
+        }),
       });
     let selection: {
       mode: TeamTurnPlan["mode"];
@@ -3024,6 +3247,12 @@ export class TeamalignedRuntime extends EventEmitter {
                       onMcpInvocation: teamToolObserver,
                       onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                       onDeepAgentToolInvocation: teamToolObserver,
+                      approvalPolicy: this.createToolExecutionPolicy({
+                        conversationId: conversation.id,
+                        runId,
+                        actorName: item.owner.name,
+                        responseLanguage,
+                      }),
                       onUpdate: ({ phase, content }) => {
                         if (!shouldContinueRun()) {
                           return;
@@ -3084,7 +3313,10 @@ export class TeamalignedRuntime extends EventEmitter {
                         }
                         this.emitSnapshot();
                       },
-                      additionalTools: createTeamRuntimeTools(teamToolObserver).tools,
+                      additionalTools: createTeamRuntimeTools({
+                        actorName: item.owner.name,
+                        onInvocation: teamToolObserver,
+                      }).tools,
                     });
                     return { item, ok: true as const, content, streamMessageId };
                   } catch (error) {
@@ -3343,6 +3575,12 @@ export class TeamalignedRuntime extends EventEmitter {
                 onMcpInvocation: teamToolObserver,
                 onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                 onDeepAgentToolInvocation: teamToolObserver,
+                approvalPolicy: this.createToolExecutionPolicy({
+                  conversationId: conversation.id,
+                  runId,
+                  actorName: speaker.name,
+                  responseLanguage,
+                }),
                 onTextStream: async (aggregatedText) => {
                   if (!shouldContinueRun()) {
                     return;
@@ -3383,7 +3621,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   }
                   this.emitSnapshot();
                 },
-                additionalTools: createTeamRuntimeTools(teamToolObserver).tools,
+                additionalTools: createTeamRuntimeTools({
+                  actorName: speaker.name,
+                  onInvocation: teamToolObserver,
+                }).tools,
               });
               if (!shouldContinueRun()) {
                 return;

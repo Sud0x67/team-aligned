@@ -14,6 +14,7 @@ import type {
   RunControlPayload,
   SavePromptAliasInput,
   SendInputPayload,
+  ToolExecutionApprovalInput,
   UpdateAgentInput,
   UpdateAgentSkillsInput,
   UpdateAgentMcpsInput,
@@ -31,6 +32,7 @@ type AppStore = AppSnapshot & {
   loadConversationData: (conversationId: string) => Promise<void>;
   sendInput: (payload: SendInputPayload) => Promise<void>;
   controlRun: (payload: RunControlPayload) => Promise<void>;
+  resolveToolExecutionApproval: (payload: ToolExecutionApprovalInput) => Promise<void>;
   createAgent: (payload: CreateAgentInput) => Promise<void>;
   createTeam: (payload: CreateTeamInput) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
@@ -185,6 +187,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       runLoadingSnapshotAction(() => window.teamaligned.sendInput(payload)),
     controlRun: async (payload) =>
       runSnapshotAction(() => window.teamaligned.controlRun(payload)),
+    resolveToolExecutionApproval: async (payload) =>
+      runSnapshotAction(() => window.teamaligned.resolveToolExecutionApproval(payload)),
     createAgent: async (payload) =>
       runSnapshotAction(() => window.teamaligned.createAgent(payload)),
     createTeam: async (payload) =>

@@ -29,11 +29,12 @@ MCP setup should be explicit, recoverable, and easy to understand in UI and runt
 - `/mcp`, `/mcp use <slug>`, and `/mcp tools <slug>`.
 - Runtime injection for discovered MCP tools in direct and team chats.
 - Auth and permission errors surface as chat process messages so users can authorize and retry.
-- A generic runtime pre-execution policy hook exists for future tool-confirmation UI.
+- OAuth token-expiry and re-auth-required failures clear stale token state and prompt users to authorize again.
+- A generic runtime pre-execution policy hook exists.
+- In-chat approval cards and an approve/deny queue are wired for high-risk MCP tool calls.
 
 ## Current Boundaries
 
 - MCP tool-level allowlists are not implemented yet.
-- OAuth token-expiry re-authorization needs more polish.
-- Full tool-confirmation UI queues are not implemented yet.
+- OAuth re-authorization still needs finer states for token expiry, scope changes, and user revocation.
 - MCP call history and richer run-detail visualization still need more work.

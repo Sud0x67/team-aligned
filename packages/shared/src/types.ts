@@ -12,6 +12,7 @@ export type McpOAuthStatus =
   | "authorization_pending"
   | "authorized"
   | "error";
+export type ToolApprovalDecision = "approved" | "denied";
 export type AvatarAssetScope = "profile" | "agents" | "teams";
 export type SenderKind = "user" | "agent" | "system";
 export type MessageType =
@@ -439,6 +440,11 @@ export interface SendInputPayload {
   attachments?: AttachmentAssetRecord[];
 }
 
+export interface ToolExecutionApprovalInput {
+  approvalId: string;
+  decision: ToolApprovalDecision;
+}
+
 export interface SearchWorkspaceFilesInput {
   conversationId: string;
   query: string;
@@ -583,6 +589,7 @@ export interface TeamalignedApi {
     payload: PreviewWorkspaceReferencesInput,
   ) => Promise<WorkspaceReferencePreview[]>;
   controlRun: (payload: RunControlPayload) => Promise<AppSnapshot>;
+  resolveToolExecutionApproval: (payload: ToolExecutionApprovalInput) => Promise<AppSnapshot>;
   createAgent: (payload: CreateAgentInput) => Promise<AppSnapshot>;
   createTeam: (payload: CreateTeamInput) => Promise<AppSnapshot>;
   deleteAgent: (agentId: string) => Promise<AppSnapshot>;

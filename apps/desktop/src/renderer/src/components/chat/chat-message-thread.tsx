@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   Bot,
+  CheckCircle2,
   Copy,
   ImagePlus,
   Paperclip,
@@ -186,6 +187,8 @@ export function ChatMessageThread({
   onRetryUserMessage: (message: MessageRecord) => Promise<void> | void;
 }) {
   const language = useAppStore((state) => state.settings.language);
+  const resolveToolExecutionApproval = useAppStore((state) => state.resolveToolExecutionApproval);
+  const authorizeMcp = useAppStore((state) => state.authorizeMcp);
   const t = createTranslator(language);
   const visibleMessages = getConversationVisibleMessages(messages, showInternalMessages);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -337,6 +340,8 @@ export function ChatMessageThread({
             const isInternal = message.visibility === "internal";
             const isNotification = message.messageType === "notification";
             const isCommandCard = message.metadata?.cardType === "command_result";
+            const isToolApprovalCard = message.metadata?.cardType === "tool_approval";
+            const isMcpOAuthCard = message.metadata?.cardType === "mcp_oauth";
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
             const avatar = buildAvatarProps(message, { language, profile, agentMap, teamMap });
@@ -417,7 +422,102 @@ export function ChatMessageThread({
                               : t.chat("notificationLabel")}
                         </div>
                       ) : null}
-                      {!isCommandCard ? <ChatMarkdownContent content={message.content} inverted={isUser} /> : null}
+                      {isToolApprovalCard ? (
+                        <div className="space-y-3">
+                          <div className="flex items-start gap-2">
+                            <ShieldAlert className="mt-1 h-4 w-4 shrink-0 text-[var(--primary)]" />
+                            <div>
+                              <p className="font-semibold">{t.chat("toolApprovalTitle")}</p>
+                              <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
+                                {message.content}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
+                            <p>
+                              <span className="font-semibold text-[var(--foreground)]">
+                                {String(message.metadata?.serverName ?? "")}.{String(message.metadata?.toolName ?? "")}
+                              </span>
+                              {" · "}
+                              {String(message.metadata?.operation ?? "")}
+                              {" · "}
+                              {String(message.metadata?.riskLevel ?? "")}
+                            </p>
+                            {typeof message.metadata?.description === "string" ? (
+                              <p className="mt-1">{message.metadata.description}</p>
+                            ) : null}
+                            {typeof message.metadata?.argsPreview === "string" && message.metadata.argsPreview !== "{}" ? (
+                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--muted)] px-2 py-2 font-mono text-[11px] text-[var(--foreground)]">
+                                {message.metadata.argsPreview}
+                              </pre>
+                            ) : null}
+                          </div>
+                          {message.metadata?.approvalStatus === "pending" ? (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+                                onClick={() =>
+                                  void resolveToolExecutionApproval({
+                                    approvalId: String(message.metadata?.approvalId ?? ""),
+                                    decision: "approved",
+                                  })
+                                }
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                {t.chat("toolApprovalAllow")}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+                                onClick={() =>
+                                  void resolveToolExecutionApproval({
+                                    approvalId: String(message.metadata?.approvalId ?? ""),
+                                    decision: "denied",
+                                  })
+                                }
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                {t.chat("toolApprovalDeny")}
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="inline-flex items-center rounded-full bg-[var(--muted)] px-2.5 py-1 text-xs font-medium text-[var(--muted-foreground)]">
+                              {message.metadata?.approvalStatus === "approved"
+                                ? t.chat("toolApprovalStatusApproved")
+                                : message.metadata?.approvalStatus === "denied"
+                                  ? t.chat("toolApprovalStatusDenied")
+                                  : t.chat("toolApprovalStatusCancelled")}
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+                      {isMcpOAuthCard ? (
+                        <div className="space-y-3">
+                          <div className="flex items-start gap-2">
+                            <ShieldAlert className="mt-1 h-4 w-4 shrink-0 text-[var(--primary)]" />
+                            <div>
+                              <p className="font-semibold">{t.chat("mcpOAuthTitle")}</p>
+                              <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
+                                {message.content}
+                              </p>
+                            </div>
+                          </div>
+                          {typeof message.metadata?.serverId === "string" ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+                              onClick={() => void authorizeMcp(String(message.metadata?.serverId))}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {t.chat("mcpOAuthAuthorize")}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {!isCommandCard && !isToolApprovalCard && !isMcpOAuthCard ? (
+                        <ChatMarkdownContent content={message.content} inverted={isUser} />
+                      ) : null}
                       {isStreaming ? (
                         <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
                           <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />

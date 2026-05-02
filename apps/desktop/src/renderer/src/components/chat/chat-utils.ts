@@ -32,6 +32,9 @@ export function getConversationVisibleMessages(
   showInternalMessages: boolean,
 ) {
   return messages.filter((message) => {
+    if (message.metadata?.cardType === "tool_approval" || message.metadata?.cardType === "mcp_oauth") {
+      return true;
+    }
     if (message.visibility === "system") return false;
     if (message.visibility === "public") return true;
     return showInternalMessages;

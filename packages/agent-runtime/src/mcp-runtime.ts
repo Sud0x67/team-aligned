@@ -94,10 +94,10 @@ function createOAuthRequiredError(
     byLanguage(language, {
       zh: authorizationUrl
         ? `${catalog.name} 需要 OAuth 授权。请打开授权链接完成登录：${authorizationUrl}`
-        : `${catalog.name} 需要 OAuth 授权。请先在扩展页对该 MCP 执行授权。`,
+        : `${catalog.name} 需要 OAuth 授权或重新登录。请点击聊天中的授权按钮，或在扩展页对该 MCP 执行授权。`,
       en: authorizationUrl
         ? `${catalog.name} requires OAuth authorization. Open the authorization link to sign in: ${authorizationUrl}`
-        : `${catalog.name} requires OAuth authorization. Authorize this MCP from Extensions first.`,
+        : `${catalog.name} requires OAuth authorization or sign-in again. Use the chat authorization button or authorize it from Extensions.`,
     }),
     catalog.id,
     catalog.name,
@@ -214,8 +214,8 @@ export function normalizeMcpError(
     catalog.authType === "oauth" && /unauthorized|401|authorization required|oauth|授权/i.test(message)
   ) {
     return byLanguage(language, {
-      zh: message.includes("http") ? message : `${catalog.name} 需要 OAuth 授权。请先完成授权后再重试。`,
-      en: message.includes("http") ? message : `${catalog.name} requires OAuth authorization. Authorize it first, then retry.`,
+      zh: message.includes("http") ? message : `${catalog.name} 需要 OAuth 授权或授权已过期。请重新授权后再重试。`,
+      en: message.includes("http") ? message : `${catalog.name} requires OAuth authorization or the authorization expired. Re-authorize it, then retry.`,
     });
   }
 
@@ -533,6 +533,17 @@ async function withMcpClient<T>(
         enabled: false,
         status: "configured" as const,
         lastCheckedAt: Date.now(),
+        oauth: {
+          ...((oauth?.getConnection() ?? latestConnection).oauth ?? createDefaultOAuthState()),
+          status: "unauthenticated" as const,
+          tokens: null,
+          authorizationUrl: null,
+          lastError: byLanguage(input.responseLanguage ?? "zh", {
+            zh: "OAuth 授权已失效或需要重新登录。",
+            en: "OAuth authorization expired or needs sign-in again.",
+          }),
+          lastUpdatedAt: Date.now(),
+        },
       };
       const authorizationError = createOAuthRequiredError(
         input.catalog,

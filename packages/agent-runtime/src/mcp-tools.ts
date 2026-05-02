@@ -3,7 +3,7 @@ import type { McpCatalogRecord, McpConnectionRecord } from "@teamaligned/shared"
 import { nanoid } from "nanoid";
 import { callMcpTool } from "./mcp-runtime.ts";
 import type { RuntimeLanguage } from "./runtime-language.ts";
-import type { ToolExecutionPolicy } from "./agent-tools.ts";
+import { ToolExecutionApprovalRequiredError, type ToolExecutionPolicy } from "./agent-tools.ts";
 
 function sanitizeToolName(serverSlug: string, toolName: string) {
   const normalized = `${serverSlug}_${toolName}`.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -100,7 +100,15 @@ export function buildMcpLangChainTools(input: {
               })
             : { allow: true as const };
           if (!decision.allow) {
-            throw new Error(decision.reason);
+            throw new ToolExecutionApprovalRequiredError(decision.reason, {
+              serverId: server.id,
+              serverName: server.name,
+              toolName: toolItem.name,
+              operation: "mcp",
+              riskLevel: server.riskLevel,
+              args,
+              description: `Call MCP tool ${server.name}.${toolItem.name}.`,
+            });
           }
           const invocationId = nanoid();
           const startedAt = Date.now();

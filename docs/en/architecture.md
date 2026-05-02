@@ -204,13 +204,14 @@ MCP currently supports:
 - Agent-level MCP allowlists.
 - Runtime injection for discovered tools.
 - MCP auth/permission failures surface as chat process messages so users can authorize from Extensions and retry.
+- When OAuth tokens expire or re-authorization is required, runtime clears stale token state and prompts the user to authorize again.
+- High-risk tool calls now use in-chat approval cards with approve/deny actions; low-risk reads continue without interruption.
 
 Not yet complete:
 
 - MCP tool-level allowlists.
-- Full tool-confirmation UI queue.
-- OAuth re-authorization polish after token expiry.
-- Finer high-risk tool classification and user-facing prompts.
+- Finer OAuth re-authorization states, such as token expiry, scope changes, and user revocation.
+- Finer high-risk tool classification and prompts by command content, file path, and MCP tool capability.
 
 ## Web Tools
 
@@ -328,7 +329,7 @@ The architecture still needs improvement in:
 - Real-provider team-chat replay coverage.
 - Long-task checkpoint / failure recovery.
 - MCP tool-level allowlists.
-- OAuth MCP now has a foundational authorization loop, but still needs full approval and re-authorization UX.
+- OAuth MCP now has a foundational authorization loop and in-chat approval queue, but re-authorization states still need more polish.
 - Project-package export for transcripts, artifacts, and attachments.
 - Key chat UI component tests and Electron E2E tests.
 
