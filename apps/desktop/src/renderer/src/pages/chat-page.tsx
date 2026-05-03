@@ -94,7 +94,6 @@ export function ChatPage() {
   }>({ status: "idle", message: null });
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [composerPrefill, setComposerPrefill] = useState<ComposerPrefill | null>(null);
-  const [retryingLastMessage, setRetryingLastMessage] = useState(false);
   const [messageAndComposerPaneHeight, setMessageAndComposerPaneHeight] = useState(0);
 
   const messageAndComposerPaneRef = useRef<HTMLDivElement | null>(null);
@@ -180,7 +179,6 @@ export function ChatPage() {
     setSelectedMessagesExportState({ status: "idle", message: null });
     setSelectedMessageIds([]);
     setComposerPrefill(null);
-    setRetryingLastMessage(false);
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -433,20 +431,6 @@ export function ChatPage() {
   }, [activeConversation, agents, teams]);
 
   const activeWorkspacePath = activeTarget?.workspacePath ?? null;
-
-  const retryableUserMessage = useMemo(() => {
-    if (!activeConversation || activeConversation.kind !== "agent") return null;
-    return (
-      [...activeMessages]
-        .reverse()
-        .find(
-          (message) =>
-            message.senderKind === "user" &&
-            message.visibility === "public" &&
-            message.messageType === "user",
-        ) ?? null
-    );
-  }, [activeConversation, activeMessages]);
 
   const pendingActor = useMemo(() => {
     if (!activeConversation) return null;
@@ -727,29 +711,6 @@ export function ChatPage() {
     }
   };
 
-  const handleRetryLastMessage = async () => {
-    if (!activeConversation || isConversationBusy || !retryableUserMessage || retryingLastMessage) {
-      return;
-    }
-
-    setRetryingLastMessage(true);
-    try {
-      await sendInput({
-        conversationId: activeConversation.id,
-        input: getRetryInput(retryableUserMessage),
-        attachments: getMessageAttachments(retryableUserMessage),
-      });
-    } catch (error) {
-      window.alert(
-        error instanceof Error && error.message.trim().length > 0
-          ? `${t.chat("retryLastMessageFailed")} ${error.message}`
-          : t.chat("retryLastMessageFailed"),
-      );
-    } finally {
-      setRetryingLastMessage(false);
-    }
-  };
-
   const handleExportConversation = async () => {
     if (!activeConversation || conversationExportState.status === "exporting") return;
     setConversationExportState({ status: "exporting", message: null });
@@ -997,9 +958,6 @@ export function ChatPage() {
           onOpenWorkspace={(workspacePath) => void openWorkspace(workspacePath)}
           onExportConversation={handleExportConversation}
           exportState={conversationExportState}
-          canRetryLastMessage={Boolean(retryableUserMessage) && !isConversationBusy}
-          retryingLastMessage={retryingLastMessage}
-          onRetryLastMessage={handleRetryLastMessage}
         />
       ) : null}
     </div>

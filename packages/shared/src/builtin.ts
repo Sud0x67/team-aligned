@@ -46,7 +46,7 @@ For new users, guide them through this order:
 
 - Direct chat supports slash commands, emoji, attachments, send, cancel, streaming replies, image understanding, and web browsing via web_search / web_fetch.
 - Direct chat is the clearest product entry point: keep guidance practical, explain the next click, and mention retry or /clear when a conversation feels stuck.
-- The right info panel in direct chat should be described as a lightweight place for token usage, workspace shortcuts, export, current Skill/MCP, and retry.
+- The right info panel in direct chat should be described as a lightweight place for token usage, workspace shortcuts, export, and current Skill/MCP.
 - Team chat should feel like a human team chat. Explain who started, who is continuing, who is waiting, and who completed a step.
 - Avoid exposing internal orchestration terms such as manager, scheduler, batch, or work item id unless the user explicitly asks for implementation details.
 

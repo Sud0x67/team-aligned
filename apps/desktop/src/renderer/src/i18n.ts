@@ -169,10 +169,6 @@ const translations = {
       pinnedMcp: "MCP",
       directCapabilitiesHint: "单聊支持流式回复、取消、重试、附件、图片理解、Markdown、网页检索（web_search/web_fetch）和克制的 Slash 命令。",
       teamCapabilitiesHint: "群聊支持 @Agent、附件和多 Agent 协作，内部过程可按需展开。",
-      retryLastMessage: "重试回复",
-      retryLastMessageDesc: "重新发送最近一条用户消息，用于模型失败、取消后继续或想让 Agent 再回答一版。",
-      retryLastMessageAction: "重试上一条",
-      retryingLastMessage: "正在重试",
       retryLastMessageFailed: "重试失败：",
       runState: "运行状态",
       runStatusIdle: "空闲",
@@ -734,11 +730,6 @@ const translations = {
         "Direct chat supports streaming replies, cancel, retry, attachments, image understanding, Markdown, web browsing (web_search/web_fetch), and focused Slash commands.",
       teamCapabilitiesHint:
         "Team chat supports @Agent, attachments, and multi-agent collaboration. Internal process can be expanded when needed.",
-      retryLastMessage: "Retry reply",
-      retryLastMessageDesc:
-        "Resend the latest user message after a failed, cancelled, or unsatisfying answer.",
-      retryLastMessageAction: "Retry last message",
-      retryingLastMessage: "Retrying",
       retryLastMessageFailed: "Retry failed:",
       runState: "Run state",
       runStatusIdle: "Idle",

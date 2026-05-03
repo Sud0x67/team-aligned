@@ -6,7 +6,6 @@ import {
   FolderOpen,
   Info,
   LoaderCircle,
-  RotateCcw,
 } from "lucide-react";
 import type { ConversationKind } from "@shared";
 import { createTranslator } from "../../i18n";
@@ -31,9 +30,6 @@ export function ChatConversationSidebar({
   onOpenWorkspace,
   onExportConversation,
   exportState,
-  canRetryLastMessage,
-  retryingLastMessage,
-  onRetryLastMessage,
 }: {
   expanded: boolean;
   expandedWidth?: number;
@@ -49,9 +45,6 @@ export function ChatConversationSidebar({
     status: "idle" | "exporting" | "success" | "error";
     message: string | null;
   };
-  canRetryLastMessage: boolean;
-  retryingLastMessage: boolean;
-  onRetryLastMessage: () => Promise<void>;
 }) {
   const language = useAppStore((state) => state.settings.language);
   const t = createTranslator(language);
@@ -202,32 +195,6 @@ export function ChatConversationSidebar({
           </p>
         </section>
 
-        {conversationKind === "agent" ? (
-          <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <RotateCcw className="h-4 w-4 text-[var(--primary)]" />
-              <p className="text-sm font-semibold text-[var(--foreground)]">
-                {t.chat("retryLastMessage")}
-              </p>
-            </div>
-            <p className="mb-3 text-xs leading-5 text-[var(--muted-foreground)]">
-              {t.chat("retryLastMessageDesc")}
-            </p>
-            <button
-              type="button"
-              onClick={() => void onRetryLastMessage()}
-              disabled={!canRetryLastMessage || retryingLastMessage}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--foreground)] px-3 py-2.5 text-xs font-semibold text-[var(--background)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--muted)] disabled:text-[var(--muted-foreground)]"
-            >
-              {retryingLastMessage ? (
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3.5 w-3.5" />
-              )}
-              {retryingLastMessage ? t.chat("retryingLastMessage") : t.chat("retryLastMessageAction")}
-            </button>
-          </section>
-        ) : null}
       </div>
     </aside>
   );
