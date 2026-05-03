@@ -6,6 +6,10 @@ All notable changes to TeamAligned are documented in this file.
 
 ## Unreleased
 
+- No unreleased changes yet.
+
+## 0.5.0-beta - 2026-05-03
+
 ### Added
 
 - Added foundational OAuth support for HTTP MCP servers, including browser authorization, local callback handling, token persistence, and post-auth tool discovery.
