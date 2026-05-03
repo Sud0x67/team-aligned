@@ -25,6 +25,7 @@ import {
   type McpCatalogRecord,
   type PromptAliasRecord,
   type SavePromptAliasInput,
+  type SkillCatalogRecord,
 } from "@shared";
 import { useAppStore } from "../store/use-app-store";
 import { createTranslator } from "../i18n";
@@ -95,6 +96,66 @@ function resolveLocalizedDescription(
     if (language === "zh" && zh) return zh;
   }
   return input.description;
+}
+
+function trimMiddle(value: string, max = 46) {
+  if (value.length <= max) return value;
+  const head = value.slice(0, Math.floor(max / 2) - 1);
+  const tail = value.slice(value.length - Math.floor(max / 2));
+  return `${head}...${tail}`;
+}
+
+function getSkillSources(skill: SkillCatalogRecord) {
+  const metadataSources = skill.metadata?.sources;
+  if (!Array.isArray(metadataSources)) return [];
+  return metadataSources.filter(
+    (source): source is string => typeof source === "string" && source.trim().length > 0,
+  );
+}
+
+function getReadableSource(source: string) {
+  const trimmed = source.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return trimMiddle(trimmed, 42);
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const sourcePath = url.pathname.replace(/^\/+/, "").replace(/\/+$/g, "");
+    if (url.hostname === "github.com" && sourcePath) {
+      const [owner, repo] = sourcePath.split("/");
+      return owner && repo
+        ? `GitHub · ${owner}/${repo.replace(/\.git$/i, "")}`
+        : `GitHub · ${sourcePath}`;
+    }
+    return trimMiddle(`${url.hostname}${sourcePath ? `/${sourcePath}` : ""}`, 42);
+  } catch {
+    return trimMiddle(trimmed, 42);
+  }
+}
+
+function getSkillSourceLabel(skill: SkillCatalogRecord, language: "zh" | "en") {
+  const sourcePrefix = language === "zh" ? "来源" : "Source";
+  const separator = language === "zh" ? "、" : ", ";
+  const sources = getSkillSources(skill);
+
+  if (sources.length > 0) {
+    const readableSources = sources.map(getReadableSource);
+    return {
+      display: `${sourcePrefix}: ${readableSources[0]}`,
+      title: `${sourcePrefix}: ${readableSources.join(separator)}`,
+    };
+  }
+
+  const repo = skill.sourceRepo.trim();
+  if (repo.startsWith("builtin://")) {
+    const owner = repo.replace(/^builtin:\/\//, "") || "teamaligned";
+    const label = `${sourcePrefix}: ${language === "zh" ? "内置" : "Built-in"} · ${owner}`;
+    return { display: label, title: label };
+  }
+
+  const label = `${sourcePrefix}: ${getReadableSource(repo)}`;
+  return { display: label, title: label };
 }
 
 function getOAuthRedirectUrl(serverId: string) {
@@ -189,6 +250,10 @@ export function ExtensionsPage() {
           String(skill.metadata?.descriptionEn ?? ""),
           String(skill.metadata?.category ?? ""),
           skill.version,
+          ...getSkillSources(skill),
+          skill.sourceRepo,
+          skill.sourceBranch,
+          skill.sourcePath,
         ]),
       ),
     [searchQueries.skills, skillCatalog],
@@ -500,6 +565,7 @@ export function ExtensionsPage() {
               const subtitle =
                 settings.language === "zh" && item.name !== item.displayName ? item.name : null;
               const localizedDescription = resolveLocalizedDescription(item, settings.language);
+              const sourceLabel = getSkillSourceLabel(item, settings.language);
               const installed = item.installed;
               const isBuiltin = isSystemBuiltinSkill(item);
               const Icon = getExtensionIcon(item.name, installed);
@@ -507,7 +573,7 @@ export function ExtensionsPage() {
               return (
                 <div
                   key={item.id}
-                  className="relative flex items-start gap-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-all hover:shadow-sm"
+                  className="relative flex items-start gap-4 overflow-visible rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 transition-all hover:shadow-sm"
                 >
                   {activeAction ? (
                     <div className="absolute inset-x-0 bottom-0 h-1 bg-[color-mix(in_srgb,var(--primary)_12%,transparent)]">
@@ -524,12 +590,14 @@ export function ExtensionsPage() {
                     <Icon className="h-5 w-5" />
                   </div>
 
-                  <div className="flex-1 space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-[15px] font-medium text-[var(--foreground)]">{title}</h3>
+                      <div className="min-w-0">
+                        <h3 className="truncate text-[15px] font-medium text-[var(--foreground)]">{title}</h3>
                         {subtitle ? (
-                          <p className="mt-0.5 text-[12px] text-[var(--muted-foreground)]">{subtitle}</p>
+                          <p className="mt-0.5 truncate text-[12px] text-[var(--muted-foreground)]">
+                            {subtitle}
+                          </p>
                         ) : null}
                       </div>
                       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -582,6 +650,23 @@ export function ExtensionsPage() {
                     <p className="text-[12px] text-[var(--muted-foreground)]">
                       {item.metadata?.category ? `${String(item.metadata.category)} · ` : ""}v{item.version}
                     </p>
+                    <div className="group/source relative max-w-full">
+                      <p
+                        tabIndex={0}
+                        className="truncate text-[12px] text-[var(--muted-foreground)] outline-none"
+                        aria-label={sourceLabel.title}
+                      >
+                        {sourceLabel.display}
+                      </p>
+                      {sourceLabel.title !== sourceLabel.display ? (
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden max-w-[min(34rem,calc(100vw-6rem))] whitespace-normal rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-[12px] leading-5 text-[var(--foreground)] shadow-lg group-hover/source:block group-focus-within/source:block"
+                        >
+                          {sourceLabel.title}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               );

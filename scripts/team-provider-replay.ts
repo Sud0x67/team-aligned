@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { deflateSync } from "node:zlib";
 import { TeamalignedRuntime } from "@teamaligned/agent-runtime";
 import type {
+  AgentRecord,
   AppSnapshot,
   AttachmentAssetRecord,
   MessageRecord,
@@ -15,7 +16,7 @@ import type {
 } from "@teamaligned/shared";
 
 const terminalRunStatuses = new Set(["completed", "failed", "cancelled"]);
-const defaultTimeoutMs = Number(process.env.TA_REPLAY_TIMEOUT_MS ?? 300_000);
+const defaultTimeoutMs = Number(process.env.TA_REPLAY_TIMEOUT_MS ?? 180_000);
 const tinyRedPngDataUrl = createSolidRedPngDataUrl();
 
 type ScenarioResult = {
@@ -33,6 +34,10 @@ type ScenarioData = {
   newRuns: RunRecord[];
   newToolInvocations: ToolInvocationRecord[];
   team: TeamRecord;
+};
+
+type DirectScenarioData = Omit<ScenarioData, "team"> & {
+  agent: AgentRecord;
 };
 
 type ScenarioInput = Parameters<typeof runScenario>[0];
@@ -159,6 +164,25 @@ function getTeamConversation(snapshot: AppSnapshot) {
     throw new Error(`No conversation found for group ${team.name}.`);
   }
   return { team, conversation };
+}
+
+function getDirectReplayAgent(snapshot: AppSnapshot) {
+  const agent = snapshot.agents.find((item) => item.id === "agent-coder") ?? snapshot.agents[0];
+  if (!agent) {
+    throw new Error("No default Agent is available for replay.");
+  }
+  return agent;
+}
+
+function getDirectAgentConversation(snapshot: AppSnapshot) {
+  const agent = getDirectReplayAgent(snapshot);
+  const conversation = snapshot.conversations.find(
+    (item) => item.kind === "agent" && item.targetId === agent.id,
+  );
+  if (!conversation) {
+    throw new Error(`No conversation found for Agent ${agent.name}.`);
+  }
+  return { agent, conversation };
 }
 
 function getConversationMessages(snapshot: AppSnapshot, conversationId: string) {
@@ -312,7 +336,80 @@ async function runScenario(input: {
   } satisfies ScenarioResult;
 }
 
+async function runDirectScenario(input: {
+  runtime: TeamalignedRuntime;
+  conversationId: string;
+  agentId: string;
+  name: string;
+  userInput: string;
+  attachments?: AttachmentAssetRecord[];
+  cancelAfterMs?: number;
+  timeoutMs?: number;
+  validate: (data: DirectScenarioData) => string[];
+}) {
+  const startedAt = Date.now();
+  const before = input.runtime.getConversationSnapshot(input.conversationId);
+  const previousRunIds = new Set(before.runs.map((run) => run.id));
+
+  const sendPromise = input.runtime.sendInput({
+    conversationId: input.conversationId,
+    input: input.userInput,
+    attachments: input.attachments,
+  });
+  if (input.cancelAfterMs !== undefined) {
+    setTimeout(() => {
+      void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
+    }, input.cancelAfterMs);
+  }
+  const timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    sendPromise,
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
+        reject(new Error(`Scenario timed out after ${timeoutMs}ms: ${input.name}`));
+      }, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+
+  let run: RunRecord | null = null;
+  if (!input.userInput.trim().startsWith("/clear")) {
+    run = await waitForLatestRun(input.runtime, input.conversationId, previousRunIds);
+  } else {
+    await sleep(500);
+  }
+
+  const after = input.runtime.getConversationSnapshot(input.conversationId);
+  const agent = after.agents.find((item) => item.id === input.agentId);
+  if (!agent) throw new Error(`Agent disappeared during replay: ${input.agentId}`);
+
+  const details = input.validate({
+    before,
+    after,
+    newMessages: getNewMessages(before, after, input.conversationId),
+    newRuns: getNewRuns(before, after, input.conversationId),
+    newToolInvocations: getNewToolInvocations(before, after, input.conversationId),
+    agent,
+  });
+
+  return {
+    name: input.name,
+    ok: details.length === 0,
+    details,
+    runStatus: run?.status,
+    durationMs: Date.now() - startedAt,
+  } satisfies ScenarioResult;
+}
+
 function assertRunCompleted(data: ScenarioData) {
+  const run = data.newRuns[0];
+  return run?.status === "completed" ? [] : [`expected completed run, got ${run?.status ?? "none"}`];
+}
+
+function assertDirectRunCompleted(data: DirectScenarioData) {
   const run = data.newRuns[0];
   return run?.status === "completed" ? [] : [`expected completed run, got ${run?.status ?? "none"}`];
 }
@@ -341,7 +438,7 @@ async function main() {
 
   const tempRoot = mkdtempSync(join(tmpdir(), "teamaligned-provider-replay-"));
 
-  console.log("TeamAligned group chat real Provider replay");
+  console.log("TeamAligned real Provider replay");
   console.log(`Temp root: ${tempRoot}`);
   console.log(`Provider: ${JSON.stringify(redactProvider(provider))}`);
 
@@ -369,6 +466,41 @@ async function main() {
     const snapshot = runtime.getSnapshot();
     const { team, conversation } = getTeamConversation(snapshot);
     return { runtime, team, conversation, scenarioRoot };
+  };
+  const createDirectScenarioRuntime = async (scenarioName: string) => {
+    const scenarioRoot = join(
+      tempRoot,
+      scenarioName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, ""),
+    );
+    mkdirSync(scenarioRoot, { recursive: true });
+    const runtime = new TeamalignedRuntime(scenarioRoot);
+    await runtime.init();
+    await runtime.updateSettings({ language: "zh", onboardingCompleted: true });
+    await runtime.updateProvider({ ...provider, isActive: true });
+
+    const snapshot = runtime.getSnapshot();
+    const agent = getDirectReplayAgent(snapshot);
+    const existingConversation = snapshot.conversations.find(
+      (item) => item.kind === "agent" && item.targetId === agent.id,
+    );
+    const ensuredConversation =
+      existingConversation ??
+      (
+        await runtime.ensureConversation({
+          kind: "agent",
+          targetId: agent.id,
+        })
+      ).snapshot.conversations.find((item) => item.kind === "agent" && item.targetId === agent.id);
+    if (!ensuredConversation) {
+      throw new Error(`No conversation found for Agent ${agent.name}.`);
+    }
+    const { conversation } = getDirectAgentConversation(
+      existingConversation ? snapshot : runtime.getConversationSnapshot(ensuredConversation.id),
+    );
+    return { runtime, agent, conversation, scenarioRoot };
   };
 
   const recordScenario = async (input: ReplayScenarioInput) => {
@@ -415,6 +547,187 @@ async function main() {
     }
   };
 
+  const recordDirectScenario = async (
+    input: Omit<Parameters<typeof runDirectScenario>[0], "runtime" | "conversationId" | "agentId" | "attachments"> & {
+      withImageAttachment?: boolean;
+    },
+  ) => {
+    if (onlyScenarios.size > 0 && !onlyScenarios.has(input.name.toLowerCase())) {
+      return null;
+    }
+    console.log("");
+    console.log(`START ${input.name}`);
+    const startedAt = Date.now();
+    try {
+      const { withImageAttachment, ...scenarioInput } = input;
+      const { runtime, agent, conversation, scenarioRoot } = await createDirectScenarioRuntime(input.name);
+      const attachments = withImageAttachment
+        ? [
+            await runtime.saveAttachmentAsset({
+              conversationId: conversation.id,
+              dataUrl: tinyRedPngDataUrl,
+              fileName: "red-dot.png",
+            }),
+          ]
+        : undefined;
+      console.log(`  Conversation: ${conversation.title} (${conversation.id})`);
+      console.log(`  Scenario root: ${scenarioRoot}`);
+      const result = await runDirectScenario({
+        ...scenarioInput,
+        runtime,
+        conversationId: conversation.id,
+        agentId: agent.id,
+        attachments,
+      });
+      results.push(result);
+      printResult(result);
+      return result;
+    } catch (error) {
+      const result = {
+        name: input.name,
+        ok: false,
+        details: [error instanceof Error ? error.message : String(error)],
+        durationMs: Date.now() - startedAt,
+      } satisfies ScenarioResult;
+      results.push(result);
+      printResult(result);
+      return result;
+    }
+  };
+
+  const recordDirectRetryScenario = async () => {
+    const name = "direct retry repeated message";
+    if (onlyScenarios.size > 0 && !onlyScenarios.has(name.toLowerCase())) {
+      return null;
+    }
+    console.log("");
+    console.log(`START ${name}`);
+    const startedAt = Date.now();
+    try {
+      const { runtime, agent, conversation, scenarioRoot } = await createDirectScenarioRuntime(name);
+      console.log(`  Conversation: ${conversation.title} (${conversation.id})`);
+      console.log(`  Scenario root: ${scenarioRoot}`);
+      const inputText = "请只用一句话回复：RETRY-OK。";
+      const first = await runDirectScenario({
+        runtime,
+        conversationId: conversation.id,
+        agentId: agent.id,
+        name: `${name} / first`,
+        userInput: inputText,
+        validate: (data) => [
+          ...assertDirectRunCompleted(data),
+          ...(hasAgentMessage(data.newMessages, data.agent.name) ? [] : ["first reply missing"]),
+        ],
+      });
+      const second = await runDirectScenario({
+        runtime,
+        conversationId: conversation.id,
+        agentId: agent.id,
+        name: `${name} / retry`,
+        userInput: inputText,
+        validate: (data) => [
+          ...assertDirectRunCompleted(data),
+          ...(hasAgentMessage(data.newMessages, data.agent.name) ? [] : ["retry reply missing"]),
+        ],
+      });
+      const after = runtime.getConversationSnapshot(conversation.id);
+      const agentReplies = getConversationMessages(after, conversation.id).filter(
+        (message) => message.senderKind === "agent" && message.senderName === agent.name,
+      );
+      const details = [
+        ...first.details.map((detail) => `first: ${detail}`),
+        ...second.details.map((detail) => `retry: ${detail}`),
+        ...(agentReplies.length >= 2 ? [] : [`expected at least 2 agent replies, got ${agentReplies.length}`]),
+      ];
+      const result = {
+        name,
+        ok: details.length === 0,
+        details,
+        runStatus: second.runStatus,
+        durationMs: Date.now() - startedAt,
+      } satisfies ScenarioResult;
+      results.push(result);
+      printResult(result);
+      return result;
+    } catch (error) {
+      const result = {
+        name,
+        ok: false,
+        details: [error instanceof Error ? error.message : String(error)],
+        durationMs: Date.now() - startedAt,
+      } satisfies ScenarioResult;
+      results.push(result);
+      printResult(result);
+      return result;
+    }
+  };
+
+  await recordDirectScenario({
+    name: "direct streaming markdown",
+    userInput:
+      "请输出一段较长 Markdown：包含二级标题、3 条列表、一个 TypeScript 多行代码块，最后写一句简短总结。",
+    validate: (data) => {
+      const run = data.newRuns[0];
+      const agentMessage = data.newMessages.find(
+        (message) => message.senderKind === "agent" && message.senderName === data.agent.name,
+      );
+      return [
+        ...assertDirectRunCompleted(data),
+        ...(!provider.supportsStreaming || typeof run?.metadata?.streamMessageId === "string"
+          ? []
+          : ["streaming message id missing"]),
+        ...(agentMessage?.content.includes("```") ? [] : ["markdown code fence missing"]),
+        ...((agentMessage?.content.length ?? 0) >= 160 ? [] : ["markdown response was too short"]),
+      ];
+    },
+  });
+
+  await recordDirectScenario({
+    name: "direct image attachment",
+    userInput: "请看这张图片，只回答主色是什么。",
+    withImageAttachment: true,
+    validate: (data) => [
+      ...assertDirectRunCompleted(data),
+      ...(data.newMessages.some((message) => /红|red/i.test(message.content)) ? [] : ["reply did not mention red"]),
+    ],
+  });
+
+  await recordDirectRetryScenario();
+
+  await recordDirectScenario({
+    name: "direct cancel",
+    userInput: "请写一篇很长的分析，尽量分多段展开。",
+    cancelAfterMs: 250,
+    validate: (data) => {
+      const run = data.newRuns[0];
+      return [
+        ...(run?.status === "cancelled" ? [] : [`expected cancelled run, got ${run?.status ?? "none"}`]),
+        ...(data.newMessages.some((message) => /取消|cancel/i.test(message.content))
+          ? []
+          : ["cancel feedback message missing"]),
+      ];
+    },
+  });
+
+  await recordDirectScenario({
+    name: "direct clear resets context",
+    userInput: "/clear",
+    validate: (data) => {
+      const conversationId = data.before.conversations.find(
+        (item) => item.kind === "agent" && item.targetId === data.agent.id,
+      )?.id;
+      const messagesAfterClear = conversationId
+        ? getConversationMessages(data.after, conversationId)
+        : [];
+      return [
+        ...(messagesAfterClear.length <= 1
+          ? []
+          : [`expected only clear feedback after /clear, got ${messagesAfterClear.length} messages`]),
+        ...(data.after.runs.length === 0 ? [] : [`expected 0 runs after /clear, got ${data.after.runs.length}`]),
+      ];
+    },
+  });
+
   await recordScenario({
       name: "@ specified Agent",
       userInput: "@Coder 用一句话确认你收到了，只需要 Coder 回复。",
@@ -460,7 +773,10 @@ async function main() {
         ...assertRunCompleted(data),
         ...(!hasTeamUpdate(data.newMessages, "execution_batch") ? ["parallel batch process message missing"] : []),
         ...(data.newToolInvocations.some(
-          (item) => item.toolName === "write_text_file" || item.toolName === "workspace_write_text_file",
+          (item) =>
+            item.toolName === "write_file" ||
+            item.toolName === "write_text_file" ||
+            item.toolName === "workspace_write_text_file",
         )
           ? []
           : ["write_text_file was not invoked"]),
@@ -475,12 +791,18 @@ async function main() {
         ...assertRunCompleted(data),
         ...(!hasTeamUpdate(data.newMessages, "execution_waiting") ? ["dependency waiting process message missing"] : []),
         ...(data.newToolInvocations.some(
-          (item) => item.toolName === "read_text_file" || item.toolName === "workspace_read_text_file",
+          (item) =>
+            item.toolName === "read_file" ||
+            item.toolName === "read_text_file" ||
+            item.toolName === "workspace_read_text_file",
         )
           ? []
           : ["read_text_file was not invoked"]),
         ...(data.newToolInvocations.some(
-          (item) => item.toolName === "write_text_file" || item.toolName === "workspace_write_text_file",
+          (item) =>
+            item.toolName === "write_file" ||
+            item.toolName === "write_text_file" ||
+            item.toolName === "workspace_write_text_file",
         )
           ? []
           : ["write_text_file was not invoked"]),
@@ -567,7 +889,7 @@ async function main() {
         createdAt: new Date().toISOString(),
         provider: redactProvider(provider),
         tempRoot,
-        isolation: "one runtime and one group conversation per scenario",
+        isolation: "one runtime and one conversation per scenario; retry scenario reuses one direct conversation intentionally",
         results,
       },
       null,

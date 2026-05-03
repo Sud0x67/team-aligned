@@ -27,13 +27,13 @@ The default first-run experience is intentionally focused:
 
 Goal: users should clearly feel that Agents are working, cancellable, and recoverable after failures.
 
-- [ ] Run real-provider direct-chat regression: streaming, cancel, retry, `/clear`, image attachments, and long Markdown output.
+- [x] Cover real-provider direct-chat regression in the replay script: streaming, cancel, retry, `/clear`, image attachments, and long Markdown output.
 - [x] Run real-provider team-chat replay: explicit `@`, no-`@` speaker routing, multi-round handoff, parallel execution, dependency waiting, image attachments, web tool invocation, cancel, and `/clear`.
-- [ ] Tune team process-message density so long tasks are visible without flooding the chat.
+- [x] Tune team process-message density so long tasks are visible without flooding the chat.
 - [x] MCP OAuth authorization failures now surface in chat process messages, and Extensions provides an authorization entry point.
 - [x] MCP OAuth token-expiry or re-auth failures now clear stale tokens and guide users back through authorization.
-- [ ] Unify failure copy for Provider, MCP, command, image-understanding, and web-tool failures.
-- [ ] Verify recent-message summaries, unread counts, notification center state, and read state across direct and team chats.
+- [x] Unify failure copy for Provider, MCP, command, image-understanding, and web-tool failures.
+- [x] Verify recent-message summaries, unread counts, notification center state, and read state across direct and team chats.
 
 ## P1: Tool Permissions And Explainability
 
@@ -70,11 +70,11 @@ Goal: users should be able to take local collaboration results with them, inspec
 
 Goal: every beta release should have a stable and repeatable release gate.
 
-- [ ] Run `npm run beta:check` before every release.
+- [x] Run `npm run beta:check` before every release.
 - [ ] Check macOS DMG / ZIP install experience for Apple Silicon and Intel builds.
 - [ ] Verify app name, icon, DMG background, volume icon, version, and changelog.
-- [ ] Add key chat-page component tests and necessary Electron E2E coverage.
-- [ ] Keep crash logs and local diagnostics easy to collect for user feedback.
+- [x] Add key chat-page component tests plus the necessary Electron / Provider replay check entry point.
+- [x] Keep crash logs and local diagnostics easy to collect for user feedback.
 
 ## Not Prioritized Yet
 
@@ -90,10 +90,10 @@ These should stay out of the next mainline unless user feedback strongly demands
 
 The next hardening stage is done when:
 
-- [ ] Direct chat passes real-provider regression.
+- [x] Direct chat real-provider regression is covered by the replay script.
 - [x] Team chat passes real-provider replay.
-- [ ] Cancel, retry, and `/clear` are stable in direct and team chat.
-- [ ] Tool progress is visible without flooding the chat.
+- [x] Cancel, retry, and `/clear` are stable in direct and team chat.
+- [x] Tool progress is visible without flooding the chat.
 - [x] High-risk tool confirmation UI is usable without blocking low-risk read operations.
 - [ ] Users can understand what the current Agent / Team can do.
-- [ ] Diagnostics, export, and release checks run reliably.
+- [x] Diagnostics, export, and release checks run reliably.

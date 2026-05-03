@@ -410,8 +410,8 @@ function buildLatestUserMessage(
       content.push({
         type: "text",
         text: byLanguage(responseLanguage, {
-          zh: `图片 ${attachment.name} 读取失败，路径：${attachment.path}`,
-          en: `Failed to read image ${attachment.name}. Path: ${attachment.path}`,
+          zh: `图片 ${attachment.name} 读取失败，路径：${attachment.path}。请告诉用户图片文件可能已被移动、删除或无权限读取，建议重新上传后再试。`,
+          en: `Failed to read image ${attachment.name}. Path: ${attachment.path}. Tell the user the image may have been moved, deleted, or become unreadable, and suggest uploading it again.`,
         }),
       });
     }

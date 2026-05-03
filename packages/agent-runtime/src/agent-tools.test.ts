@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRuntimeLangChainTools, ToolExecutionApprovalRequiredError } from "./agent-tools.ts";
+import {
+  buildRuntimeLangChainTools,
+  normalizeRuntimeToolErrorMessage,
+  ToolExecutionApprovalRequiredError,
+} from "./agent-tools.ts";
 import { shouldRequireToolApproval } from "./runtime.ts";
 
 function createTempWorkspace() {
@@ -138,4 +142,42 @@ test("tool approval policy still protects executable skill scripts", () => {
     }),
     true,
   );
+});
+
+test("runtime tool error normalization explains path failures with recovery guidance", () => {
+  const message = normalizeRuntimeToolErrorMessage({
+    toolName: "workspace_read_text_file",
+    serverName: "Workspace",
+    error: "文件不存在：docs/missing.md",
+    responseLanguage: "zh",
+  });
+
+  assert.match(message, /找不到目标文件或目录/);
+  assert.match(message, /# 选择文件/);
+  assert.match(message, /原始错误/);
+});
+
+test("runtime tool error normalization explains network failures in English", () => {
+  const message = normalizeRuntimeToolErrorMessage({
+    toolName: "web_fetch",
+    serverName: "Web Fetch",
+    error: "fetch failed: ENOTFOUND example.invalid",
+    responseLanguage: "en",
+  });
+
+  assert.match(message, /network request/i);
+  assert.match(message, /retry/i);
+  assert.match(message, /Original error/);
+});
+
+test("runtime tool error normalization explains command failures with next steps", () => {
+  const message = normalizeRuntimeToolErrorMessage({
+    toolName: "workspace_run_command",
+    serverName: "Workspace Shell",
+    error: "zsh: command not found: pnmp",
+    responseLanguage: "zh",
+  });
+
+  assert.match(message, /命令不可用/);
+  assert.match(message, /package scripts|PATH/);
 });

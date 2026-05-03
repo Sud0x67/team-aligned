@@ -347,6 +347,8 @@ function getDiagnosticsSnapshot() {
       hasRun: Boolean(notification.relatedRunId),
     })),
     notificationDebugLogTail: readTextTail(notificationDebugLogPath),
+    startupLogTail: readTextTail(startupLogPath),
+    errorLogTail: readTextTail(errorLogPath),
   };
 }
 

@@ -31,6 +31,8 @@ export const MAX_TEAM_TURN_MESSAGES = 50;
 export const MAX_TEAM_SUBROUNDS = 5;
 export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
 const DEFAULT_TEAM_PLANNER_TIMEOUT_MS = 30_000;
+const DEFAULT_TEAM_WORKER_TIMEOUT_MS = 120_000;
+const DEFAULT_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS = 30_000;
 
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
 
@@ -144,15 +146,31 @@ function getTeamPlannerTimeoutMs() {
     : DEFAULT_TEAM_PLANNER_TIMEOUT_MS;
 }
 
-async function withTeamPlannerTimeout<T>(promise: Promise<T> | T) {
+function getPositiveEnvNumber(name: string, fallback: number) {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+}
+
+function getTeamWorkerTimeoutMs() {
+  return getPositiveEnvNumber("TA_TEAM_WORKER_TIMEOUT_MS", DEFAULT_TEAM_WORKER_TIMEOUT_MS);
+}
+
+function getTeamWorkerStreamIdleTimeoutMs() {
+  return getPositiveEnvNumber(
+    "TA_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS",
+    DEFAULT_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS,
+  );
+}
+
+async function withRuntimeTimeout<T>(promise: Promise<T> | T, timeoutMs: number, label: string) {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       Promise.resolve(promise),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          reject(new Error("Team turn planner timed out"));
-        }, getTeamPlannerTimeoutMs());
+          reject(new Error(label));
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -160,6 +178,10 @@ async function withTeamPlannerTimeout<T>(promise: Promise<T> | T) {
       clearTimeout(timeout);
     }
   }
+}
+
+async function withTeamPlannerTimeout<T>(promise: Promise<T> | T) {
+  return withRuntimeTimeout(promise, getTeamPlannerTimeoutMs(), "Team turn planner timed out");
 }
 
 function buildAttachmentImageDataUrl(attachment: AttachmentAssetRecord) {
@@ -655,6 +677,19 @@ function findNamedMembersInText(userInput: string, members: AgentRecord[]) {
     .map((item) => item.agent);
 }
 
+function getRequiredExecutionOwnerIds(input: {
+  userInput: string;
+  members: AgentRecord[];
+  explicitMentionIds: string[];
+}) {
+  return Array.from(
+    new Set([
+      ...input.explicitMentionIds,
+      ...findNamedMembersInText(input.userInput, input.members).map((agent) => agent.id),
+    ]),
+  );
+}
+
 function pathOverlaps(left: string, right: string) {
   const a = normalizeTargetPath(left);
   const b = normalizeTargetPath(right);
@@ -751,7 +786,14 @@ async function invokeWorkerText(input: {
         { configurable: { thread_id: input.threadId }, version: "v2" },
       );
 
-      for await (const event of stream) {
+      const iterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        const { value: event, done } = await withRuntimeTimeout(
+          iterator.next(),
+          getTeamWorkerStreamIdleTimeoutMs(),
+          "Team worker stream stalled",
+        );
+        if (done) break;
         if (!event || typeof event !== "object") continue;
         await emitDeepAgentToolInvocation(event);
         if (event.event === "on_chat_model_stream") {
@@ -786,7 +828,11 @@ async function invokeWorkerText(input: {
     }
   }
 
-  const result = await worker.invoke({ messages }, { configurable: { thread_id: input.threadId } });
+  const result = await withRuntimeTimeout(
+    worker.invoke({ messages }, { configurable: { thread_id: input.threadId } }),
+    getTeamWorkerTimeoutMs(),
+    "Team worker timed out",
+  );
   return (
     extractAgentText(result) ||
     normalizeMessageContent(result) ||
@@ -831,8 +877,9 @@ function buildFallbackExecutionPlan(input: {
     !prefersParallel &&
     /(先.*(再|然后)|完成后|结束后|基于.*结果|依赖|等待|after|then|once)/.test(normalizedInput);
   const namedOwners = findNamedMembersInText(input.userInput, input.members);
+  const baseOwners = namedOwners.length > 0 ? namedOwners : fallback.speakers;
   let owners = Array.from(
-    new Map([...namedOwners, ...fallback.speakers].map((owner) => [owner.id, owner])).values(),
+    new Map(baseOwners.map((owner) => [owner.id, owner])).values(),
   ).slice(0, MAX_PARALLEL_TEAM_EXECUTIONS);
   if (prefersSequential && owners.length < Math.min(2, input.members.length)) {
     const existing = new Set(owners.map((owner) => owner.id));
@@ -958,17 +1005,20 @@ function ensureExplicitExecutionWorkItems(input: {
   workItems: TeamExecutionWorkItem[];
   fallbackWorkItems: TeamExecutionWorkItem[];
   explicitMentionIds: string[];
+  requiredOwnerIds: string[];
   members: AgentRecord[];
   userInput: string;
   responseLanguage: RuntimeLanguage;
 }) {
-  if (input.explicitMentionIds.length === 0) {
-    return input.workItems;
-  }
+  const requiredOwnerIds = Array.from(new Set(input.requiredOwnerIds));
 
   const memberMap = new Map(input.members.map((agent) => [agent.id, agent]));
   const fallbackByOwnerId = new Map(input.fallbackWorkItems.map((item) => [item.owner.id, item]));
-  const workItems = input.workItems.map((item, index) => ({
+  const allowedOwnerIds = requiredOwnerIds.length > 0 ? new Set(requiredOwnerIds) : null;
+  const scopedWorkItems = allowedOwnerIds
+    ? input.workItems.filter((item) => allowedOwnerIds.has(item.owner.id))
+    : input.workItems;
+  const workItems = (scopedWorkItems.length > 0 ? scopedWorkItems : input.workItems).map((item, index) => ({
     ...item,
     id: `work-${index + 1}`,
   }));
@@ -977,7 +1027,7 @@ function ensureExplicitExecutionWorkItems(input: {
     ownerCounts.set(item.owner.id, (ownerCounts.get(item.owner.id) ?? 0) + 1);
   }
 
-  for (const agentId of input.explicitMentionIds) {
+  for (const agentId of requiredOwnerIds) {
     const owner = memberMap.get(agentId);
     if (!owner || (ownerCounts.get(owner.id) ?? 0) > 0) {
       continue;
@@ -1147,6 +1197,8 @@ export async function planTeamTurn(input: {
             "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
             "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
             "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
+            "- 如果用户明确点名某些 Agent 执行，workItems 只能包含这些被点名的 Agent，除非用户明确要求其他 Agent 参与执行",
+            "- 不要创建纯协调/总结 work item；协调信息放在 reason/decision，不要让 Planner 额外执行",
             `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
             "",
             "chat 规则：",
@@ -1199,6 +1251,8 @@ export async function planTeamTurn(input: {
             "- If a task depends on another agent's output, include dependsOnAgentIds",
             "- If two tasks might touch the same file, set canRunInParallel=false",
             "- Prefer workspace-relative paths for writeTargets/readTargets",
+            "- If the user names specific agents for execution, workItems must only contain those named agents unless the user explicitly asks others to participate",
+            "- Do not create coordination-only work items; put coordination in reason/decision instead of making Planner execute extra work",
             `- Each agent can own at most ${MAX_AGENT_WORK_ITEMS} work items`,
             "",
             "Chat rules:",
@@ -1267,10 +1321,16 @@ export async function planTeamTurn(input: {
 
     if (plannerIntent === "execute") {
       const candidateWorkItems = mappedWorkItems.length > 0 ? mappedWorkItems : fallback.workItems;
+      const requiredOwnerIds = getRequiredExecutionOwnerIds({
+        userInput: input.userInput,
+        members: cappedMembers,
+        explicitMentionIds: input.explicitMentionIds,
+      });
       const workItems = ensureExplicitExecutionWorkItems({
         workItems: candidateWorkItems,
         fallbackWorkItems: fallback.workItems,
         explicitMentionIds: input.explicitMentionIds,
+        requiredOwnerIds,
         members: cappedMembers,
         userInput: input.userInput,
         responseLanguage,
@@ -1284,20 +1344,17 @@ export async function planTeamTurn(input: {
       }
 
       const workOwners = Array.from(new Map(workItems.map((item) => [item.owner.id, item.owner])).values());
-      const executeSpeakers = clampSpeakersForMode({
-        mode,
-        speakers:
-          input.explicitMentionIds.length > 0
-            ? ensureExplicitSpeakers({
-                explicitMentionIds: input.explicitMentionIds,
-                speakers: workOwners.length > 0 ? workOwners : speakers,
-                members: cappedMembers,
-              })
-            : workOwners.length > 0
-              ? workOwners
-              : speakers,
-        members: cappedMembers,
-      });
+      const executeSpeakers = (
+        input.explicitMentionIds.length > 0
+          ? ensureExplicitSpeakers({
+              explicitMentionIds: input.explicitMentionIds,
+              speakers: workOwners.length > 0 ? workOwners : speakers,
+              members: cappedMembers,
+            })
+          : workOwners.length > 0
+            ? workOwners
+            : speakers
+      ).slice(0, TEAM_MEMBER_LIMIT);
 
       return {
         intent: "execute",
@@ -1472,6 +1529,8 @@ export async function executeNaturalTeamWorkItem(input: {
       "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
       "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
       "请只在当前 workspace 内工作。",
+      "如果本次任务是创建 writeTargets 中的新文件，且 readTargets 为空，不要先读取或列出目标文件/父目录；直接调用写入工具创建文件。",
+      "不要读取你正要创建的新文件，除非它明确出现在读取范围里。",
       "如果任务无法执行，请明确说明阻塞原因。",
       "",
       "本次 work item：",
@@ -1479,6 +1538,9 @@ export async function executeNaturalTeamWorkItem(input: {
       `- 读取范围：${formatList(input.workItem.readTargets, responseLanguage)}`,
       `- 写入范围：${formatList(input.workItem.writeTargets, responseLanguage)}`,
       `- 并行：${input.workItem.canRunInParallel ? "可并行" : "需要串行"}`,
+      input.workItem.writeTargets.length > 0 && input.workItem.readTargets.length === 0
+        ? `- 执行顺序：第一步直接写入 ${formatList(input.workItem.writeTargets, responseLanguage)}，不要先读取或扫描目录。`
+        : "",
       "",
       "群组上下文：",
       buildContextText(input.team, input.context, responseLanguage),
@@ -1494,6 +1556,8 @@ export async function executeNaturalTeamWorkItem(input: {
       "You can use injected file, search, command, and MCP tools.",
       "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
       "Only work inside the current workspace.",
+      "If this task creates new writeTargets and readTargets is empty, do not read or list the target file/parent directory first; call a write tool directly to create the file.",
+      "Do not read a file you are about to create unless it is explicitly listed in the read scope.",
       "If the task cannot proceed, clearly explain the blocker.",
       "",
       "Current work item:",
@@ -1501,6 +1565,9 @@ export async function executeNaturalTeamWorkItem(input: {
       `- Read scope: ${formatList(input.workItem.readTargets, responseLanguage)}`,
       `- Write scope: ${formatList(input.workItem.writeTargets, responseLanguage)}`,
       `- Parallelism: ${input.workItem.canRunInParallel ? "parallel allowed" : "sequential required"}`,
+      input.workItem.writeTargets.length > 0 && input.workItem.readTargets.length === 0
+        ? `- Execution order: first write ${formatList(input.workItem.writeTargets, responseLanguage)} directly; do not read or scan directories first.`
+        : "",
       "",
       "Group context:",
       buildContextText(input.team, input.context, responseLanguage),
@@ -1514,14 +1581,22 @@ export async function executeNaturalTeamWorkItem(input: {
     zh: [
       `用户原始请求：${input.userInput}`,
       `你需要执行的任务：${input.workItem.summary}`,
+      input.workItem.writeTargets.length > 0 && input.workItem.readTargets.length === 0
+        ? `重要：这个任务是创建新文件。你的第一步必须直接调用写入工具创建 ${formatList(input.workItem.writeTargets, responseLanguage)}，不要先读取、列目录或检查这些目标是否存在。`
+        : "",
       "请直接执行，并在完成后用自然群聊口吻汇报：做了什么、结果是什么、如果改了文件请简要提及。",
     ],
     en: [
       `Original user request: ${input.userInput}`,
       `Task to execute: ${input.workItem.summary}`,
+      input.workItem.writeTargets.length > 0 && input.workItem.readTargets.length === 0
+        ? `Important: this task creates new files. Your first step must directly call a write tool to create ${formatList(input.workItem.writeTargets, responseLanguage)}. Do not read, list, or check those targets first.`
+        : "",
       "Execute directly, then report in natural group-chat style: what you did, what result you got, and briefly mention changed files.",
     ],
-  }).join("\n");
+  })
+    .filter(Boolean)
+    .join("\n");
 
   await input.onUpdate?.({
     phase: "started",
@@ -1542,7 +1617,7 @@ export async function executeNaturalTeamWorkItem(input: {
       message,
       attachments: input.attachments,
       threadId: `${input.conversationId}:${input.runId}:${input.workItem.owner.id}:execution`,
-      memoryPaths: ["/.team-aligned/memory/MEMORY.md"],
+      memoryPaths: [],
       mcpServers: input.mcpServers,
       mcpConnections: input.mcpConnections,
       onMcpInvocation: input.onMcpInvocation,

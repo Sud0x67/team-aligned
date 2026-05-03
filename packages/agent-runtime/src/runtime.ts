@@ -69,6 +69,7 @@ import {
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import {
   buildRuntimeLangChainTools,
+  normalizeRuntimeToolErrorMessage,
   type RuntimeToolInvocationEvent,
   type ToolExecutionPolicy,
   type ToolExecutionPolicyDecision,
@@ -1817,19 +1818,26 @@ export class TeamalignedRuntime extends EventEmitter {
         const shouldSurfaceError =
           toolName === "web_search" ||
           toolName === "web_fetch" ||
+          toolName === "run_workspace_command" ||
           !isLocalTool ||
           isAuthError;
         if (!shouldSurfaceError) {
           return;
         }
+        const displayError = normalizeRuntimeToolErrorMessage({
+          toolName,
+          serverName: sourceName,
+          error: event.error,
+          responseLanguage: input.responseLanguage,
+        });
         const content = isLocalTool
           ? byLanguage(input.responseLanguage, {
-              zh: `${input.agent.name} 在 ${toolName} 这一步遇到问题：${event.error}`,
-              en: `${input.agent.name} hit an issue in ${toolName}: ${event.error}`,
+              zh: `${input.agent.name} 在 ${toolName} 这一步遇到问题：\n${displayError}`,
+              en: `${input.agent.name} hit an issue in ${toolName}:\n${displayError}`,
             })
           : byLanguage(input.responseLanguage, {
-              zh: `${input.agent.name} 在 ${sourceName}.${toolName} 这一步遇到问题：${event.error}`,
-              en: `${input.agent.name} hit an issue in ${sourceName}.${toolName}: ${event.error}`,
+              zh: `${input.agent.name} 在 ${sourceName}.${toolName} 这一步遇到问题：\n${displayError}`,
+              en: `${input.agent.name} hit an issue in ${sourceName}.${toolName}:\n${displayError}`,
             });
         this.addRunMessage(input.conversationId, input.runId, content, "system", {
           stage: "tool_error",
@@ -1837,12 +1845,13 @@ export class TeamalignedRuntime extends EventEmitter {
           sourceName,
           local: isLocalTool,
           error: event.error,
-	          ...(!isLocalTool && isAuthError
-	            ? {
-	                cardType: "mcp_oauth",
-	                serverId: event.server.id,
-	              }
-	            : {}),
+          displayError,
+          ...(!isLocalTool && isAuthError
+            ? {
+                cardType: "mcp_oauth",
+                serverId: event.server.id,
+              }
+            : {}),
         });
         this.emitSnapshot();
       }
@@ -2023,14 +2032,20 @@ export class TeamalignedRuntime extends EventEmitter {
 
       if (event.phase === "error") {
         const isAuthError = /oauth|authorize|authorization|授权|权限|permission|401|unauthorized/i.test(event.error);
+        const displayError = normalizeRuntimeToolErrorMessage({
+          toolName,
+          serverName: sourceName,
+          error: event.error,
+          responseLanguage: input.responseLanguage,
+        });
         const content = isLocalTool
           ? byLanguage(input.responseLanguage, {
-              zh: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题：${event.error}`,
-              en: `${input.speaker.name}: I hit a problem during ${toolName}: ${event.error}`,
+              zh: `${input.speaker.name}：我在 ${toolName} 这一步遇到了问题。\n${displayError}`,
+              en: `${input.speaker.name}: I hit a problem during ${toolName}.\n${displayError}`,
             })
           : byLanguage(input.responseLanguage, {
-              zh: `${input.speaker.name}：我在 ${sourceName}.${toolName} 这一步遇到了问题：${event.error}`,
-              en: `${input.speaker.name}: I hit a problem during ${sourceName}.${toolName}: ${event.error}`,
+              zh: `${input.speaker.name}：我在 ${sourceName}.${toolName} 这一步遇到了问题。\n${displayError}`,
+              en: `${input.speaker.name}: I hit a problem during ${sourceName}.${toolName}.\n${displayError}`,
             });
         const metadata = {
           phase: "tool_error",
@@ -2038,12 +2053,13 @@ export class TeamalignedRuntime extends EventEmitter {
           sourceName,
           local: isLocalTool,
           error: event.error,
-	          ...(!isLocalTool && isAuthError
-	            ? {
-	                cardType: "mcp_oauth",
-	                serverId: event.server.id,
-	              }
-	            : {}),
+          displayError,
+          ...(!isLocalTool && isAuthError
+            ? {
+                cardType: "mcp_oauth",
+                serverId: event.server.id,
+              }
+            : {}),
         };
         addPublicProcessMessage(content, metadata);
         input.onUpdate?.(content, metadata);

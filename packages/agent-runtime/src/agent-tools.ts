@@ -100,6 +100,114 @@ function trimText(value: string, max: number) {
   return text.length <= max ? text : `${text.slice(0, max)}\n...`;
 }
 
+function stringifyToolError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function appendOriginalError(message: string, rawError: string, language: RuntimeLanguage) {
+  const detail = trimText(rawError, 320);
+  if (!detail) return message;
+  return byLanguage(language, {
+    zh: `${message}\n原始错误：${detail}`,
+    en: `${message}\nOriginal error: ${detail}`,
+  });
+}
+
+export function normalizeRuntimeToolErrorMessage(input: {
+  toolName: string;
+  serverName?: string;
+  error: unknown;
+  responseLanguage?: RuntimeLanguage;
+}) {
+  const responseLanguage = input.responseLanguage ?? "zh";
+  const toolName = input.toolName.replace(/^workspace_/, "");
+  const source = input.serverName ? `${input.serverName}.${toolName}` : toolName;
+  const rawError = stringifyToolError(input.error).trim();
+  const normalized = rawError.toLowerCase();
+  const has = (pattern: RegExp) => pattern.test(rawError) || pattern.test(normalized);
+  const base = (messages: { zh: string; en: string }) =>
+    appendOriginalError(byLanguage(responseLanguage, messages), rawError, responseLanguage);
+
+  if (has(/approval|required|confirm|确认|拒绝|denied|安全策略|policy/)) {
+    return base({
+      zh: `${source} 需要确认后才能继续。请在聊天中的确认卡片选择允许，或调整请求后重试。`,
+      en: `${source} needs confirmation before continuing. Approve it in the chat card, or adjust the request and retry.`,
+    });
+  }
+
+  if (has(/oauth|authorize|authorization|unauthorized|401|403|permission|权限|鉴权|授权/)) {
+    return base({
+      zh: `${source} 的授权或权限不可用。请在扩展页重新授权，或检查 API Key / OAuth 权限后重试。`,
+      en: `${source} does not have valid authorization or permissions. Re-authorize it in Extensions, or check the API Key / OAuth scopes and retry.`,
+    });
+  }
+
+  if (has(/超出允许范围|outside|not inside|path.*allow|allowed range/)) {
+    return base({
+      zh: `${source} 试图访问当前 workspace 之外的路径。请改用 workspace 内路径、上传附件，或通过 # 引用文件。`,
+      en: `${source} tried to access a path outside the current workspace. Use a workspace path, upload the file, or reference it with #.`,
+    });
+  }
+
+  if (toolName === "run_workspace_command" || has(/command not found|exit code|spawn|shell|zsh/)) {
+    if (has(/command not found|enoent|spawn .* enoent/)) {
+      return base({
+        zh: `${source} 要执行的命令不可用。请确认依赖已安装，或让 Agent 先检查 package scripts / PATH。`,
+        en: `${source} tried to run a command that is not available. Install the dependency, or ask the Agent to inspect package scripts / PATH first.`,
+      });
+    }
+    return base({
+      zh: `${source} 命令执行失败。请检查命令、依赖和当前工作目录；必要时先运行更小的诊断命令。`,
+      en: `${source} command execution failed. Check the command, dependencies, and current working directory; run a smaller diagnostic command if needed.`,
+    });
+  }
+
+  if (has(/不存在|not found|no such file|enoent|目标不是文件|目标不是目录/)) {
+    return base({
+      zh: `${source} 找不到目标文件或目录。请确认路径是否存在，或先让 Agent 列目录 / 使用 # 选择文件。`,
+      en: `${source} could not find the target file or directory. Check the path, or ask the Agent to list files / select one with # first.`,
+    });
+  }
+
+  if (has(/eacces|permission denied|operation not permitted|eperm/)) {
+    return base({
+      zh: `${source} 没有足够的本地文件权限。请检查文件权限、工作目录，或换到可写的 workspace 路径后重试。`,
+      en: `${source} does not have enough local file permissions. Check file permissions, the working directory, or retry inside a writable workspace path.`,
+    });
+  }
+
+  if (has(/timeout|timed out|aborted|aborterror|etimedout|超时/)) {
+    return base({
+      zh: `${source} 执行超时。请稍后重试；如果是 MCP 或网络工具，请先做健康检查或重新连接。`,
+      en: `${source} timed out. Try again later; for MCP or web tools, run a health check or reconnect first.`,
+    });
+  }
+
+  if (toolName === "web_fetch" || toolName === "web_search" || has(/fetch failed|enotfound|econnreset|econnrefused|network|dns|http|url/)) {
+    if (has(/only http|http\(s\)|invalid url|unsupported protocol|非 http/)) {
+      return base({
+        zh: `${source} 只支持 http(s) 网页地址。请换成完整的 https:// 链接后重试。`,
+        en: `${source} only supports http(s) URLs. Use a full https:// link and retry.`,
+      });
+    }
+    return base({
+      zh: `${source} 网络请求失败。请确认链接可访问、网络正常，或稍后重试。`,
+      en: `${source} failed during a network request. Check that the link is reachable and the network is available, then retry.`,
+    });
+  }
+
+  return base({
+    zh: `${source} 执行失败。可以重试，或补充更具体的上下文让 Agent 换一种方式处理。`,
+    en: `${source} failed. You can retry, or provide more specific context so the Agent can use another approach.`,
+  });
+}
+
 function slugify(value: string) {
   return value
     .toLowerCase()

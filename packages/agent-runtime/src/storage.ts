@@ -832,7 +832,7 @@ export class AppStorage {
       if (this.shouldUseMessageAsConversationPreview(message)) {
         conversation.lastMessage = this.summarizeConversationMessage(message);
       }
-      if (input.senderKind !== "user" && input.visibility === "public") {
+      if (input.senderKind !== "user" && this.shouldUseMessageAsConversationPreview(message)) {
         conversation.unread += 1;
       }
     }

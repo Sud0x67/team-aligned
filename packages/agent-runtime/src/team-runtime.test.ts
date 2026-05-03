@@ -491,6 +491,112 @@ test("planTeamTurn uses planner intent for execute path", async () => {
   );
 });
 
+test("planTeamTurn limits execution owners to agents named by the user", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+    makeAgent("agent-planner", "planner", "Planner"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await planTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput:
+      "请进入执行模式：Designer 创建 docs/replay-wireframe.md；Coder 创建 src/replay-static-page.html。这两个文件互不依赖，可以并行执行。",
+    explicitMentionIds: [],
+    mcpServers: [],
+    planner: {
+      invoke: async () => ({
+        intent: "execute",
+        mode: "collaboration",
+        speakerIds: ["agent-designer", "agent-coder", "agent-planner"],
+        reason: "execute",
+        activeTask: "并行执行",
+        nextPhase: "执行中",
+        decision: "Planner 协调，Designer/Coder 执行",
+        workItems: [
+          {
+            ownerAgentId: "agent-designer",
+            summary: "创建线框文档",
+            kickoffMessage: "我创建文档。",
+            readTargets: [],
+            writeTargets: ["docs/replay-wireframe.md"],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+          {
+            ownerAgentId: "agent-coder",
+            summary: "创建静态页面",
+            kickoffMessage: "我创建页面。",
+            readTargets: [],
+            writeTargets: ["src/replay-static-page.html"],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+          {
+            ownerAgentId: "agent-planner",
+            summary: "协调执行",
+            kickoffMessage: "我来协调。",
+            readTargets: [],
+            writeTargets: [],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+        ],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "execute");
+  assert.deepEqual(
+    result.workItems.map((item) => item.owner.id),
+    ["agent-designer", "agent-coder"],
+  );
+  assert.deepEqual(
+    result.speakers.map((item) => item.id),
+    ["agent-designer", "agent-coder"],
+  );
+});
+
 test("planTeamTurn enforces explicit mentions in speaker selection", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),

@@ -529,6 +529,71 @@ test("resetUnread clears conversation unread and related notification center ite
   }
 });
 
+test("public agent messages update unread and recent preview while system run messages do not", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const conversationId = TEAMALIGNED_ASSISTANT_CONVERSATION_ID;
+    storage.resetUnread(conversationId);
+
+    storage.addMessage({
+      conversationId,
+      senderId: TEAMALIGNED_ASSISTANT_AGENT_ID,
+      senderName: "TeamAligned Guide",
+      senderKind: "agent",
+      messageType: "agent",
+      visibility: "public",
+      content: "这里是最近一次真实回复。",
+      mentions: [],
+      runId: null,
+      metadata: null,
+      createdAt: Date.now(),
+    });
+    storage.addMessage({
+      conversationId,
+      senderId: "system",
+      senderName: "TeamAligned",
+      senderKind: "system",
+      messageType: "run",
+      visibility: "public",
+      content: "任务已完成。",
+      mentions: [],
+      runId: "run-preview-test",
+      metadata: null,
+      createdAt: Date.now() + 1,
+    });
+    storage.createNotification({
+      type: "agent_message",
+      title: "TeamAligned Guide",
+      body: "这里是最近一次真实回复。",
+      relatedConversationId: conversationId,
+      relatedRunId: null,
+    });
+
+    const beforeRead = storage.getSnapshot();
+    const conversationBeforeRead = beforeRead.conversations.find((item) => item.id === conversationId);
+    assert.equal(conversationBeforeRead?.lastMessage, "这里是最近一次真实回复。");
+    assert.equal(conversationBeforeRead?.unread, 1);
+    assert.equal(
+      beforeRead.notifications.some((item) => item.relatedConversationId === conversationId),
+      true,
+    );
+
+    storage.resetUnread(conversationId);
+    const afterRead = storage.getSnapshot();
+    const conversationAfterRead = afterRead.conversations.find((item) => item.id === conversationId);
+    assert.equal(conversationAfterRead?.lastMessage, "这里是最近一次真实回复。");
+    assert.equal(conversationAfterRead?.unread, 0);
+    assert.equal(
+      afterRead.notifications.some((item) => item.relatedConversationId === conversationId),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("saveAttachmentAsset rejects invalid, empty, and oversized uploads with clear errors", () => {
   const root = createTempRoot();
   try {

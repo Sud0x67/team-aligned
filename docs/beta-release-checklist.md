@@ -1,21 +1,44 @@
 # Beta 发布 Checklist（macOS）
 
-更新时间：2026-04-24
+[English version](./en/beta-release-checklist.md)
 
-## 1. 发布前检查
+更新时间：2026-05-03
 
-- [x] Node / npm 版本符合仓库要求
-- [x] 工作区依赖安装完成（`npm install`）
-- [x] 本地配置使用 `~/.teamaligned`
-- [x] 关键 smoke 已通过（slash、群聊批次、通知策略、provider 错误归一）
+当前版本：`0.4.1-beta`
 
-执行：
+## 1. 自动门禁
+
+每次 beta 发布前固定执行：
 
 ```bash
 npm run beta:check
 ```
 
-## 2. 打包
+`beta:check` 当前覆盖：
+
+- TypeScript typecheck
+- ESLint
+- Smoke tests
+- Desktop build
+
+真实 Provider 回放属于发布前增强验收，建议在本地 Provider 配置可用时额外执行：
+
+```bash
+npm run test:provider-replay
+```
+
+默认每个场景等待 180s；如果本地网络或 Provider 较慢，可以临时提高：
+
+```bash
+TA_REPLAY_TIMEOUT_MS=240000 npm run test:provider-replay
+```
+
+覆盖范围：
+
+- 单聊：流式输出、取消、重试、`/clear`、图片附件、Markdown 长内容。
+- 群聊：显式 `@`、无 `@` 自动选人、多轮 handoff、并行任务、依赖等待、图片附件、web 工具调用、取消、`/clear`。
+
+## 2. 打包产物
 
 执行：
 
@@ -23,42 +46,65 @@ npm run beta:check
 npm run dist:mac
 ```
 
-产物目录（默认）：
+检查产物目录：
 
-- `apps/desktop/dist/`（应用构建）
-- `apps/desktop/dist-electron/`（打包产物，具体格式取决于 electron-builder 配置）
+- `apps/desktop/dist/`
+- `apps/desktop/dist-electron/`
 
-本轮产物（2026-04-24）：
+每次发布必须确认：
 
-- `apps/desktop/dist/teamaligned-0.1.0-arm64-mac.zip`
-- `apps/desktop/dist/teamaligned-0.1.0-arm64.dmg`
+- Apple Silicon DMG / ZIP 可生成并可安装。
+- Intel DMG / ZIP 在 GitHub Actions 对应 runner 上生成。
+- 应用名、版本号、图标、DMG background、volume icon 均正确。
+- `CHANGELOG.md` 包含本次版本摘要。
 
-## 3. 安装体验验收（手动）
+## 3. 核心手动验收
 
-- [ ] 安装包可正常安装
-- [ ] 首次启动无白屏
-- [ ] 设置页可保存 provider 并测试连接
-- [ ] 单聊可发送文本和图片附件
-- [ ] 群聊可 `@` 指定成员并连续接棒
-- [ ] 群聊执行过程有“思考中/过程更新”反馈
-- [ ] 右侧会话信息面板可查看 token 与 workspace
-- [ ] 会话导出按钮可产出 JSON 文件
-- [ ] 通知前后台行为符合设置开关
+- [ ] 首次启动进入 onboarding，API Key 默认为空且必填。
+- [ ] Provider 测试失败时提示“发生了什么、如何恢复”。
+- [ ] 单聊文本可流式返回，发送中可取消。
+- [ ] 单聊可重试上一条、`/clear` 后不带旧上下文。
+- [ ] 单聊图片附件可被模型理解，失败时提示重新上传或检查文件。
+- [ ] 长 Markdown、表格、多行代码块渲染正常。
+- [ ] 群聊显式 `@` 优先命中目标 Agent。
+- [ ] 群聊无 `@` 时 planner 自动选择合适 Agent。
+- [ ] 群聊过程消息可见但不过度刷屏。
+- [ ] 群聊取消与 `/clear` 生效。
+- [ ] 已读后左侧未读数、最近消息和通知中心同步清理。
+- [ ] 前台应用不触发系统通知，后台才触发。
+- [ ] 会话导出和长图分享可用。
+- [ ] 诊断导出会包含 startup / error / notification 日志尾部。
 
-## 4. 已知限制（Known Issues）
+## 4. 用户反馈入口
+
+发现问题时引导用户优先提交 GitHub Issue：
+
+- [GitHub Issues](https://github.com/Sud0x67/team-aligned/issues)
+- 邮件：`jokeroller@163.com`
+
+请用户尽量附上：
+
+- 版本号和芯片架构（Apple Silicon / Intel）。
+- 操作步骤和截图。
+- 设置页导出的 diagnostics JSON。
+- 相关 workspace 中可公开的最小复现文件。
+
+## 5. 已知限制
 
 1. MCP 外部服务稳定性依赖第三方服务可用性，超时会按统一错误文案提示。
-2. 会话导出当前是最小可用 JSON（索引导出），不包含附件二进制打包。
-3. 群聊复杂长链路仍需持续观察（尤其多 Agent 并行 + 依赖等待场景）。
-4. Node/Electron 运行时可能出现实验性告警（例如 SQLite ExperimentalWarning），不影响核心功能。
+2. OAuth MCP 已支持授权入口和手动 Client ID/Secret 兼容，但 token 过期与 re-auth 体验仍需继续打磨。
+3. 会话导出当前是最小可用 JSON / 图片导出，不包含完整项目归档包。
+4. 群聊复杂长链路仍需持续观察，尤其是多 Agent 并行与依赖等待组合。
+5. Node/Electron 运行时可能出现实验性告警（例如 SQLite ExperimentalWarning），不影响核心功能。
 
-## 5. 发布记录模板
-
-建议每次 beta 包发布后补一条记录：
+## 6. 发布记录模板
 
 - 版本号：
 - 发布时间：
 - 提交范围：
-- 验收人：
+- 自动门禁：
+- Provider 回放：
+- 打包产物：
+- 手动验收人：
 - 结果：
 - 阻断问题：
