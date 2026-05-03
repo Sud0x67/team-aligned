@@ -4,7 +4,7 @@
 
 Updated: 2026-05-02
 
-Current version: `0.4.0-beta`
+Current version: `0.4.1-beta`
 
 ## Scope
 
