@@ -181,9 +181,17 @@ function previewToolArgs(args: Record<string, unknown>, max = 1400) {
   }
 }
 
-function shouldRequireToolApproval(request: ToolExecutionPolicyRequest) {
-  if (request.operation === "read" || request.operation === "network") {
+export function shouldRequireToolApproval(request: ToolExecutionPolicyRequest) {
+  if (request.operation === "read") {
+    return false;
+  }
+
+  if (request.operation === "network") {
     return request.riskLevel === "high";
+  }
+
+  if (request.operation === "skill") {
+    return request.riskLevel !== "low";
   }
 
   return (

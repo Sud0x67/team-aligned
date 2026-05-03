@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRuntimeLangChainTools, ToolExecutionApprovalRequiredError } from "./agent-tools.ts";
+import { shouldRequireToolApproval } from "./runtime.ts";
 
 function createTempWorkspace() {
   return mkdtempSync(join(tmpdir(), "teamaligned-agent-tools-"));
@@ -92,4 +93,49 @@ test("workspace tools honor the generic execution policy before running", async 
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }
+});
+
+test("tool approval policy does not interrupt low-risk skill bundle reads", () => {
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "skill-stock",
+      serverName: "Stock Skill",
+      toolName: "read_skill_bundle",
+      operation: "skill",
+      riskLevel: "low",
+      args: { relativePath: "references/data-verification-protocol.md" },
+      description: "Read bundled files from the active skill.",
+    }),
+    false,
+  );
+});
+
+test("tool approval policy does not interrupt read operations", () => {
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "local-workspace",
+      serverName: "Workspace",
+      toolName: "read_text_file",
+      operation: "read",
+      riskLevel: "high",
+      args: { path: "notes.md" },
+      description: "Read a text file from the current workspace.",
+    }),
+    false,
+  );
+});
+
+test("tool approval policy still protects executable skill scripts", () => {
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "skill-stock",
+      serverName: "Stock Skill",
+      toolName: "skill_stock_analyze",
+      operation: "skill",
+      riskLevel: "medium",
+      args: { argumentsLine: "--ticker BABA" },
+      description: "Run bundled script from the active skill.",
+    }),
+    true,
+  );
 });
