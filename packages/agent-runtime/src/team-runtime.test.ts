@@ -6,7 +6,7 @@ import {
   buildExecutionBatches,
   MAX_PARALLEL_TEAM_EXECUTIONS,
   normalizeTeamHandoffState,
-  planTeamTurn,
+  orchestrateTeamTurn,
   resolveMentionedMembers,
   resolveTeamMessageMentions,
   selectNaturalTeamSpeakers,
@@ -220,12 +220,12 @@ test("selectNaturalTeamSpeakers keeps explicit mention order and bypasses handof
     userInput: "@Designer 然后 @Coder",
     explicitMentionIds: ["agent-designer", "agent-coder"],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "chat",
         mode: "multi_voice",
         speakerIds: ["agent-coder"],
-        reason: "planner response",
+        reason: "orchestrator response",
         activeTask: "",
         nextPhase: "",
         decision: "",
@@ -299,12 +299,12 @@ test("selectNaturalTeamSpeakers treats normal no-mention input as a fresh focuse
     userInput: "请根据这句话判断谁最适合回应：我们需要一个发布前检查清单。",
     explicitMentionIds: [],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "chat",
         mode: "focused",
         speakerIds: ["agent-designer", "agent-coder"],
-        reason: "planner response",
+        reason: "orchestrator response",
         activeTask: "",
         nextPhase: "",
         decision: "",
@@ -377,12 +377,12 @@ test("selectNaturalTeamSpeakers keeps handoff continuity for explicit follow-up 
     userInput: "继续这个任务，补一个实现说明。",
     explicitMentionIds: [],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "chat",
         mode: "focused",
         speakerIds: ["agent-designer"],
-        reason: "planner response",
+        reason: "orchestrator response",
         activeTask: "",
         nextPhase: "",
         decision: "",
@@ -397,7 +397,7 @@ test("selectNaturalTeamSpeakers keeps handoff continuity for explicit follow-up 
   );
 });
 
-test("planTeamTurn uses planner intent for execute path", async () => {
+test("orchestrateTeamTurn uses orchestrator intent for execute path", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -438,7 +438,7 @@ test("planTeamTurn uses planner intent for execute path", async () => {
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -449,7 +449,7 @@ test("planTeamTurn uses planner intent for execute path", async () => {
     userInput: "请你们直接落地第一版页面",
     explicitMentionIds: [],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "execute",
         mode: "collaboration",
@@ -491,7 +491,7 @@ test("planTeamTurn uses planner intent for execute path", async () => {
   );
 });
 
-test("planTeamTurn limits execution owners to agents named by the user", async () => {
+test("orchestrateTeamTurn limits execution owners to agents named by the user", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -532,7 +532,7 @@ test("planTeamTurn limits execution owners to agents named by the user", async (
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -544,7 +544,7 @@ test("planTeamTurn limits execution owners to agents named by the user", async (
       "请进入执行模式：Designer 创建 docs/replay-wireframe.md；Coder 创建 src/replay-static-page.html。这两个文件互不依赖，可以并行执行。",
     explicitMentionIds: [],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "execute",
         mode: "collaboration",
@@ -597,7 +597,7 @@ test("planTeamTurn limits execution owners to agents named by the user", async (
   );
 });
 
-test("planTeamTurn enforces explicit mentions in speaker selection", async () => {
+test("orchestrateTeamTurn enforces explicit mentions in speaker selection", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -638,7 +638,7 @@ test("planTeamTurn enforces explicit mentions in speaker selection", async () =>
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -649,7 +649,7 @@ test("planTeamTurn enforces explicit mentions in speaker selection", async () =>
     userInput: "@Designer 你先说",
     explicitMentionIds: ["agent-designer"],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "chat",
         mode: "focused",
@@ -667,7 +667,7 @@ test("planTeamTurn enforces explicit mentions in speaker selection", async () =>
   assert.equal(result.speakers[0]?.id, "agent-designer");
 });
 
-test("planTeamTurn keeps explicit mentions as execution owners when planner omits them", async () => {
+test("orchestrateTeamTurn keeps explicit mentions as execution owners when orchestrator omits them", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -707,7 +707,7 @@ test("planTeamTurn keeps explicit mentions as execution owners when planner omit
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -718,7 +718,7 @@ test("planTeamTurn keeps explicit mentions as execution owners when planner omit
     userInput: "@Coder 请实现第一版页面",
     explicitMentionIds: ["agent-coder"],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "execute",
         mode: "focused",
@@ -747,7 +747,7 @@ test("planTeamTurn keeps explicit mentions as execution owners when planner omit
   assert.ok(result.workItems.some((item) => item.owner.id === "agent-coder"));
 });
 
-test("planTeamTurn upgrades explicit execution mentions when planner returns chat", async () => {
+test("orchestrateTeamTurn upgrades explicit execution mentions when orchestrator returns chat", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -787,7 +787,7 @@ test("planTeamTurn upgrades explicit execution mentions when planner returns cha
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -798,7 +798,7 @@ test("planTeamTurn upgrades explicit execution mentions when planner returns cha
     userInput: "@Coder 请直接创建一个静态页面",
     explicitMentionIds: ["agent-coder"],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => ({
         intent: "chat",
         mode: "focused",
@@ -817,7 +817,7 @@ test("planTeamTurn upgrades explicit execution mentions when planner returns cha
   assert.equal(result.workItems[0]?.owner.id, "agent-coder");
 });
 
-test("planTeamTurn falls back safely when planner fails", async () => {
+test("orchestrateTeamTurn falls back safely when orchestrator fails", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),
     makeAgent("agent-designer", "designer", "Designer"),
@@ -858,7 +858,7 @@ test("planTeamTurn falls back safely when planner fails", async () => {
     avatarPath: null,
   };
 
-  const result = await planTeamTurn({
+  const result = await orchestrateTeamTurn({
     provider,
     team,
     members,
@@ -869,9 +869,9 @@ test("planTeamTurn falls back safely when planner fails", async () => {
     userInput: "hello 大家报个数",
     explicitMentionIds: [],
     mcpServers: [],
-    planner: {
+    orchestrator: {
       invoke: async () => {
-        throw new Error("planner unavailable");
+        throw new Error("orchestrator unavailable");
       },
     },
   });
@@ -881,9 +881,9 @@ test("planTeamTurn falls back safely when planner fails", async () => {
   assert.equal(result.speakers.length, 3);
 });
 
-test("planTeamTurn falls back quickly when planner times out", async () => {
-  const previousTimeout = process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
-  process.env.TA_TEAM_PLANNER_TIMEOUT_MS = "5";
+test("orchestrateTeamTurn falls back quickly when orchestrator times out", async () => {
+  const previousTimeout = process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS;
+  process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS = "5";
   try {
     const members = [
       makeAgent("agent-coder", "coder", "Coder"),
@@ -924,7 +924,7 @@ test("planTeamTurn falls back quickly when planner times out", async () => {
       avatarPath: null,
     };
 
-    const result = await planTeamTurn({
+    const result = await orchestrateTeamTurn({
       provider,
       team,
       members,
@@ -935,7 +935,7 @@ test("planTeamTurn falls back quickly when planner times out", async () => {
       userInput: "@Coder 请调用 web_fetch 抓取 https://example.com 并总结。",
       explicitMentionIds: ["agent-coder"],
       mcpServers: [],
-      planner: {
+      orchestrator: {
         invoke: () => new Promise(() => {}),
       },
     });
@@ -944,16 +944,16 @@ test("planTeamTurn falls back quickly when planner times out", async () => {
     assert.equal(result.speakers[0]?.id, "agent-coder");
   } finally {
     if (previousTimeout === undefined) {
-      delete process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+      delete process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS;
     } else {
-      process.env.TA_TEAM_PLANNER_TIMEOUT_MS = previousTimeout;
+      process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS = previousTimeout;
     }
   }
 });
 
-test("planTeamTurn fallback preserves named sequential owners and file targets", async () => {
-  const previousTimeout = process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
-  process.env.TA_TEAM_PLANNER_TIMEOUT_MS = "5";
+test("orchestrateTeamTurn fallback preserves named sequential owners and file targets", async () => {
+  const previousTimeout = process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS;
+  process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS = "5";
   try {
     const members = [
       makeAgent("agent-coder", "coder", "Coder"),
@@ -995,7 +995,7 @@ test("planTeamTurn fallback preserves named sequential owners and file targets",
       avatarPath: null,
     };
 
-    const result = await planTeamTurn({
+    const result = await orchestrateTeamTurn({
       provider,
       team,
       members,
@@ -1007,7 +1007,7 @@ test("planTeamTurn fallback preserves named sequential owners and file targets",
         "请进入执行模式：Designer 必须先创建 docs/replay-design-brief.md；Coder 必须等待 Designer 完成后读取这个文件，再创建 src/replay-implementation-notes.md。",
       explicitMentionIds: [],
       mcpServers: [],
-      planner: {
+      orchestrator: {
         invoke: () => new Promise(() => {}),
       },
     });
@@ -1023,9 +1023,9 @@ test("planTeamTurn fallback preserves named sequential owners and file targets",
     assert.deepEqual(result.workItems[1]?.dependsOnAgentIds, ["agent-designer"]);
   } finally {
     if (previousTimeout === undefined) {
-      delete process.env.TA_TEAM_PLANNER_TIMEOUT_MS;
+      delete process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS;
     } else {
-      process.env.TA_TEAM_PLANNER_TIMEOUT_MS = previousTimeout;
+      process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS = previousTimeout;
     }
   }
 });

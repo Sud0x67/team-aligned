@@ -84,7 +84,7 @@ import {
   MAX_TEAM_SUBROUNDS,
   MAX_TEAM_TURN_MESSAGES,
   normalizeTeamHandoffState,
-  planTeamTurn,
+  orchestrateTeamTurn,
   resolveMentionedMembers,
   shouldApplyTeamHandoffContinuity,
   TEAM_MEMBER_LIMIT,
@@ -2936,7 +2936,7 @@ export class TeamalignedRuntime extends EventEmitter {
           if (!shouldContinueRun()) {
             return;
           }
-          turnPlan = await planTeamTurn({
+          turnPlan = await orchestrateTeamTurn({
             provider: provider!,
             profile: snapshot.profile,
             team: {

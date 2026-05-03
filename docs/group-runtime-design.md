@@ -31,7 +31,7 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 规则：
 
 - 用户显式 `@Agent`：该 Agent 直接接棒。
-- 如果用户显式 `@Agent` 且请求属于执行型任务，该 Agent 必须成为 `execution work item` owner；即使 planner 漏掉或误判成 chat，也会用 fallback 执行计划补齐。
+- 如果用户显式 `@Agent` 且请求属于执行型任务，该 Agent 必须成为 `execution work item` owner；即使 orchestrator 漏掉或误判成 chat，也会用 fallback 执行计划补齐。
 - 无显式 `@`：优先延续 `activeAgentId`，再结合语义选择。
 - Agent 消息里 `@` 下一位：下一小轮由被 `@` 成员接棒。
 - 每轮结束后写回 handoff 状态，保证下一条用户消息具备连续上下文。
@@ -50,7 +50,7 @@ handoff 状态机 + messages/updates 双轨输出 + execution subagent
 - “命令已经跑完了，我继续往下处理。”
 - “我在 read_text_file 这一步遇到了问题：...”
 
-这些消息会进入聊天主线程，但带有 `teamProcess` 元数据，并在下一轮 planner history 中被过滤，避免工具流水账污染后续意图识别。
+这些消息会进入聊天主线程，但带有 `teamProcess` 元数据，并在下一轮 orchestrator history 中被过滤，避免工具流水账污染后续意图识别。
 
 `updates` 现在覆盖：
 

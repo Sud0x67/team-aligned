@@ -67,7 +67,7 @@ Every release must verify:
 - [ ] Direct chat can understand image attachments, and failures suggest re-uploading or checking the file.
 - [ ] Long Markdown, tables, and multiline code fences render correctly.
 - [ ] Team chat prioritizes explicit `@` mentions.
-- [ ] Team chat uses the planner to select suitable Agents when there is no `@`.
+- [ ] Team chat uses the orchestrator to select suitable Agents when there is no `@`.
 - [ ] Team process messages are visible without flooding the chat.
 - [ ] Team cancel and `/clear` both take effect.
 - [ ] After reading a conversation, unread count, recent preview, and notification center state stay in sync.

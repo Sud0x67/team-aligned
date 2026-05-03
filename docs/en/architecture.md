@@ -122,8 +122,8 @@ Team chat is not a visible manager mode. It is natural team chat with invisible 
 Core rules:
 
 - Explicit `@Agent` wins.
-- Without `@`, the planner chooses suitable speakers or execution owners.
-- The planner has a default 30-second timeout; if the Provider stalls, local fallback routing prevents silent freezes.
+- Without `@`, the orchestrator chooses suitable speakers or execution owners.
+- The orchestrator has a default 30-second timeout; if the Provider stalls, local fallback routing prevents silent freezes.
 - Fallback routing recognizes inline Agent names and workspace paths to build a basic execution plan.
 - Handoff state tracks the last speaker, next speakers, reason, and revision.
 - Simple questions usually involve 1-2 Agents.

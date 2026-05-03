@@ -122,8 +122,8 @@ teamaligned
 核心机制：
 
 - 显式 `@Agent` 优先。
-- 无 `@` 时由 planner 判断适合发言或执行的 Agent。
-- planner 默认 30 秒超时；超时后使用本地 fallback，避免 Provider 长尾导致群聊静默卡住。
+- 无 `@` 时由 orchestrator 判断适合发言或执行的 Agent。
+- orchestrator 默认 30 秒超时；超时后使用本地 fallback，避免 Provider 长尾导致群聊静默卡住。
 - fallback 会识别文本里直接出现的 Agent 名称和 workspace 路径，用于生成基础执行计划。
 - handoff 状态记录谁刚发言、谁应接棒、原因和 revision。
 - 普通问题通常 1-2 个 Agent 发言。

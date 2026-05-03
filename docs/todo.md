@@ -11,7 +11,7 @@
 TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段。当前应用已经具备真实可用的核心链路：
 
 - 单聊 Agent：真实 Provider、流式输出、取消、重试、`/clear`、附件、图片理解、Markdown、右侧信息栏。
-- 群聊 Team：`@` 优先、planner 意图识别、handoff 接棒、并行/串行执行、过程消息、取消和上下文清理。
+- 群聊 Team：`@` 优先、orchestrator 意图识别、handoff 接棒、并行/串行执行、过程消息、取消和上下文清理。
 - 本地工具：workspace 文件读写、搜索、命令执行、`web_search`、`web_fetch`。
 - 扩展：Skills、Prompt Alias、MCP catalog、stdio/http/OAuth MCP、Agent 级 Skill/MCP 白名单。
 - 本地数据：`~/.teamaligned`、SQLite、transcript、attachments、artifacts、tool invocations、run steps。
@@ -54,7 +54,7 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - [ ] 设计最小 checkpoint 记录：任务阶段、已完成步骤、失败点、可重试建议。
 - [ ] 将 run、run steps、tool invocations、artifacts、transcript 的跳转关系整理成一致体验。
 - [x] 为群聊执行补充“等待谁 / 谁完成了什么 / 下一步由谁继续”的更稳定表达。
-- [ ] 继续过滤内部过程消息，避免污染下一轮 planner 意图识别。
+- [ ] 继续过滤内部过程消息，避免污染下一轮 orchestrator 意图识别。
 - [ ] 为失败后的“重试上一条 / 编辑后重发 / 清空上下文”整理清晰恢复路径。
 
 ## P3：导出、搜索与分享

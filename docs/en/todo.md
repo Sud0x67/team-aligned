@@ -11,7 +11,7 @@ Current version: `0.4.1-beta`
 TeamAligned has moved from feature wiring into beta hardening. The app now has a real usable core:
 
 - Direct Agent chat: real providers, streaming, cancel, retry, `/clear`, attachments, image understanding, Markdown, and the right info panel.
-- Team chat: explicit `@` priority, planner intent detection, handoff continuity, parallel/sequential execution, process messages, cancel, and context clearing.
+- Team chat: explicit `@` priority, orchestrator intent detection, handoff continuity, parallel/sequential execution, process messages, cancel, and context clearing.
 - Local tools: workspace file read/write, search, command execution, `web_search`, and `web_fetch`.
 - Extensions: Skills, Prompt Alias, MCP catalog, stdio/http/OAuth MCP, and Agent-level Skill/MCP allowlists.
 - Local data: `~/.teamaligned`, SQLite, transcripts, attachments, artifacts, tool invocations, and run steps.
@@ -54,7 +54,7 @@ Goal: when a long task fails or is cancelled, users still know what completed, w
 - [ ] Design a minimal checkpoint record: task phase, completed steps, failure point, and retry suggestion.
 - [ ] Make run, run steps, tool invocations, artifacts, and transcripts link together consistently.
 - [x] Improve team execution messages for “who is waiting,” “who completed what,” and “who continues next.”
-- [ ] Continue filtering internal process messages from planner history so tool chatter does not pollute intent detection.
+- [ ] Continue filtering internal process messages from orchestrator history so tool chatter does not pollute intent detection.
 - [ ] Clarify recovery paths for retry last message, edit and resend, and clear context.
 
 ## P3: Export, Search, And Sharing

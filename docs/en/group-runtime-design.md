@@ -30,8 +30,8 @@ The goal is that users can tell who started, who is continuing, who is waiting, 
 ## Handoff And Intent Rules
 
 - Explicit `@Agent` always takes priority and moves that Agent to the front of the turn.
-- If an explicit `@Agent` request is execution-like, that Agent must become an execution work-item owner. If the planner omits the mentioned Agent or misclassifies the turn as chat, the runtime falls back to a safe execution plan that includes the mentioned Agent.
-- Without explicit `@`, the planner decides whether the turn is `focused`, `multi_voice`, or `collaboration`, then selects the most relevant members.
+- If an explicit `@Agent` request is execution-like, that Agent must become an execution work-item owner. If the orchestrator omits the mentioned Agent or misclassifies the turn as chat, the runtime falls back to a safe execution plan that includes the mentioned Agent.
+- Without explicit `@`, the orchestrator decides whether the turn is `focused`, `multi_voice`, or `collaboration`, then selects the most relevant members.
 - Agent-to-Agent `@` messages update handoff state for the next sub-round.
 - Handoff state is persisted after each turn so the next user message can continue naturally.
 
@@ -49,7 +49,7 @@ Tool calls are now translated into short public process messages such as:
 - “Command finished. I’ll continue.”
 - “I hit a problem during read_text_file: ...”
 
-These messages carry `teamProcess` metadata and are filtered out of the next planner history, so tool log chatter does not pollute intent recognition.
+These messages carry `teamProcess` metadata and are filtered out of the next orchestrator history, so tool log chatter does not pollute intent recognition.
 
 ## Execution Limits
 

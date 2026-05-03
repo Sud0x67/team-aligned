@@ -443,7 +443,7 @@ MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保
 
 第一版 checkpoint 应优先覆盖：
 
-- planner 输出
+- orchestrator 输出
 - subagent 分配点
 - tool 调用前后
 - MCP 调用前后

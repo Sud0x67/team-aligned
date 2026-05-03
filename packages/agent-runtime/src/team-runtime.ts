@@ -30,7 +30,7 @@ export const MAX_AGENT_WORK_ITEMS = 5;
 export const MAX_TEAM_TURN_MESSAGES = 50;
 export const MAX_TEAM_SUBROUNDS = 5;
 export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
-const DEFAULT_TEAM_PLANNER_TIMEOUT_MS = 30_000;
+const DEFAULT_TEAM_ORCHESTRATOR_TIMEOUT_MS = 30_000;
 const DEFAULT_TEAM_WORKER_TIMEOUT_MS = 120_000;
 const DEFAULT_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS = 30_000;
 
@@ -128,7 +128,7 @@ const naturalAgentReplySchema = z.object({
 
 type RawTeamTurnPlan = z.infer<typeof teamTurnPlanSchema>;
 
-type StructuredTeamTurnPlanner = {
+type StructuredTeamTurnOrchestrator = {
   invoke(input: string): Promise<unknown> | unknown;
 };
 
@@ -139,11 +139,11 @@ type WorkerUserContent =
       | { type: "image_url"; image_url: { url: string } }
     >;
 
-function getTeamPlannerTimeoutMs() {
-  const configured = Number(process.env.TA_TEAM_PLANNER_TIMEOUT_MS);
+function getTeamOrchestratorTimeoutMs() {
+  const configured = Number(process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0
     ? configured
-    : DEFAULT_TEAM_PLANNER_TIMEOUT_MS;
+    : DEFAULT_TEAM_ORCHESTRATOR_TIMEOUT_MS;
 }
 
 function getPositiveEnvNumber(name: string, fallback: number) {
@@ -180,8 +180,8 @@ async function withRuntimeTimeout<T>(promise: Promise<T> | T, timeoutMs: number,
   }
 }
 
-async function withTeamPlannerTimeout<T>(promise: Promise<T> | T) {
-  return withRuntimeTimeout(promise, getTeamPlannerTimeoutMs(), "Team turn planner timed out");
+async function withTeamOrchestratorTimeout<T>(promise: Promise<T> | T) {
+  return withRuntimeTimeout(promise, getTeamOrchestratorTimeoutMs(), "Team turn orchestrator timed out");
 }
 
 function buildAttachmentImageDataUrl(attachment: AttachmentAssetRecord) {
@@ -859,7 +859,7 @@ function extractStreamText(chunk: unknown) {
   return "";
 }
 
-function createTeamIntentAgent(input: { provider: ProviderConfig }): StructuredTeamTurnPlanner {
+function createTeamOrchestrator(input: { provider: ProviderConfig }): StructuredTeamTurnOrchestrator {
   return createProviderModel(input.provider).withStructuredOutput(teamTurnPlanSchema);
 }
 
@@ -1128,7 +1128,7 @@ function buildFallbackTeamTurnPlan(input: {
   } satisfies TeamTurnPlan;
 }
 
-export async function planTeamTurn(input: {
+export async function orchestrateTeamTurn(input: {
   provider: ProviderConfig;
   team: TeamRecord;
   members: AgentRecord[];
@@ -1139,7 +1139,7 @@ export async function planTeamTurn(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
-  planner?: StructuredTeamTurnPlanner;
+  orchestrator?: StructuredTeamTurnOrchestrator;
   responseLanguage?: RuntimeLanguage;
 }) {
   const responseLanguage = input.responseLanguage ?? "zh";
@@ -1171,8 +1171,9 @@ export async function planTeamTurn(input: {
   });
 
   try {
-    const planner = input.planner ?? createTeamIntentAgent({ provider: input.provider });
-    const rawResult = await withTeamPlannerTimeout(planner.invoke(
+    const orchestrator = input.orchestrator ?? createTeamOrchestrator({ provider: input.provider });
+    const rawResult = await withTeamOrchestratorTimeout(
+      orchestrator.invoke(
         byLanguage(responseLanguage, {
           zh: [
             "你是 teamaligned 群聊中的不可见 system orchestrator。",
@@ -1198,7 +1199,7 @@ export async function planTeamTurn(input: {
             "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
             "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
             "- 如果用户明确点名某些 Agent 执行，workItems 只能包含这些被点名的 Agent，除非用户明确要求其他 Agent 参与执行",
-            "- 不要创建纯协调/总结 work item；协调信息放在 reason/decision，不要让 Planner 额外执行",
+            "- 不要创建纯协调/总结 work item；协调信息放在 reason/decision，不要增加额外的协调型执行项",
             `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
             "",
             "chat 规则：",
@@ -1252,7 +1253,7 @@ export async function planTeamTurn(input: {
             "- If two tasks might touch the same file, set canRunInParallel=false",
             "- Prefer workspace-relative paths for writeTargets/readTargets",
             "- If the user names specific agents for execution, workItems must only contain those named agents unless the user explicitly asks others to participate",
-            "- Do not create coordination-only work items; put coordination in reason/decision instead of making Planner execute extra work",
+            "- Do not create coordination-only work items; put coordination in reason/decision instead of adding an extra orchestration work item",
             `- Each agent can own at most ${MAX_AGENT_WORK_ITEMS} work items`,
             "",
             "Chat rules:",
@@ -1283,9 +1284,10 @@ export async function planTeamTurn(input: {
             "- speakerIds and ownerAgentId must come from roster ids.",
           ],
         }).join("\n"),
-    ));
+      ),
+    );
     const result = teamTurnPlanSchema.parse(rawResult);
-    const plannerIntent =
+    const orchestratorIntent =
       result.intent === "chat" && fallback.intent === "execute" && input.explicitMentionIds.length > 0
         ? "execute"
         : result.intent;
@@ -1309,7 +1311,7 @@ export async function planTeamTurn(input: {
       speakers: preferredSpeakers,
       members: cappedMembers,
     });
-    if (plannerIntent === "chat" && input.explicitMentionIds.length === 0 && mode === "focused") {
+    if (orchestratorIntent === "chat" && input.explicitMentionIds.length === 0 && mode === "focused") {
       speakers = speakers.slice(0, 1);
     }
 
@@ -1319,7 +1321,7 @@ export async function planTeamTurn(input: {
       responseLanguage,
     });
 
-    if (plannerIntent === "execute") {
+    if (orchestratorIntent === "execute") {
       const candidateWorkItems = mappedWorkItems.length > 0 ? mappedWorkItems : fallback.workItems;
       const requiredOwnerIds = getRequiredExecutionOwnerIds({
         userInput: input.userInput,
@@ -1360,17 +1362,17 @@ export async function planTeamTurn(input: {
         intent: "execute",
         mode,
         speakers: executeSpeakers,
-        reason: plannerIntent !== result.intent ? fallback.reason : compact(result.reason) || fallback.reason,
+        reason: orchestratorIntent !== result.intent ? fallback.reason : compact(result.reason) || fallback.reason,
         activeTask:
-          plannerIntent !== result.intent
+          orchestratorIntent !== result.intent
             ? fallback.activeTask
             : compact(result.activeTask) || compact(input.userInput),
         nextPhase:
-          plannerIntent !== result.intent
+          orchestratorIntent !== result.intent
             ? fallback.nextPhase
             : compact(result.nextPhase) ||
               byLanguage(responseLanguage, { zh: "执行中", en: "Executing" }),
-        decision: plannerIntent !== result.intent ? fallback.decision : compact(result.decision),
+        decision: orchestratorIntent !== result.intent ? fallback.decision : compact(result.decision),
         workItems,
       } satisfies TeamTurnPlan;
     }
@@ -1401,10 +1403,10 @@ export async function selectNaturalTeamSpeakers(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
-  planner?: StructuredTeamTurnPlanner;
+  orchestrator?: StructuredTeamTurnOrchestrator;
   responseLanguage?: RuntimeLanguage;
 }) {
-  const plan = await planTeamTurn(input);
+  const plan = await orchestrateTeamTurn(input);
   return {
     mode: plan.mode,
     speakers: plan.speakers,
@@ -1426,10 +1428,10 @@ export async function planTeamExecution(input: {
   userInput: string;
   explicitMentionIds: string[];
   mcpServers: McpCatalogRecord[];
-  planner?: StructuredTeamTurnPlanner;
+  orchestrator?: StructuredTeamTurnOrchestrator;
   responseLanguage?: RuntimeLanguage;
 }) {
-  const plan = await planTeamTurn(input);
+  const plan = await orchestrateTeamTurn(input);
   if (plan.intent !== "execute" || plan.workItems.length === 0) {
     return null;
   }
