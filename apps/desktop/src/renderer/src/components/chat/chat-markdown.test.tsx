@@ -44,6 +44,27 @@ test("parseChatMarkdown keeps unsafe links as plain text", () => {
   assert.equal(blocks[0]?.type, "paragraph");
 });
 
+test("parseChatMarkdown preserves multiline fenced code blocks", () => {
+  const blocks = parseChatMarkdown(
+    [
+      "```tsx",
+      "function Greeting() {",
+      "  return <div>Hello TeamAligned</div>;",
+      "}",
+      "```",
+    ].join("\n"),
+  );
+
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0]?.type, "code");
+  if (blocks[0]?.type !== "code") return;
+  assert.equal(blocks[0].language, "tsx");
+  assert.equal(
+    blocks[0].text,
+    ["function Greeting() {", "  return <div>Hello TeamAligned</div>;", "}"].join("\n"),
+  );
+});
+
 test("parseChatMarkdown caps oversized tables and content", () => {
   const headers = Array.from({ length: 80 }, (_, index) => `H${index + 1}`).join(" | ");
   const separator = Array.from({ length: 80 }, () => "---").join(" | ");
