@@ -89,6 +89,7 @@ team-aligned-mcps/
 - `/mcp use <slug>`
 - `/mcp tools <slug>`
 - 单聊与群聊 runtime 已能注入 discovered MCP tools
+- `stdio` MCP 子进程只继承安全基础环境变量和连接中显式填写的 env，不默认透传宿主环境里的 API Key / token / secret
 - MCP 未授权/权限错误会在聊天过程消息中提示用户授权后重试
 - OAuth 动态注册不兼容错误会转换成友好的手动配置提示，不再直接暴露底层英文错误
 - OAuth token 过期或需要重新授权时，会清理过期 token 并提示用户重新授权

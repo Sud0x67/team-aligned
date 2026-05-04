@@ -115,6 +115,8 @@ teamaligned
 - Skill script tools
 - MCP discovered tools
 
+命令工具和 `stdio` MCP 子进程只继承运行所需的安全基础环境变量；API Key、OAuth token、MCP secret 等宿主环境敏感值默认不会透传。MCP 连接表单中显式配置的 env 仍会注入到对应连接。
+
 ## 群聊 Team
 
 群聊不是 manager 可见模式，而是“自然团队聊天 + 不可见编排”。
@@ -204,6 +206,7 @@ MCP 当前支持：
 - tool discovery。
 - Agent 级 MCP 白名单。
 - runtime 注入 discovered tools。
+- `stdio` MCP 进程使用受控子进程环境，只包含安全基础环境与该连接显式配置的 env。
 - MCP 调用失败时，未授权/权限错误会进入聊天过程消息，引导用户回到扩展页授权后重试。
 - OAuth token 过期或需要重新授权时，runtime 会清理过期 token 状态并提示重新授权。
 - 高风险工具调用会进入聊天内确认卡片，用户可以 approve/deny；低风险读操作默认不打断。
@@ -292,6 +295,8 @@ ${workspace}/.team-aligned/
 ```
 
 workspace 根目录留给用户生成和管理真实文件。
+
+主进程打开 workspace / 文件夹时会校验路径必须位于 `~/.teamaligned` runtime 根目录或已登记的 Agent / Team workspace 下，避免 renderer 通过 IPC 打开任意本地路径。
 
 ## 通知
 

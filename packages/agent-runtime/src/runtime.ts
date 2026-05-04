@@ -65,6 +65,7 @@ import {
   authorizeMcpConnection,
   checkMcpConnection as healthCheckMcpConnection,
 } from "./mcp-runtime.ts";
+import { buildChildProcessEnv } from "./process-env.ts";
 import type { McpInvocationEvent } from "./mcp-tools.ts";
 import {
   buildRuntimeLangChainTools,
@@ -4511,7 +4512,7 @@ export class TeamalignedRuntime extends EventEmitter {
       const child = spawn(shellCommand, {
         cwd: workspacePath,
         shell: true,
-        env: process.env,
+        env: buildChildProcessEnv(),
       });
 
       const controller = this.activeRuns.get(runId);

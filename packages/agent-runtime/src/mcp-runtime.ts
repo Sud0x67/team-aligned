@@ -19,6 +19,7 @@ import type {
   McpToolRecord,
 } from "@teamaligned/shared";
 import { resolveWorkspaceAwareArgs } from "./mcp-registry.ts";
+import { buildChildProcessEnv } from "./process-env.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
 
@@ -588,12 +589,7 @@ async function withMcpClient<T>(
     const transport = new StdioClientTransport({
       command: input.connection.command!,
       args: resolveWorkspaceAwareArgs(input.connection.args, input.workspacePath),
-      env: Object.fromEntries(
-        Object.entries({
-          ...process.env,
-          ...input.connection.envEntries,
-        }).filter(([, value]) => typeof value === "string"),
-      ) as Record<string, string>,
+      env: buildChildProcessEnv(input.connection.envEntries),
       cwd: input.connection.cwd || input.workspacePath,
       stderr: "pipe",
     });

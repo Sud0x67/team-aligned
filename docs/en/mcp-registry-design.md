@@ -30,6 +30,7 @@ MCP setup should be explicit, recoverable, and easy to understand in UI and runt
 - Agent-level MCP allowlists.
 - `/mcp`, `/mcp use <slug>`, and `/mcp tools <slug>`.
 - Runtime injection for discovered MCP tools in direct and team chats.
+- `stdio` MCP child processes inherit only safe runtime basics and connection-specific explicit env values; host API keys, tokens, and secrets are not forwarded by default.
 - Auth and permission errors surface as chat process messages so users can authorize and retry.
 - Dynamic-client-registration incompatibility errors are translated into friendly manual setup guidance instead of exposing the raw provider error.
 - OAuth token-expiry and re-auth-required failures clear stale token state and prompt users to authorize again.

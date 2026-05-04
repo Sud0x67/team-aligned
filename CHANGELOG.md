@@ -7,12 +7,15 @@ All notable changes to TeamAligned are documented in this file.
 ## Unreleased
 
 - Documentation and minor UX polish for the `0.5.1-beta` hardening line.
+- Security review hardening for local tool execution and workspace-opening IPC.
 
 ## 0.5.1-beta - 2026-05-04
 
 ### Improved
 
 - Hardened workspace path normalization for generated file operations so duplicated absolute workspace prefixes are collapsed before tool execution.
+- Hardened command and stdio MCP child-process environments so ambient API keys, OAuth tokens, and other host secrets are not inherited by default.
+- Hardened the open-workspace IPC path so the renderer can only ask the main process to open known TeamAligned runtime or workspace directories.
 - Extended runtime visibility for long-running model and tool work, including elapsed-time status and diagnostic logging for timeout/error paths.
 - Refreshed architecture, TODO, and release checklist docs to match the current `0.5.1-beta` runtime and UI behavior.
 

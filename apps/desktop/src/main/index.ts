@@ -1,7 +1,7 @@
 import { Notification, app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, homedir, platform, release } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { TeamalignedRuntime } from "@runtime";
 import type {
@@ -35,6 +35,7 @@ import type {
   UpdateSettingsInput,
 } from "@shared";
 import { evaluateNotificationDispatch, type RuntimeNotificationChannel } from "./notification-policy.ts";
+import { isPathInside, resolveAllowedWorkspaceOpenPath } from "./path-policy.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -734,11 +735,6 @@ async function exportConversationImage(
   };
 }
 
-function isPathInside(parentPath: string, childPath: string) {
-  const relativePath = relative(resolve(parentPath), resolve(childPath));
-  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/"));
-}
-
 function getAllowedAssetRoots() {
   const roots = new Set<string>([resolveRuntimeRoot()]);
   const snapshot = runtime?.getSnapshot();
@@ -1031,7 +1027,14 @@ app.whenReady().then(async () => {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
   ipcMain.handle("teamaligned:open-workspace", async (_event, workspacePath: string) => {
-    await shell.openPath(workspacePath);
+    const pathPolicy = resolveAllowedWorkspaceOpenPath(workspacePath, getAllowedAssetRoots());
+    if (!pathPolicy.ok) {
+      throw new Error("Cannot open a path outside TeamAligned workspaces.");
+    }
+    const errorMessage = await shell.openPath(pathPolicy.resolvedPath);
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
   });
 
   await createWindow();

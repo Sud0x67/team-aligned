@@ -7,12 +7,15 @@ TeamAligned 的重要变更会记录在此文件中。
 ## 未发布
 
 - 围绕 `0.5.1-beta` 稳定性分支继续做文档与轻量交互打磨。
+- 补充本地工具执行与打开 workspace IPC 的安全审查加固。
 
 ## 0.5.1-beta - 2026-05-04
 
 ### 优化
 
 - 加强 workspace 路径规范化，Agent 生成文件时会先折叠重复的绝对 workspace 前缀再执行工具。
+- 加强命令工具和 stdio MCP 子进程环境变量隔离，默认不再继承宿主环境里的 API Key、OAuth token 和其他敏感值。
+- 加强打开 workspace 的 IPC 路径校验，renderer 只能请求主进程打开已知的 TeamAligned runtime 或 workspace 目录。
 - 增强长任务可见性，为模型和工具等待过程补充已用时状态与超时/错误诊断日志。
 - 收口架构、TODO 和发布 checklist 文档，使其与当前 `0.5.1-beta` runtime 和 UI 行为一致。
 

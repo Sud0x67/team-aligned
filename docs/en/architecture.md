@@ -115,6 +115,8 @@ Available direct-chat tools include:
 - Skill script tools
 - MCP discovered tools
 
+Command tools and `stdio` MCP child processes only inherit a safe minimal runtime environment. Host-level secrets such as API keys, OAuth tokens, and MCP secrets are not forwarded by default. Environment variables explicitly configured on an MCP connection are still injected for that connection.
+
 ## Team Chat
 
 Team chat is not a visible manager mode. It is natural team chat with invisible orchestration.
@@ -204,6 +206,7 @@ MCP currently supports:
 - Tool discovery.
 - Agent-level MCP allowlists.
 - Runtime injection for discovered tools.
+- `stdio` MCP processes run with a controlled child-process environment: safe runtime basics plus environment variables explicitly configured on that connection.
 - MCP auth/permission failures surface as chat process messages so users can authorize from Extensions and retry.
 - When OAuth tokens expire or re-authorization is required, runtime clears stale token state and prompts the user to authorize again.
 - High-risk tool calls now use in-chat approval cards with approve/deny actions; low-risk reads continue without interruption.
@@ -292,6 +295,8 @@ ${workspace}/.team-aligned/
 ```
 
 The workspace root itself is reserved for user-visible generated files.
+
+The main process validates open-workspace requests before calling the OS. Renderer IPC can only open paths under the `~/.teamaligned` runtime root or registered Agent / Team workspaces, preventing arbitrary local path opening through this channel.
 
 ## Notifications
 
