@@ -817,6 +817,87 @@ test("orchestrateTeamTurn upgrades explicit execution mentions when orchestrator
   assert.equal(result.workItems[0]?.owner.id, "agent-coder");
 });
 
+test("orchestrateTeamTurn keeps explicit web fetch summaries in chat mode", async () => {
+  const members = [
+    makeAgent("agent-coder", "coder", "Coder"),
+    makeAgent("agent-designer", "designer", "Designer"),
+  ];
+  const provider: ProviderConfig = {
+    id: "qwen",
+    label: "Qwen",
+    baseUrl: "https://example.com",
+    apiKey: "dummy",
+    defaultModel: "qwen3.6-plus",
+    supportsToolCalling: true,
+    supportsStreaming: true,
+    isActive: true,
+  };
+  const context: TeamContext = {
+    phase: "讨论中",
+    constraints: [],
+    activeTasks: [],
+    recentDecisions: [],
+    pinnedArtifacts: [],
+    workspaceSummary: "",
+  };
+  const team: TeamRecord = {
+    id: "team-1",
+    name: "产品开发组",
+    description: "",
+    avatar: "产",
+    avatarPath: null,
+    avatarColor: "#7c3aed",
+    workspacePath: "/tmp",
+    memberIds: members.map((item) => item.id),
+    context,
+  };
+  const profile: UserProfile = {
+    name: "User",
+    bio: "",
+    avatarPath: null,
+  };
+
+  const result = await orchestrateTeamTurn({
+    provider,
+    team,
+    members,
+    profile,
+    context,
+    handoff: null,
+    history: [],
+    userInput:
+      "@Coder 请调用 web_fetch 抓取 https://example.com ，然后用一句话总结网页标题或主旨，并保留来源链接。",
+    explicitMentionIds: ["agent-coder"],
+    mcpServers: [],
+    orchestrator: {
+      invoke: async () => ({
+        intent: "execute",
+        mode: "focused",
+        speakerIds: ["agent-coder"],
+        reason: "fetch and write a summary",
+        activeTask: "web_fetch summary",
+        nextPhase: "执行中",
+        decision: "write the summary",
+        workItems: [
+          {
+            ownerAgentId: "agent-coder",
+            summary: "Fetch example.com and write a summary",
+            kickoffMessage: "I will fetch the page.",
+            readTargets: [],
+            writeTargets: ["output/web-fetch-summary.md"],
+            dependsOnAgentIds: [],
+            canRunInParallel: true,
+          },
+        ],
+      }),
+    },
+  });
+
+  assert.equal(result.intent, "chat");
+  assert.equal(result.speakers[0]?.id, "agent-coder");
+  assert.deepEqual(result.workItems, []);
+});
+
 test("orchestrateTeamTurn falls back safely when orchestrator fails", async () => {
   const members = [
     makeAgent("agent-coder", "coder", "Coder"),

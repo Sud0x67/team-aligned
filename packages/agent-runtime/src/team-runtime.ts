@@ -715,6 +715,27 @@ function hasFallbackExecutionIntent(userInput: string) {
   );
 }
 
+function hasExplicitFileOutputIntent(userInput: string) {
+  const normalized = userInput.toLowerCase();
+  return (
+    /进入执行模式|执行模式/.test(normalized) ||
+    /(创建|新建|生成|写入|保存|导出|修改|更新|落地|实现|搭建|制作|编写|写代码|create|write|save|export|update|modify|implement|build|edit).{0,24}(文件|目录|页面|网页|组件|应用|代码|workspace|path|file|folder|directory|page|component|app|code|src\/|docs\/|\.[a-z0-9]{1,8}\b)/i.test(
+      normalized,
+    ) ||
+    /(\.[a-z0-9]{1,8}\b|src\/|docs\/).{0,24}(创建|新建|生成|写入|保存|导出|修改|更新|create|write|save|export|update|modify|edit)/i.test(
+      normalized,
+    )
+  );
+}
+
+function isToolAssistedAnswerIntent(userInput: string) {
+  const normalized = userInput.toLowerCase();
+  if (hasExplicitFileOutputIntent(normalized)) return false;
+  return /web[_\s-]?(fetch|search)|https?:\/\/|网页|网址|链接|url|搜索|检索|查询|抓取|浏览|打开网页|查一下|搜一下|fetch|search|browse|lookup|look up|source|sources|citation/.test(
+    normalized,
+  );
+}
+
 function createEphemeralWorker(input: {
   name: string;
   provider: ProviderConfig;
@@ -1195,6 +1216,7 @@ export async function orchestrateTeamTurn(input: {
     userInput: input.userInput,
     responseLanguage,
   });
+  const forceChatForToolAssistedAnswer = isToolAssistedAnswerIntent(input.userInput);
 
   try {
     const orchestrator = input.orchestrator ?? createTeamOrchestrator({ provider: input.provider });
@@ -1209,6 +1231,8 @@ export async function orchestrateTeamTurn(input: {
             "",
             "意图识别规则：",
             "- 明确要实现、修改、创建、修复、落地、写代码 => intent=execute",
+            "- 调用 web_fetch/web_search/MCP/工具来搜索、抓取、查询、总结、回答，但没有明确要求创建/修改/保存文件 => intent=chat",
+            "- 不要因为用户说“调用工具”就进入 execute；工具辅助问答仍然是 chat",
             "- 讨论、评审、问答、澄清 => intent=chat",
             "",
             "mode 规则（无论 chat/execute 都要给出）：",
@@ -1224,6 +1248,7 @@ export async function orchestrateTeamTurn(input: {
             "- 如果任务依赖另一个 Agent 的输出，请填写 dependsOnAgentIds",
             "- 如果两个任务可能修改相同文件，请把 canRunInParallel 设为 false",
             "- writeTargets 和 readTargets 尽量使用 workspace 相对路径",
+            "- 不要虚构 writeTargets；只有用户明确给出路径或明确要求保存/生成/修改文件时才填写 writeTargets",
             "- 如果用户明确点名某些 Agent 执行，workItems 只能包含这些被点名的 Agent，除非用户明确要求其他 Agent 参与执行",
             "- 不要创建纯协调/总结 work item；协调信息放在 reason/decision，不要增加额外的协调型执行项",
             `- 每个 Agent 最多 ${MAX_AGENT_WORK_ITEMS} 个 work item`,
@@ -1263,6 +1288,8 @@ export async function orchestrateTeamTurn(input: {
             "",
             "Intent rules:",
             "- Clear implement/modify/create/fix/deliver/code asks => intent=execute",
+            "- Searching, fetching, browsing, querying, summarizing, or answering with web_fetch/web_search/MCP/tools without an explicit file create/modify/save request => intent=chat",
+            "- Do not choose execute just because the user asked to call a tool; tool-assisted Q&A is still chat",
             "- Discussion/review/Q&A/clarification => intent=chat",
             "",
             "Mode rules (always required):",
@@ -1278,6 +1305,7 @@ export async function orchestrateTeamTurn(input: {
             "- If a task depends on another agent's output, include dependsOnAgentIds",
             "- If two tasks might touch the same file, set canRunInParallel=false",
             "- Prefer workspace-relative paths for writeTargets/readTargets",
+            "- Do not invent writeTargets; fill writeTargets only when the user explicitly provides a path or asks to save/generate/modify files",
             "- If the user names specific agents for execution, workItems must only contain those named agents unless the user explicitly asks others to participate",
             "- Do not create coordination-only work items; put coordination in reason/decision instead of adding an extra orchestration work item",
             `- Each agent can own at most ${MAX_AGENT_WORK_ITEMS} work items`,
@@ -1314,7 +1342,9 @@ export async function orchestrateTeamTurn(input: {
     );
     const result = teamTurnPlanSchema.parse(rawResult);
     const orchestratorIntent =
-      result.intent === "chat" && fallback.intent === "execute" && input.explicitMentionIds.length > 0
+      forceChatForToolAssistedAnswer
+        ? "chat"
+        : result.intent === "chat" && fallback.intent === "execute" && input.explicitMentionIds.length > 0
         ? "execute"
         : result.intent;
     const mode = result.mode ?? fallback.mode;

@@ -235,6 +235,29 @@ async function waitForLatestRun(
   throw new Error(`Timed out waiting for run completion. Latest status: ${current?.status ?? "none"}`);
 }
 
+async function cancelPendingRun(
+  runtime: TeamalignedRuntime,
+  conversationId: string,
+  previousRunIds: Set<string>,
+  timeoutMs = 5_000,
+) {
+  try {
+    await runtime.controlRun({ conversationId, action: "cancel" });
+  } catch {
+    // Best-effort cleanup: the original scenario error should remain the reported failure.
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = runtime.getConversationSnapshot(conversationId);
+    const run = snapshot.runs.find(
+      (item) => item.conversationId === conversationId && !previousRunIds.has(item.id),
+    );
+    if (!run || terminalRunStatuses.has(run.status)) return;
+    await sleep(250);
+  }
+}
+
 function hasTeamUpdate(messages: MessageRecord[], stage: string) {
   return messages.some(
     (message) =>
@@ -295,21 +318,31 @@ async function runScenario(input: {
   }
   const timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    sendPromise,
-    new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
-        reject(new Error(`Scenario timed out after ${timeoutMs}ms: ${input.name}`));
-      }, timeoutMs);
-    }),
-  ]).finally(() => {
+  try {
+    await Promise.race([
+      sendPromise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
+          reject(new Error(`Scenario timed out after ${timeoutMs}ms: ${input.name}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    await cancelPendingRun(input.runtime, input.conversationId, previousRunIds);
+    throw error;
+  } finally {
     if (timeout) clearTimeout(timeout);
-  });
+  }
 
   let run: RunRecord | null = null;
   if (!input.userInput.trim().startsWith("/clear")) {
-    run = await waitForLatestRun(input.runtime, input.conversationId, previousRunIds);
+    try {
+      run = await waitForLatestRun(input.runtime, input.conversationId, previousRunIds);
+    } catch (error) {
+      await cancelPendingRun(input.runtime, input.conversationId, previousRunIds);
+      throw error;
+    }
   } else {
     await sleep(500);
   }
@@ -363,21 +396,31 @@ async function runDirectScenario(input: {
   }
   const timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    sendPromise,
-    new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
-        reject(new Error(`Scenario timed out after ${timeoutMs}ms: ${input.name}`));
-      }, timeoutMs);
-    }),
-  ]).finally(() => {
+  try {
+    await Promise.race([
+      sendPromise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          void input.runtime.controlRun({ conversationId: input.conversationId, action: "cancel" });
+          reject(new Error(`Scenario timed out after ${timeoutMs}ms: ${input.name}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    await cancelPendingRun(input.runtime, input.conversationId, previousRunIds);
+    throw error;
+  } finally {
     if (timeout) clearTimeout(timeout);
-  });
+  }
 
   let run: RunRecord | null = null;
   if (!input.userInput.trim().startsWith("/clear")) {
-    run = await waitForLatestRun(input.runtime, input.conversationId, previousRunIds);
+    try {
+      run = await waitForLatestRun(input.runtime, input.conversationId, previousRunIds);
+    } catch (error) {
+      await cancelPendingRun(input.runtime, input.conversationId, previousRunIds);
+      throw error;
+    }
   } else {
     await sleep(500);
   }
