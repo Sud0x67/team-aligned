@@ -1,7 +1,6 @@
 import type { ProviderConfig } from "@teamaligned/shared";
+import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
 
-const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_FETCH_CHARS = 8_000;
 const MAX_FETCH_CHARS = 32_000;
@@ -435,7 +434,8 @@ export async function runWebFetch(input: {
   }
 
   const extractMode = input.extractMode === "markdown" ? "markdown" : "text";
-  const timeoutMs = clampNumber(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS);
+  const timeouts = getRuntimeTimeouts();
+  const timeoutMs = clampNumber(input.timeoutMs ?? timeouts.webToolMs, 1_000, timeouts.webToolMaxMs);
   const maxResponseBytes = clampNumber(input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES, 64_000, 10 * 1024 * 1024);
   const maxRedirects = clampNumber(input.maxRedirects ?? 4, 0, 8);
   const maxChars = clampNumber(input.maxChars ?? DEFAULT_MAX_FETCH_CHARS, 512, MAX_FETCH_CHARS);
@@ -488,7 +488,8 @@ export async function runWebSearch(input: {
     throw new Error("Query cannot be empty.");
   }
 
-  const timeoutMs = clampNumber(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS);
+  const timeouts = getRuntimeTimeouts();
+  const timeoutMs = clampNumber(input.timeoutMs ?? timeouts.webToolMs, 1_000, timeouts.webToolMaxMs);
   const maxResults = clampNumber(input.maxResults ?? DEFAULT_SEARCH_RESULTS, 1, MAX_SEARCH_RESULTS);
 
   if (input.provider) {

@@ -142,6 +142,8 @@ export function ChatMessageThread({
   showInternalMessages,
   pendingSystemMessage,
   pendingSystemUpdates,
+  pendingReasoningText,
+  runElapsedLabel,
   pendingActor,
   showMentions,
   profile,
@@ -163,6 +165,8 @@ export function ChatMessageThread({
   showInternalMessages: boolean;
   pendingSystemMessage: string | null;
   pendingSystemUpdates: string[];
+  pendingReasoningText: string | null;
+  runElapsedLabel: string | null;
   pendingActor: {
     name: string;
     avatarPath: string | null;
@@ -586,7 +590,7 @@ export function ChatMessageThread({
             );
           })}
 
-          {pendingSystemMessage && !hasStreamingVisibleMessage ? (
+          {(pendingSystemMessage || pendingReasoningText) && !hasStreamingVisibleMessage ? (
             <div className="flex justify-start">
               <div className="flex max-w-[72%] items-start gap-2.5">
                 {pendingActor ? (
@@ -606,13 +610,27 @@ export function ChatMessageThread({
                     </span>
                     <span className="text-[var(--muted-foreground)]">·</span>
                     <span className="text-[var(--muted-foreground)]">{t.chat("systemThinking")}</span>
+                    {runElapsedLabel ? (
+                      <>
+                        <span className="text-[var(--muted-foreground)]">·</span>
+                        <span className="text-[var(--muted-foreground)]">{runElapsedLabel}</span>
+                      </>
+                    ) : null}
                   </div>
                   <div className="rounded-2xl rounded-tl-md border border-transparent bg-[var(--muted)] px-4 py-3 text-[14px] leading-7 text-[var(--foreground)] shadow-sm">
                     <div className="mb-2 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
                       <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
                       <span className="animate-pulse">{t.chat("thinking")}</span>
                     </div>
-                    <ChatMarkdownContent content={pendingSystemMessage} />
+                    {pendingSystemMessage ? <ChatMarkdownContent content={pendingSystemMessage} /> : null}
+                    {pendingReasoningText ? (
+                      <div className="mt-2 rounded-xl border border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[color-mix(in_srgb,var(--primary)_6%,transparent)] px-3 py-2">
+                        <p className="mb-1 text-[11px] font-semibold text-[var(--primary)]">
+                          {language === "en" ? "Model thinking" : "模型思考"}
+                        </p>
+                        <ChatMarkdownContent content={pendingReasoningText} />
+                      </div>
+                    ) : null}
                     {visiblePendingUpdates.length > 0 ? (
                       <div className="mt-3 space-y-1">
                         {visiblePendingUpdates.map((line, index) => (

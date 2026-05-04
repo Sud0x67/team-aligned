@@ -1,4 +1,4 @@
-import { createDeepAgent, FilesystemBackend } from "deepagents";
+import { createDeepAgent } from "deepagents";
 import { MemorySaver } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import type { StructuredToolInterface } from "@langchain/core/tools";
@@ -18,6 +18,8 @@ import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-to
 import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
+import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
+import { createWorkspaceFilesystemBackend } from "./deep-agent-filesystem.ts";
 
 type TokenUsageSummary = {
   inputTokens: number | null;
@@ -30,6 +32,12 @@ type DeepAgentSession = {
   agent: ReturnType<typeof createDeepAgent>;
   initialized: boolean;
 };
+
+type RuntimeErrorReporter = (
+  source: string,
+  error: unknown,
+  metadata?: Record<string, unknown>,
+) => void | Promise<void>;
 
 type ChatInputMessage = {
   role: "user" | "assistant";
@@ -472,6 +480,7 @@ function buildSystemPrompt(input: {
       "请优先使用与用户相同的语言回复。",
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
       "如果需要读取、搜索、写入当前 workspace 的真实文件，请优先使用 workspace_* 工具；这些工具会被 TeamAligned 记录为可见过程。",
+      "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
       "不要仅因为用户没有显式输入 /skill-id 就忽略白名单 Skills；请根据 Skill 描述自动判断是否需要加载。",
       runtimeToolSummary,
       "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
@@ -495,6 +504,7 @@ function buildSystemPrompt(input: {
       "Reply in the same language the user is currently using.",
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
       "When reading, searching, or writing real files in the current workspace, prefer the workspace_* tools so TeamAligned can surface visible progress.",
+      "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
       "Do not ignore allowlisted Skills just because the user did not explicitly type /skill-id; infer relevance from Skill descriptions.",
       runtimeToolSummary,
       "If local config or request constraints block progress, clearly explain what information or configuration is missing.",
@@ -509,7 +519,7 @@ export function createProviderModel(provider: ProviderConfig) {
     model: provider.defaultModel,
     apiKey: provider.apiKey,
     temperature: 0.2,
-    timeout: 120_000,
+    timeout: getRuntimeTimeouts().singleChatModelMs,
     maxRetries: 2,
     streaming: provider.supportsStreaming,
     configuration: {
@@ -715,6 +725,8 @@ export async function invokeSingleChatDeepAgent(input: {
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onRuntimeError?: RuntimeErrorReporter;
   responseLanguage?: RuntimeLanguage;
 }): Promise<{ text: string; usage: TokenUsageSummary | null }> {
   const {
@@ -734,6 +746,7 @@ export async function invokeSingleChatDeepAgent(input: {
     additionalTools,
     runtimeToolSummary,
     onTextStream,
+    onReasoningStream,
     responseLanguage = "zh",
   } = input;
 
@@ -793,10 +806,7 @@ export async function invokeSingleChatDeepAgent(input: {
               responseLanguage,
             }),
             tools,
-            backend: new FilesystemBackend({
-              rootDir: workspacePath,
-              virtualMode: true,
-            }),
+            backend: createWorkspaceFilesystemBackend(workspacePath),
             checkpointer: new MemorySaver(),
             memory: ["/.team-aligned/memory/MEMORY.md"],
           }),
@@ -812,11 +822,14 @@ export async function invokeSingleChatDeepAgent(input: {
   const messages = session.initialized ? [latestUserMessage] : [...previousMessages, latestUserMessage];
 
   if (
-    ((provider.supportsStreaming && onTextStream) || input.onDeepAgentToolInvocation) &&
+    ((provider.supportsStreaming && (onTextStream || onReasoningStream)) ||
+      input.onDeepAgentToolInvocation) &&
     typeof (session.agent as { streamEvents?: unknown }).streamEvents === "function"
   ) {
+    const streamStartedAt = Date.now();
     try {
       let streamedText = "";
+      let reasoningText = "";
       let finalOutput: unknown = null;
       const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
         input.onDeepAgentToolInvocation,
@@ -835,13 +848,18 @@ export async function invokeSingleChatDeepAgent(input: {
         if (!event || typeof event !== "object") continue;
         await emitDeepAgentToolInvocation(event);
         if (event.event === "on_chat_model_stream") {
-          if (!provider.supportsStreaming || !onTextStream) {
-            continue;
-          }
           const chunk =
             "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
               ? event.data.chunk
               : null;
+          const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
+          if (provider.supportsStreaming && onReasoningStream && reasoningDelta) {
+            reasoningText += reasoningDelta;
+            await onReasoningStream(reasoningText, reasoningDelta);
+          }
+          if (!provider.supportsStreaming || !onTextStream) {
+            continue;
+          }
           const delta = extractStreamText(chunk);
           if (!delta) continue;
           streamedText += delta;
@@ -865,8 +883,16 @@ export async function invokeSingleChatDeepAgent(input: {
           usage: extractTokenUsage(finalOutput),
         };
       }
-    } catch {
-      // Fallback to non-streaming invoke below.
+    } catch (error) {
+      await input.onRuntimeError?.("deep-agent:stream-events", error, {
+        conversationId,
+        agentId: agent.id,
+        providerId: provider.id,
+        model: provider.defaultModel,
+        phase: "stream",
+        elapsedMs: Date.now() - streamStartedAt,
+      });
+      // Fallback to non-streaming invoke below after logging the stream failure.
     }
   }
 
@@ -903,4 +929,60 @@ function extractStreamText(chunk: unknown) {
   }
 
   return "";
+}
+
+function normalizeReasoningValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(normalizeReasoningValue).filter(Boolean).join("");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.text === "string") return record.text;
+    if (typeof record.content === "string") return record.content;
+    if (Array.isArray(record.content)) return normalizeReasoningValue(record.content);
+  }
+  return "";
+}
+
+export function extractStreamReasoningText(value: unknown, depth = 0): string {
+  if (!value || typeof value !== "object" || depth > 5) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractStreamReasoningText(item, depth + 1))
+      .filter(Boolean)
+      .join("");
+  }
+
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
+  if (["reasoning", "thinking", "thought"].includes(type)) {
+    return normalizeReasoningValue(record.text ?? record.content ?? record.delta);
+  }
+
+  for (const key of [
+    "reasoning",
+    "reasoning_content",
+    "reasoningContent",
+    "thinking",
+    "thought",
+    "thoughts",
+  ]) {
+    const text = normalizeReasoningValue(record[key]);
+    if (text) return text;
+  }
+
+  return [
+    record.additional_kwargs,
+    record.response_metadata,
+    record.data,
+    record.chunk,
+    record.delta,
+    record.content,
+  ]
+    .map((item) => extractStreamReasoningText(item, depth + 1))
+    .filter(Boolean)
+    .join("");
 }

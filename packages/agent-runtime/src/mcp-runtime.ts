@@ -20,9 +20,8 @@ import type {
 } from "@teamaligned/shared";
 import { resolveWorkspaceAwareArgs } from "./mcp-registry.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
+import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
 
-const MCP_CONNECT_TIMEOUT_MS = 15_000;
-const MCP_TOOL_TIMEOUT_MS = 30_000;
 const MCP_OAUTH_TIMEOUT_MS = 180_000;
 const MCP_OAUTH_CALLBACK_PORT = 37371;
 
@@ -579,6 +578,7 @@ async function withMcpClient<T>(
   },
   execute: (client: Client, transport: StdioClientTransport | StreamableHTTPClientTransport) => Promise<T>,
 ) {
+  const timeouts = getRuntimeTimeouts();
   const client = new Client({
     name: "teamaligned",
     version: "0.1.0",
@@ -600,13 +600,13 @@ async function withMcpClient<T>(
     try {
       await withTimeout(
         client.connect(transport),
-        MCP_CONNECT_TIMEOUT_MS,
-        `连接 MCP 超时（>${Math.round(MCP_CONNECT_TIMEOUT_MS / 1000)}s）。`,
+        timeouts.mcpConnectMs,
+        `连接 MCP 超时（>${Math.round(timeouts.mcpConnectMs / 1000)}s）。`,
       );
       return await withTimeout(
         execute(client, transport),
-        MCP_TOOL_TIMEOUT_MS,
-        `MCP 操作超时（>${Math.round(MCP_TOOL_TIMEOUT_MS / 1000)}s）。`,
+        timeouts.mcpToolMs,
+        `MCP 操作超时（>${Math.round(timeouts.mcpToolMs / 1000)}s）。`,
       );
     } finally {
       await transport.close().catch(() => undefined);
@@ -630,7 +630,7 @@ async function withMcpClient<T>(
   const transport = new StreamableHTTPClientTransport(new URL(latestConnection.url!), {
     authProvider: oauth?.provider,
     requestInit: {
-      signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeouts.mcpConnectMs),
       headers: Object.fromEntries(
         Object.entries(latestConnection.headers).filter(([, value]) => value.trim().length > 0),
       ),
@@ -639,13 +639,13 @@ async function withMcpClient<T>(
   try {
     await withTimeout(
       client.connect(transport),
-      MCP_CONNECT_TIMEOUT_MS,
-      `连接远端 MCP 超时（>${Math.round(MCP_CONNECT_TIMEOUT_MS / 1000)}s）。`,
+      timeouts.mcpConnectMs,
+      `连接远端 MCP 超时（>${Math.round(timeouts.mcpConnectMs / 1000)}s）。`,
     );
     return await withTimeout(
       execute(client, transport),
-      MCP_TOOL_TIMEOUT_MS,
-      `远端 MCP 操作超时（>${Math.round(MCP_TOOL_TIMEOUT_MS / 1000)}s）。`,
+      timeouts.mcpToolMs,
+      `远端 MCP 操作超时（>${Math.round(timeouts.mcpToolMs / 1000)}s）。`,
     );
   } catch (error) {
     if (input.catalog.authType === "oauth" && isUnauthorizedError(error)) {
@@ -690,6 +690,7 @@ export async function checkMcpConnection(input: {
   responseLanguage?: RuntimeLanguage;
   onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
 }): Promise<McpConnectionRecord> {
+  const timeouts = getRuntimeTimeouts();
   const responseLanguage = input.responseLanguage ?? "zh";
   let latestConnection = ensureOAuthConnection(input.catalog, input.connection);
   const requiredConfigError = getRequiredConfigError(input.catalog, latestConnection, responseLanguage);
@@ -774,6 +775,7 @@ export async function authorizeMcpConnection(input: {
   openAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>;
   onConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
 }): Promise<McpConnectionRecord> {
+  const timeouts = getRuntimeTimeouts();
   const responseLanguage = input.responseLanguage ?? "zh";
   let latestConnection = ensureOAuthConnection(input.catalog, input.connection);
 
@@ -818,7 +820,7 @@ export async function authorizeMcpConnection(input: {
     const transport = new StreamableHTTPClientTransport(new URL(latestConnection.url!), {
       authProvider: oauth.provider,
       requestInit: {
-        signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeouts.mcpConnectMs),
         headers: Object.fromEntries(
           Object.entries(latestConnection.headers).filter(([, value]) => value.trim().length > 0),
         ),

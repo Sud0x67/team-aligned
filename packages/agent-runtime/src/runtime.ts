@@ -98,6 +98,7 @@ import {
   resolveWorkspaceReferences,
   searchWorkspaceFiles as searchWorkspaceFilesInWorkspace,
 } from "./workspace-file-search.ts";
+import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
 
 type RunStep = {
   label: string;
@@ -207,16 +208,42 @@ function serializeRuntimeError(error: unknown) {
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message,
-      stack: error.stack ?? null,
+      message: sanitizeSensitiveText(error.message),
+      stack: error.stack ? sanitizeSensitiveText(error.stack) : null,
     };
   }
 
   return {
     name: typeof error,
-    message: String(error),
+    message: sanitizeSensitiveText(String(error)),
     stack: null,
   };
+}
+
+function sanitizeSensitiveText(value: string) {
+  return value
+    .replace(/(api[_-]?key|authorization|bearer|token|secret|password)(["'\s:=]+)([^"',\s}]+)/gi, "$1$2[redacted]")
+    .replace(/sk-[A-Za-z0-9_-]{16,}/g, "sk-[redacted]");
+}
+
+function sanitizeRuntimeMetadata(value: unknown, depth = 0): unknown {
+  if (depth > 5) return "[redacted]";
+  if (typeof value === "string") return sanitizeSensitiveText(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeRuntimeMetadata(item, depth + 1));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      if (/api[_-]?key|authorization|bearer|token|secret|password|headers?|env/i.test(key)) {
+        return [key, "[redacted]"];
+      }
+      return [key, sanitizeRuntimeMetadata(item, depth + 1)];
+    }),
+  );
 }
 
 function sanitizeExportName(value: string) {
@@ -467,8 +494,70 @@ export class TeamalignedRuntime extends EventEmitter {
     this.emit("runtime-error", {
       source,
       ...serializeRuntimeError(error),
-      metadata,
+      metadata: metadata ? (sanitizeRuntimeMetadata(metadata) as Record<string, unknown>) : null,
     } satisfies RuntimeErrorLog);
+  }
+
+  private emitRunRuntimeError(
+    source: string,
+    error: unknown,
+    metadata: Record<string, unknown> = {},
+  ) {
+    this.emitRuntimeError(source, error, metadata);
+  }
+
+  private appendRunProgressMetadata(
+    runId: string,
+    entry: {
+      content: string;
+      phase?: string;
+      actorId?: string | null;
+      actorName?: string | null;
+      kind?: string;
+    },
+  ) {
+    const run = this.storage.getRun(runId);
+    if (!run) return;
+    const metadata = run.metadata ?? {};
+    const existing = Array.isArray(metadata.progressTail)
+      ? metadata.progressTail.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      : [];
+    const nextEntry = {
+      ...entry,
+      content: trimOutput(entry.content, 1200),
+      createdAt: Date.now(),
+    };
+    this.storage.updateRun(runId, {
+      metadata: {
+        ...metadata,
+        progressTail: [...existing, nextEntry].slice(-8),
+        latestProgress: nextEntry,
+      },
+    });
+  }
+
+  private updateRunReasoningMetadata(
+    runId: string,
+    aggregatedText: string,
+    input: {
+      actorId?: string | null;
+      actorName?: string | null;
+      phase?: string;
+    } = {},
+  ) {
+    const run = this.storage.getRun(runId);
+    if (!run) return;
+    const text = trimOutput(aggregatedText, 4000);
+    this.storage.updateRun(runId, {
+      metadata: {
+        ...(run.metadata ?? {}),
+        reasoningText: text,
+        reasoningUpdatedAt: Date.now(),
+        reasoningActorId: input.actorId ?? null,
+        reasoningActorName: input.actorName ?? null,
+        reasoningPhase: input.phase ?? null,
+      },
+    });
   }
 
   private createAppNotification(
@@ -1716,6 +1805,18 @@ export class TeamalignedRuntime extends EventEmitter {
         errorText: event.error,
         completedAt: event.completedAt,
       });
+      this.emitRunRuntimeError("runtime:tool-invocation", new Error(event.error), {
+        conversationId,
+        runId,
+        serverId: "server" in event ? event.server.id : event.serverId,
+        serverName: "server" in event ? event.server.name : event.serverName,
+        toolName: event.toolName,
+        phase: "tool_error",
+        elapsedMs:
+          typeof event.completedAt === "number" && typeof event.startedAt === "number"
+            ? event.completedAt - event.startedAt
+            : null,
+      });
     };
   }
 
@@ -2609,7 +2710,44 @@ export class TeamalignedRuntime extends EventEmitter {
         label: byLanguage(responseLanguage, { zh: "调用真实模型", en: "Call real model" }),
         execute: async () => {
           let response;
+          const modelStartedAt = Date.now();
+          let heartbeat: ReturnType<typeof setInterval> | null = null;
           try {
+            this.appendRunProgressMetadata(runId, {
+              kind: "model",
+              phase: "model_start",
+              actorId: agent.id,
+              actorName: agent.name,
+              content: byLanguage(responseLanguage, {
+                zh: `${agent.name} 正在调用模型并等待流式回复。`,
+                en: `${agent.name} is calling the model and waiting for the streamed reply.`,
+              }),
+            });
+            heartbeat = setInterval(() => {
+              const currentRun = this.storage.getRun(runId);
+              if (!currentRun || ["completed", "failed", "cancelled"].includes(currentRun.status)) {
+                if (heartbeat) clearInterval(heartbeat);
+                heartbeat = null;
+                return;
+              }
+              const content = byLanguage(responseLanguage, {
+                zh: `${agent.name} 仍在等待模型返回，已用时 ${Math.round((Date.now() - modelStartedAt) / 1000)} 秒。`,
+                en: `${agent.name} is still waiting for the model, elapsed ${Math.round((Date.now() - modelStartedAt) / 1000)} seconds.`,
+              });
+              this.addRunMessage(conversation.id, runId, content, "system", {
+                stage: "execution_waiting",
+                actorId: agent.id,
+                actorName: agent.name,
+              });
+              this.appendRunProgressMetadata(runId, {
+                kind: "heartbeat",
+                phase: "execution_waiting",
+                actorId: agent.id,
+                actorName: agent.name,
+                content,
+              });
+              this.emitSnapshot();
+            }, 60_000);
             response = await invokeSingleChatDeepAgent({
               sessions: this.singleChatSessions,
               conversationId: conversation.id,
@@ -2631,6 +2769,27 @@ export class TeamalignedRuntime extends EventEmitter {
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
               responseLanguage,
+              onRuntimeError: (source, error, metadata) => {
+                this.emitRunRuntimeError(source, error, {
+                  conversationId: conversation.id,
+                  runId,
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  providerId: provider!.id,
+                  model: provider!.defaultModel,
+                  ...metadata,
+                });
+              },
+              onReasoningStream: async (aggregatedText) => {
+                const currentRun = this.storage.getRun(runId);
+                if (!currentRun || currentRun.status === "cancelled") return;
+                this.updateRunReasoningMetadata(runId, aggregatedText, {
+                  actorId: agent.id,
+                  actorName: agent.name,
+                  phase: "model_reasoning",
+                });
+                this.emitSnapshot();
+              },
               onTextStream: async (aggregatedText) => {
                 const currentRun = this.storage.getRun(runId);
                 if (!currentRun || currentRun.status === "cancelled") return;
@@ -2675,7 +2834,27 @@ export class TeamalignedRuntime extends EventEmitter {
                 this.emitSnapshot();
               },
             });
+            this.appendRunProgressMetadata(runId, {
+              kind: "model",
+              phase: "model_done",
+              actorId: agent.id,
+              actorName: agent.name,
+              content: byLanguage(responseLanguage, {
+                zh: `${agent.name} 已收到模型回复，用时 ${Math.round((Date.now() - modelStartedAt) / 1000)} 秒。`,
+                en: `${agent.name} received the model reply in ${Math.round((Date.now() - modelStartedAt) / 1000)} seconds.`,
+              }),
+            });
           } catch (error) {
+            this.emitRunRuntimeError("single-chat:model", error, {
+              conversationId: conversation.id,
+              runId,
+              agentId: agent.id,
+              agentName: agent.name,
+              providerId: provider!.id,
+              model: provider!.defaultModel,
+              phase: "model_call",
+              elapsedMs: Date.now() - modelStartedAt,
+            });
             throw new Error(
               normalizeProviderErrorMessage(error, {
                 id: provider!.id,
@@ -2684,6 +2863,10 @@ export class TeamalignedRuntime extends EventEmitter {
                 defaultModel: provider!.defaultModel,
               }, responseLanguage),
             );
+          } finally {
+            if (heartbeat) {
+              clearInterval(heartbeat);
+            }
           }
 
           if (this.storage.getRun(runId)?.status === "cancelled") {
@@ -3242,6 +3425,7 @@ export class TeamalignedRuntime extends EventEmitter {
               const results = await Promise.all(
                 batch.map(async (item) => {
                   let streamMessageId: string | null = null;
+                  let heartbeat: ReturnType<typeof setInterval> | null = null;
                   try {
                     const teamToolObserver = this.createTeamToolInvocationObserver({
                       conversationId: conversation.id,
@@ -3272,6 +3456,31 @@ export class TeamalignedRuntime extends EventEmitter {
                       actor: item.owner,
                       onInvocation: teamToolObserver,
                     });
+                    const workerStartedAt = Date.now();
+                    heartbeat = setInterval(() => {
+                      if (!shouldContinueRun()) {
+                        if (heartbeat) clearInterval(heartbeat);
+                        heartbeat = null;
+                        return;
+                      }
+                      const content = byLanguage(responseLanguage, {
+                        zh: `${item.owner.name} 仍在处理：${item.summary}，已用时 ${Math.round((Date.now() - workerStartedAt) / 1000)} 秒。`,
+                        en: `${item.owner.name} is still working on ${item.summary}, elapsed ${Math.round((Date.now() - workerStartedAt) / 1000)} seconds.`,
+                      });
+                      this.emitTeamUpdate({
+                        conversationId: conversation.id,
+                        runId,
+                        stage: "execution_waiting",
+                        actorId: item.owner.id,
+                        actorName: item.owner.name,
+                        content,
+                        metadata: {
+                          workItemId: item.id,
+                          batchIndex,
+                        },
+                      });
+                      this.emitSnapshot();
+                    }, 60_000);
                     const content = await executeNaturalTeamWorkItem({
                       provider: provider!,
                       profile: snapshot.profile,
@@ -3300,6 +3509,30 @@ export class TeamalignedRuntime extends EventEmitter {
                         actorName: item.owner.name,
                         responseLanguage,
                       }),
+                      onRuntimeError: (source, error, metadata) => {
+                        this.emitRunRuntimeError(source, error, {
+                          conversationId: conversation.id,
+                          runId,
+                          teamId: team.id,
+                          teamName: team.name,
+                          agentId: item.owner.id,
+                          agentName: item.owner.name,
+                          providerId: provider!.id,
+                          model: provider!.defaultModel,
+                          ...metadata,
+                        });
+                      },
+                      onReasoningStream: async (aggregatedText) => {
+                        if (!shouldContinueRun()) {
+                          return;
+                        }
+                        this.updateRunReasoningMetadata(runId, aggregatedText, {
+                          actorId: item.owner.id,
+                          actorName: item.owner.name,
+                          phase: "team_worker_reasoning",
+                        });
+                        this.emitSnapshot();
+                      },
                       onUpdate: ({ phase, content }) => {
                         if (!shouldContinueRun()) {
                           return;
@@ -3363,6 +3596,10 @@ export class TeamalignedRuntime extends EventEmitter {
                       additionalTools: runtimeTools.tools,
                       runtimeToolSummary: runtimeTools.summary,
                     });
+                    if (heartbeat) {
+                      clearInterval(heartbeat);
+                      heartbeat = null;
+                    }
                     return { item, ok: true as const, content, streamMessageId };
                   } catch (error) {
                     return {
@@ -3378,8 +3615,13 @@ export class TeamalignedRuntime extends EventEmitter {
                           : byLanguage(responseLanguage, {
                               zh: `${item.owner.name}：我执行这个任务时遇到了未知问题。`,
                               en: `${item.owner.name}: I hit an unknown issue while executing this task.`,
-                            }),
+                          }),
                     };
+                  } finally {
+                    if (heartbeat) {
+                      clearInterval(heartbeat);
+                      heartbeat = null;
+                    }
                   }
                 }),
               );
@@ -3630,6 +3872,30 @@ export class TeamalignedRuntime extends EventEmitter {
                   actorName: speaker.name,
                   responseLanguage,
                 }),
+                onRuntimeError: (source, error, metadata) => {
+                  this.emitRunRuntimeError(source, error, {
+                    conversationId: conversation.id,
+                    runId,
+                    teamId: team.id,
+                    teamName: team.name,
+                    agentId: speaker.id,
+                    agentName: speaker.name,
+                    providerId: provider!.id,
+                    model: provider!.defaultModel,
+                    ...metadata,
+                  });
+                },
+                onReasoningStream: async (aggregatedText) => {
+                  if (!shouldContinueRun()) {
+                    return;
+                  }
+                  this.updateRunReasoningMetadata(runId, aggregatedText, {
+                    actorId: speaker.id,
+                    actorName: speaker.name,
+                    phase: "team_chat_reasoning",
+                  });
+                  this.emitSnapshot();
+                },
                 onTextStream: async (aggregatedText) => {
                   if (!shouldContinueRun()) {
                     return;
@@ -4049,6 +4315,7 @@ export class TeamalignedRuntime extends EventEmitter {
         transcriptPath: transcriptPaths.globalTranscriptPath,
         workspaceTranscriptPath: transcriptPaths.workspaceTranscriptPath,
         responseLanguage: input.responseLanguage ?? "zh",
+        runtimeTimeouts: getRuntimeTimeouts(),
       },
     });
     this.storage.initializeRunSteps({
@@ -4166,10 +4433,21 @@ export class TeamalignedRuntime extends EventEmitter {
       this.scheduleNext(controller, step.delayMs ?? 900);
     } catch (error) {
       controller.busy = false;
+      const failedAt = Date.now();
       this.storage.updateRunStep(runId, run.stepIndex, {
         status: "failed",
-        completedAt: Date.now(),
+        completedAt: failedAt,
         errorText: error instanceof Error ? error.message : String(error),
+      });
+      this.emitRunRuntimeError("runtime:run-step", error, {
+        conversationId: run.conversationId,
+        runId,
+        runKind: run.kind,
+        actorId: run.actorId,
+        phase: "run_step",
+        stepIndex: run.stepIndex,
+        stepLabel: controller.steps[run.stepIndex]?.label ?? null,
+        elapsedMs: failedAt - (run.createdAt ?? failedAt),
       });
       this.storage.cancelPendingRunSteps(runId);
       this.finalizeStreamingMessagesForRun(run.conversationId, runId, "failed");
@@ -4463,6 +4741,13 @@ export class TeamalignedRuntime extends EventEmitter {
     actorName?: string | null;
     metadata?: Record<string, unknown>;
   }) {
+    this.appendRunProgressMetadata(input.runId, {
+      kind: "team",
+      phase: input.stage,
+      actorId: input.actorId ?? null,
+      actorName: input.actorName ?? null,
+      content: input.content,
+    });
     this.addRunMessage(input.conversationId, input.runId, input.content, "system", {
       teamUpdate: true,
       stage: input.stage,

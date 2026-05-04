@@ -27,6 +27,9 @@ export function ChatConversationSidebar({
   workspacePath,
   activeSkillLabel,
   pinnedMcpLabel,
+  activeRunElapsedLabel,
+  activeRunProgressText,
+  activeRunReasoningText,
   onOpenWorkspace,
   onExportConversation,
   exportState,
@@ -39,6 +42,9 @@ export function ChatConversationSidebar({
   workspacePath: string | null;
   activeSkillLabel: string | null;
   pinnedMcpLabel: string | null;
+  activeRunElapsedLabel: string | null;
+  activeRunProgressText: string | null;
+  activeRunReasoningText: string | null;
   onOpenWorkspace: (workspacePath: string) => void;
   onExportConversation: () => Promise<void>;
   exportState: {
@@ -91,6 +97,35 @@ export function ChatConversationSidebar({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        {activeRunElapsedLabel || activeRunProgressText || activeRunReasoningText ? (
+          <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <LoaderCircle className="h-4 w-4 animate-spin text-[var(--primary)]" />
+              <p className="text-sm font-semibold text-[var(--foreground)]">
+                {language === "en" ? "Current run" : "当前任务"}
+              </p>
+            </div>
+            {activeRunElapsedLabel ? (
+              <p className="text-lg font-semibold text-[var(--foreground)]">{activeRunElapsedLabel}</p>
+            ) : null}
+            {activeRunProgressText ? (
+              <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
+                {activeRunProgressText}
+              </p>
+            ) : null}
+            {activeRunReasoningText ? (
+              <div className="mt-3 rounded-xl bg-[var(--muted)] p-3">
+                <p className="mb-1 text-[11px] font-semibold text-[var(--primary)]">
+                  {language === "en" ? "Model thinking" : "模型思考"}
+                </p>
+                <p className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-[var(--muted-foreground)]">
+                  {activeRunReasoningText}
+                </p>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4">
           <div className="mb-3 flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-[var(--primary)]" />

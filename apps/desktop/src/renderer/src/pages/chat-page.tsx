@@ -16,6 +16,7 @@ import { ChatConversationSidebar } from "../components/chat/chat-conversation-si
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 import { ResizeHandle } from "../components/layout/resize-handle";
+import { formatActiveRunProgressText, formatElapsedDuration } from "../lib/run-progress";
 
 const conversationPaneWidthStorageKey = "chat.layout.conversationPaneWidth";
 const composerPaneHeightStorageKey = "chat.layout.composerPaneHeight.v2";
@@ -95,6 +96,7 @@ export function ChatPage() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [composerPrefill, setComposerPrefill] = useState<ComposerPrefill | null>(null);
   const [messageAndComposerPaneHeight, setMessageAndComposerPaneHeight] = useState(0);
+  const [clockNow, setClockNow] = useState(() => Date.now());
 
   const messageAndComposerPaneRef = useRef<HTMLDivElement | null>(null);
   const conversationWidthResizeStartRef = useRef<number | null>(null);
@@ -216,6 +218,36 @@ export function ChatPage() {
 
   const activeRun = activeConversation ? getLatestActiveRun(runs, activeConversation.id) : null;
   const isConversationBusy = Boolean(activeRun);
+  const activeRunId = activeRun?.id ?? null;
+  const activeRunStatus = activeRun?.status ?? null;
+  useEffect(() => {
+    if (!activeRunId) return;
+    if (activeRunStatus && ["completed", "failed", "cancelled"].includes(activeRunStatus)) return;
+    setClockNow(Date.now());
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeRunId, activeRunStatus]);
+  const activeRunElapsedLabel = useMemo(() => {
+    if (!activeRun) return null;
+    const finishedAt = ["completed", "failed", "cancelled"].includes(activeRun.status)
+      ? activeRun.updatedAt
+      : clockNow;
+    const elapsed = formatElapsedDuration(finishedAt - activeRun.createdAt);
+    return settings.language === "en" ? `Elapsed ${elapsed}` : `已用时 ${elapsed}`;
+  }, [activeRun, clockNow, settings.language]);
+  const pendingReasoningText = useMemo(() => {
+    if (!activeRun || ["completed", "failed", "cancelled"].includes(activeRun.status)) {
+      return null;
+    }
+    const value = activeRun.metadata?.reasoningText;
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }, [activeRun]);
+  const activeRunProgressText = useMemo(() => {
+    if (!activeRun || ["completed", "failed", "cancelled"].includes(activeRun.status)) {
+      return null;
+    }
+    return formatActiveRunProgressText(activeRun.metadata?.latestProgress, clockNow);
+  }, [activeRun, clockNow]);
   const hasStreamingMessage = useMemo(() => {
     if (!activeRun) return false;
     return activeMessages.some(
@@ -871,6 +903,8 @@ export function ChatPage() {
                   showInternalMessages={showInternal}
                   pendingSystemMessage={pendingSystemMessage}
                   pendingSystemUpdates={pendingSystemUpdates}
+                  pendingReasoningText={pendingReasoningText}
+                  runElapsedLabel={activeRunElapsedLabel}
                   pendingActor={pendingActor}
                   showMentions={activeConversation.kind === "team"}
                   profile={profile}
@@ -955,6 +989,9 @@ export function ChatPage() {
           workspacePath={activeWorkspacePath}
           activeSkillLabel={activeSkillLabel}
           pinnedMcpLabel={pinnedMcpLabel}
+          activeRunElapsedLabel={activeRunElapsedLabel}
+          activeRunProgressText={activeRunProgressText}
+          activeRunReasoningText={pendingReasoningText}
           onOpenWorkspace={(workspacePath) => void openWorkspace(workspacePath)}
           onExportConversation={handleExportConversation}
           exportState={conversationExportState}

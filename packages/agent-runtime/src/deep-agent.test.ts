@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeProviderErrorMessage, validateProviderForSingleChat } from "./deep-agent.ts";
+import {
+  extractStreamReasoningText,
+  normalizeProviderErrorMessage,
+  validateProviderForSingleChat,
+} from "./deep-agent.ts";
 
 const provider = {
   id: "qwen" as const,
@@ -78,4 +82,29 @@ test("normalizes provider timeout errors in English", () => {
 test("returns English provider validation message when provider is missing", () => {
   const issue = validateProviderForSingleChat(null, "en");
   assert.match(issue ?? "", /No model provider is available/i);
+});
+
+test("extractStreamReasoningText reads explicit provider reasoning fields", () => {
+  assert.equal(
+    extractStreamReasoningText({
+      additional_kwargs: {
+        reasoning_content: "I am checking the uploaded image.",
+      },
+    }),
+    "I am checking the uploaded image.",
+  );
+});
+
+test("extractStreamReasoningText reads typed reasoning content parts", () => {
+  assert.equal(
+    extractStreamReasoningText({
+      content: [
+        {
+          type: "thinking",
+          text: "I need to inspect the workspace first.",
+        },
+      ],
+    }),
+    "I need to inspect the workspace first.",
+  );
 });

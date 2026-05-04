@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createDeepAgent, FilesystemBackend } from "deepagents";
+import { createDeepAgent } from "deepagents";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { MemorySaver } from "@langchain/langgraph";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import type {
 import {
   createProviderModel,
   extractAgentText,
+  extractStreamReasoningText,
   normalizeProviderErrorMessage,
   normalizeMessageContent,
 } from "./deep-agent.ts";
@@ -23,6 +24,8 @@ import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-to
 import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
+import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
+import { createWorkspaceFilesystemBackend } from "./deep-agent-filesystem.ts";
 
 export const TEAM_MEMBER_LIMIT = 5;
 export const MAX_AGENT_MESSAGES_PER_TURN = 10;
@@ -30,11 +33,13 @@ export const MAX_AGENT_WORK_ITEMS = 5;
 export const MAX_TEAM_TURN_MESSAGES = 50;
 export const MAX_TEAM_SUBROUNDS = 5;
 export const MAX_PARALLEL_TEAM_EXECUTIONS = 5;
-const DEFAULT_TEAM_ORCHESTRATOR_TIMEOUT_MS = 30_000;
-const DEFAULT_TEAM_WORKER_TIMEOUT_MS = 120_000;
-const DEFAULT_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS = 30_000;
-
 export type NaturalTeamMode = "focused" | "multi_voice" | "collaboration";
+
+type RuntimeErrorReporter = (
+  source: string,
+  error: unknown,
+  metadata?: Record<string, unknown>,
+) => void | Promise<void>;
 
 export type TeamHandoffState = {
   activeAgentId: string | null;
@@ -140,26 +145,15 @@ type WorkerUserContent =
     >;
 
 function getTeamOrchestratorTimeoutMs() {
-  const configured = Number(process.env.TA_TEAM_ORCHESTRATOR_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : DEFAULT_TEAM_ORCHESTRATOR_TIMEOUT_MS;
-}
-
-function getPositiveEnvNumber(name: string, fallback: number) {
-  const configured = Number(process.env[name]);
-  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+  return getRuntimeTimeouts().teamOrchestratorMs;
 }
 
 function getTeamWorkerTimeoutMs() {
-  return getPositiveEnvNumber("TA_TEAM_WORKER_TIMEOUT_MS", DEFAULT_TEAM_WORKER_TIMEOUT_MS);
+  return getRuntimeTimeouts().teamWorkerMs;
 }
 
 function getTeamWorkerStreamIdleTimeoutMs() {
-  return getPositiveEnvNumber(
-    "TA_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS",
-    DEFAULT_TEAM_WORKER_STREAM_IDLE_TIMEOUT_MS,
-  );
+  return getRuntimeTimeouts().teamWorkerStreamIdleMs;
 }
 
 async function withRuntimeTimeout<T>(promise: Promise<T> | T, timeoutMs: number, label: string) {
@@ -250,6 +244,9 @@ async function invokeDirectTeamChatText(input: {
   systemPrompt: string;
   message: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onRuntimeError?: RuntimeErrorReporter;
+  runtimeMetadata?: Record<string, unknown>;
 }) {
   const model = createProviderModel(input.provider);
   const messages = [
@@ -257,18 +254,33 @@ async function invokeDirectTeamChatText(input: {
     { role: "user" as const, content: input.message },
   ];
   if (input.provider.supportsStreaming) {
-    const stream = await model.stream(messages);
-    let aggregatedText = "";
-    for await (const chunk of stream) {
-      const deltaText = normalizeMessageContent(
-        chunk && typeof chunk === "object" && "content" in chunk ? chunk.content : chunk,
-      );
-      if (!deltaText) continue;
-      aggregatedText = `${aggregatedText}${deltaText}`;
-      await input.onTextStream?.(aggregatedText, deltaText);
-    }
-    if (aggregatedText.trim()) {
-      return aggregatedText.trim();
+    const startedAt = Date.now();
+    try {
+      const stream = await model.stream(messages);
+      let aggregatedText = "";
+      let aggregatedReasoning = "";
+      for await (const chunk of stream) {
+        const reasoningDelta = extractStreamReasoningText(chunk);
+        if (reasoningDelta) {
+          aggregatedReasoning = `${aggregatedReasoning}${reasoningDelta}`;
+          await input.onReasoningStream?.(aggregatedReasoning, reasoningDelta);
+        }
+        const deltaText = normalizeMessageContent(
+          chunk && typeof chunk === "object" && "content" in chunk ? chunk.content : chunk,
+        );
+        if (!deltaText) continue;
+        aggregatedText = `${aggregatedText}${deltaText}`;
+        await input.onTextStream?.(aggregatedText, deltaText);
+      }
+      if (aggregatedText.trim()) {
+        return aggregatedText.trim();
+      }
+    } catch (error) {
+      await input.onRuntimeError?.("team-chat:direct-stream", error, {
+        ...(input.runtimeMetadata ?? {}),
+        phase: "stream",
+        elapsedMs: Date.now() - startedAt,
+      });
     }
   }
   return extractAgentText(await model.invoke(messages));
@@ -729,10 +741,7 @@ function createEphemeralWorker(input: {
     model: createProviderModel(input.provider),
     systemPrompt: input.systemPrompt,
     tools: [...(input.additionalTools ?? []), ...tools],
-    backend: new FilesystemBackend({
-      rootDir: input.workspacePath,
-      virtualMode: true,
-    }),
+    backend: createWorkspaceFilesystemBackend(input.workspacePath),
     checkpointer: new MemorySaver(),
     memory: input.memoryPaths ?? [],
   });
@@ -754,6 +763,9 @@ async function invokeWorkerText(input: {
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onRuntimeError?: RuntimeErrorReporter;
+  runtimeMetadata?: Record<string, unknown>;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
@@ -771,8 +783,10 @@ async function invokeWorkerText(input: {
     ((input.provider.supportsStreaming && input.onTextStream) || input.onDeepAgentToolInvocation) &&
     typeof (worker as { streamEvents?: unknown }).streamEvents === "function"
   ) {
+    const streamStartedAt = Date.now();
     try {
       let streamedText = "";
+      let reasoningText = "";
       let finalOutput: unknown = null;
       const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
         input.onDeepAgentToolInvocation,
@@ -798,13 +812,18 @@ async function invokeWorkerText(input: {
         if (!event || typeof event !== "object") continue;
         await emitDeepAgentToolInvocation(event);
         if (event.event === "on_chat_model_stream") {
-          if (!input.provider.supportsStreaming || !input.onTextStream) {
-            continue;
-          }
           const chunk =
             "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
               ? event.data.chunk
               : null;
+          const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
+          if (input.provider.supportsStreaming && input.onReasoningStream && reasoningDelta) {
+            reasoningText += reasoningDelta;
+            await input.onReasoningStream(reasoningText, reasoningDelta);
+          }
+          if (!input.provider.supportsStreaming || !input.onTextStream) {
+            continue;
+          }
           const delta = extractStreamText(chunk);
           if (!delta) continue;
           streamedText += delta;
@@ -824,8 +843,14 @@ async function invokeWorkerText(input: {
       if (finalText) {
         return finalText;
       }
-    } catch {
-      // Fallback to non-streaming invoke below.
+    } catch (error) {
+      await input.onRuntimeError?.("team-worker:stream-events", error, {
+        ...(input.runtimeMetadata ?? {}),
+        phase: "stream",
+        threadId: input.threadId,
+        elapsedMs: Date.now() - streamStartedAt,
+      });
+      // Fallback to non-streaming invoke below after logging the stream failure.
     }
   }
 
@@ -1519,6 +1544,8 @@ export async function executeNaturalTeamWorkItem(input: {
     content: string;
   }) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onRuntimeError?: RuntimeErrorReporter;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
@@ -1534,6 +1561,7 @@ export async function executeNaturalTeamWorkItem(input: {
       input.runtimeToolSummary ? `可用运行时能力：\n${input.runtimeToolSummary}` : "",
       "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
       "请只在当前 workspace 内工作。",
+      "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
       "如果本次任务是创建 writeTargets 中的新文件，且 readTargets 为空，不要先读取或列出目标文件/父目录；直接调用写入工具创建文件。",
       "不要读取你正要创建的新文件，除非它明确出现在读取范围里。",
       "如果任务无法执行，请明确说明阻塞原因。",
@@ -1562,6 +1590,7 @@ export async function executeNaturalTeamWorkItem(input: {
       input.runtimeToolSummary ? `Available runtime capabilities:\n${input.runtimeToolSummary}` : "",
       "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
       "Only work inside the current workspace.",
+      "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
       "If this task creates new writeTargets and readTargets is empty, do not read or list the target file/parent directory first; call a write tool directly to create the file.",
       "Do not read a file you are about to create unless it is explicitly listed in the read scope.",
       "If the task cannot proceed, clearly explain the blocker.",
@@ -1630,6 +1659,16 @@ export async function executeNaturalTeamWorkItem(input: {
       onMcpConnectionUpdated: input.onMcpConnectionUpdated,
       onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       approvalPolicy: input.approvalPolicy,
+      onReasoningStream: input.onReasoningStream,
+      onRuntimeError: input.onRuntimeError,
+      runtimeMetadata: {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        agentId: input.workItem.owner.id,
+        agentName: input.workItem.owner.name,
+        workItemId: input.workItem.id,
+        phase: "execution",
+      },
       onTextStream: async (aggregatedText, deltaText) => {
         await input.onTextStream?.(aggregatedText, deltaText);
         if (!announcedStreaming && deltaText.trim().length > 0) {
@@ -1707,6 +1746,8 @@ export async function generateNaturalTeamAgentMessage(input: {
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
+  onRuntimeError?: RuntimeErrorReporter;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
@@ -1821,6 +1862,16 @@ export async function generateNaturalTeamAgentMessage(input: {
           onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
           approvalPolicy: input.approvalPolicy,
           onTextStream: input.onTextStream,
+          onReasoningStream: input.onReasoningStream,
+          onRuntimeError: input.onRuntimeError,
+          runtimeMetadata: {
+            conversationId: input.conversationId,
+            runId: input.runId,
+            agentId: input.speaker.id,
+            agentName: input.speaker.name,
+            phase: "team-chat",
+            roundIndex: input.roundIndex,
+          },
           responseLanguage,
           additionalTools: input.additionalTools,
         })
@@ -1829,6 +1880,16 @@ export async function generateNaturalTeamAgentMessage(input: {
           systemPrompt,
           message,
           onTextStream: input.onTextStream,
+          onReasoningStream: input.onReasoningStream,
+          onRuntimeError: input.onRuntimeError,
+          runtimeMetadata: {
+            conversationId: input.conversationId,
+            runId: input.runId,
+            agentId: input.speaker.id,
+            agentName: input.speaker.name,
+            phase: "team-chat-direct",
+            roundIndex: input.roundIndex,
+          },
         }),
   );
 
