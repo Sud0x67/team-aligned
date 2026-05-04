@@ -177,7 +177,7 @@ teamaligned
 
 ## Skills
 
-Skills 采用“远端 catalog + 本地安装 + Agent 白名单 + runtime 注入”模式。
+Skills 采用“远端 catalog + 本地安装 + Agent 白名单 + runtime 按需加载”模式。
 
 当前能力：
 
@@ -186,8 +186,9 @@ Skills 采用“远端 catalog + 本地安装 + Agent 白名单 + runtime 注入
 - 内置 `team-aligned-assistant` Skill 随应用打包，不依赖远端下载。
 - Agent 级 Skill 白名单。
 - 当前会话 active Skill。
-- Skill `SKILL.md` 注入 prompt。
-- Skill `scripts/` 转成 runtime tools。
+- Runtime 只注入白名单 Skill 的轻量 catalog，模型根据任务相关性调用 `skill_load` 读取完整 `SKILL.md`。
+- `skill_read_file` 支持读取 Skill 的 `references/`、`templates/`、`assets/` 等附属文件。
+- `skill_run_script` 支持执行 Skill `scripts/`，并继续走工具确认策略。
 - Skill 安装、同步、移除、启用的 UI 反馈。
 
 ## MCP

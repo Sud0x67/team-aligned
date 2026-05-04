@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SkillCatalogRecord } from "@teamaligned/shared";
 import {
   buildRuntimeLangChainTools,
   normalizeRuntimeToolErrorMessage,
@@ -12,6 +13,27 @@ import { shouldRequireToolApproval } from "./runtime.ts";
 
 function createTempWorkspace() {
   return mkdtempSync(join(tmpdir(), "teamaligned-agent-tools-"));
+}
+
+function createSkillRecord(input: Partial<SkillCatalogRecord> & Pick<SkillCatalogRecord, "id" | "slug" | "installPath">): SkillCatalogRecord {
+  return {
+    id: input.id,
+    slug: input.slug,
+    name: input.name ?? input.slug,
+    displayName: input.displayName ?? input.name ?? input.slug,
+    description: input.description ?? "A test skill.",
+    version: input.version ?? "0.1.0",
+    sourceRepo: input.sourceRepo ?? "local",
+    sourceBranch: input.sourceBranch ?? "main",
+    sourcePath: input.sourcePath ?? input.slug,
+    entryFile: input.entryFile ?? "SKILL.md",
+    installed: input.installed ?? true,
+    installedVersion: input.installedVersion ?? "0.1.0",
+    installPath: input.installPath,
+    author: input.author ?? "TeamAligned",
+    recommendedTools: input.recommendedTools ?? [],
+    metadata: input.metadata ?? null,
+  };
 }
 
 test("workspace_write_text_file creates missing parent directories", async () => {
@@ -104,11 +126,11 @@ test("tool approval policy does not interrupt low-risk skill bundle reads", () =
     shouldRequireToolApproval({
       serverId: "skill-stock",
       serverName: "Stock Skill",
-      toolName: "read_skill_bundle",
+      toolName: "skill_read_file",
       operation: "skill",
       riskLevel: "low",
       args: { relativePath: "references/data-verification-protocol.md" },
-      description: "Read bundled files from the active skill.",
+      description: "Read bundled files from an allowlisted skill.",
     }),
     false,
   );
@@ -134,7 +156,7 @@ test("tool approval policy still protects executable skill scripts", () => {
     shouldRequireToolApproval({
       serverId: "skill-stock",
       serverName: "Stock Skill",
-      toolName: "skill_stock_analyze",
+      toolName: "skill_run_script",
       operation: "skill",
       riskLevel: "medium",
       args: { argumentsLine: "--ticker BABA" },
@@ -142,6 +164,55 @@ test("tool approval policy still protects executable skill scripts", () => {
     }),
     true,
   );
+});
+
+test("runtime exposes allowlisted skills for on-demand loading", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const skillRoot = join(workspacePath, "skills", "code-review");
+    mkdirSync(join(skillRoot, "references"), { recursive: true });
+    writeFileSync(
+      join(skillRoot, "SKILL.md"),
+      "---\nname: Code Review\ndescription: Review code carefully.\n---\nUse this skill for code review tasks.",
+      "utf8",
+    );
+    writeFileSync(join(skillRoot, "references", "checklist.md"), "Check correctness first.", "utf8");
+
+    const skill = createSkillRecord({
+      id: "skill-code-review",
+      slug: "code-review",
+      displayName: "Code Review",
+      description: "Review code carefully.",
+      installPath: skillRoot,
+    });
+
+    const { tools, summary } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "en",
+      activeSkill: null,
+      availableSkills: [skill],
+    });
+
+    assert.match(summary, /Allowlisted Skills/);
+    assert.match(summary, /\/code-review/);
+
+    const loadTool = tools.find((tool) => tool.name === "skill_load");
+    assert.ok(loadTool);
+    const loaded = String(await loadTool.invoke({ skillId: "code-review" }));
+    assert.match(loaded, /Use this skill for code review tasks/);
+
+    const readTool = tools.find((tool) => tool.name === "skill_read_file");
+    assert.ok(readTool);
+    const reference = await readTool.invoke({
+      skillId: "skill-code-review",
+      relativePath: "references/checklist.md",
+    });
+    assert.equal(reference, "Check correctness first.");
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
 });
 
 test("runtime tool error normalization explains path failures with recovery guidance", () => {

@@ -177,7 +177,7 @@ The supported slash command set is intentionally small:
 
 ## Skills
 
-Skills use a remote catalog + local install + Agent allowlist + runtime injection model.
+Skills use a remote catalog + local install + Agent allowlist + runtime on-demand loading model.
 
 Current capabilities:
 
@@ -186,8 +186,9 @@ Current capabilities:
 - Bundle the built-in `team-aligned-assistant` Skill with the app instead of downloading it remotely.
 - Configure Agent-level Skill allowlists.
 - Set active conversation Skill.
-- Inject `SKILL.md` into prompts.
-- Expose Skill `scripts/` as runtime tools.
+- Inject only lightweight allowlisted Skill catalog summaries, then let the model call `skill_load` when a task matches a Skill.
+- Support `skill_read_file` for bundled `references/`, `templates/`, and `assets/`.
+- Support `skill_run_script` for Skill `scripts/`, still protected by execution confirmation policy.
 - Provide UI feedback for sync, install, remove, and enable flows.
 
 ## MCP

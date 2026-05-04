@@ -23,7 +23,7 @@ export type ComposerPrefill = {
 
 const maxAttachmentCount = 8;
 const maxAttachmentBytes = 20 * 1024 * 1024;
-const minTextareaHeight = 88;
+const minTextareaHeight = 44;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -409,7 +409,15 @@ export function ChatComposer({
     };
   }, [showFileSuggestionsPanel, suggestionState?.items.length]);
 
-  const uploadFiles = async (files: File[], successMessage: string) => {
+  const removeAttachment = (attachmentPath: string) => {
+    const willRemoveLastAttachment = attachments.filter((item) => item.path !== attachmentPath).length === 0;
+    setAttachments((current) => current.filter((item) => item.path !== attachmentPath));
+    if (willRemoveLastAttachment && feedback?.tone === "info") {
+      setFeedback(null);
+    }
+  };
+
+  const uploadFiles = async (files: File[], successMessage?: string) => {
     if (files.length === 0) return;
     const remainingSlots = Math.max(0, maxAttachmentCount - attachments.length);
     if (remainingSlots === 0) {
@@ -490,10 +498,14 @@ export function ChatComposer({
         return;
       }
 
-      setFeedback({
-        tone: "info",
-        message: `${successMessage} ${succeeded.length} ${t.common("items")}`,
-      });
+      if (successMessage) {
+        setFeedback({
+          tone: "info",
+          message: `${successMessage} ${succeeded.length} ${t.common("items")}`,
+        });
+      } else {
+        setFeedback(null);
+      }
     } finally {
       setUploading(false);
     }
@@ -502,7 +514,7 @@ export function ChatComposer({
   return (
     <div
       ref={composerRootRef}
-      className={`relative grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
+      className={`relative flex h-full min-h-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-sm ${className ?? ""}`}
     >
         {showFileSuggestionsPanel && suggestionPanelStyle ? (
           <div
@@ -633,15 +645,15 @@ export function ChatComposer({
               }
 
               event.preventDefault();
-              void uploadFiles(imageFiles, t.chat("pastedImagesReady"));
+              void uploadFiles(imageFiles);
             }}
-            rows={3}
+            rows={1}
             placeholder={busy ? t.chat("awaitingReplyPlaceholder") : t.chat("directMessageHint")}
             className="w-full resize-none border-0 bg-transparent py-1 text-[14px] leading-7 text-[var(--foreground)] outline-0 placeholder:text-[var(--muted-foreground)]"
           />
 
           {attachments.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               {attachments.map((attachment) => (
                 <span
                   key={attachment.path}
@@ -660,11 +672,7 @@ export function ChatComposer({
                   <button
                     type="button"
                     className="rounded-full p-0.5 text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-                    onClick={() =>
-                      setAttachments((current) =>
-                        current.filter((item) => item.path !== attachment.path),
-                      )
-                    }
+                    onClick={() => removeAttachment(attachment.path)}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -732,7 +740,9 @@ export function ChatComposer({
           ) : null}
         </div>
 
-        <div className="mt-3 flex h-[52px] items-center justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
+        <div className="min-h-0 flex-1" aria-hidden="true" />
+
+        <div className="mt-3 flex h-[52px] shrink-0 items-center justify-between gap-3 border-t border-[color-mix(in_srgb,var(--border)_78%,transparent)] pt-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
             {showMentionButton ? (
               <button

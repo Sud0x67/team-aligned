@@ -1,9 +1,14 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
-import type { ProviderConfig, SkillCatalogRecord } from "@teamaligned/shared";
+import {
+  TEAMALIGNED_ASSISTANT_SKILL_DEFINITION,
+  isSystemBuiltinSkill,
+  type ProviderConfig,
+  type SkillCatalogRecord,
+} from "@teamaligned/shared";
 import { z } from "zod";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 import { runWebFetch, runWebSearch } from "./web-tools.ts";
@@ -208,13 +213,6 @@ export function normalizeRuntimeToolErrorMessage(input: {
   });
 }
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
 function isInsideRoot(targetPath: string, rootPath: string) {
   const relativePath = relative(rootPath, targetPath);
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes(`..${sep}`));
@@ -246,6 +244,123 @@ function detectScriptInterpreter(filePath: string) {
   if (extension === ".js" || extension === ".mjs" || extension === ".cjs") return "node";
   if (extension === ".sh") return "bash";
   return null;
+}
+
+function getSkillLabel(skill: SkillCatalogRecord) {
+  return skill.displayName || skill.name || skill.slug || skill.id;
+}
+
+function normalizeSkillKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeAvailableSkills(skills: SkillCatalogRecord[] | undefined) {
+  const byId = new Map<string, SkillCatalogRecord>();
+  for (const skill of skills ?? []) {
+    if (!skill.installed) continue;
+    if (!isSystemBuiltinSkill(skill) && !skill.installPath) continue;
+    byId.set(skill.id, skill);
+  }
+  return Array.from(byId.values()).sort((left, right) =>
+    getSkillLabel(left).localeCompare(getSkillLabel(right)),
+  );
+}
+
+function findAvailableSkill(skills: SkillCatalogRecord[], value: string) {
+  const expected = normalizeSkillKey(value);
+  return (
+    skills.find((skill) =>
+      [skill.id, skill.slug, skill.name, skill.displayName]
+        .filter(Boolean)
+        .map(normalizeSkillKey)
+        .includes(expected),
+    ) ?? null
+  );
+}
+
+function readSkillDefinition(skill: SkillCatalogRecord) {
+  if (isSystemBuiltinSkill(skill)) {
+    return TEAMALIGNED_ASSISTANT_SKILL_DEFINITION;
+  }
+  if (!skill.installPath) {
+    throw new Error(`Skill ${getSkillLabel(skill)} 尚未安装。`);
+  }
+  const skillRoot = resolve(skill.installPath);
+  const entryPath = resolveAllowedPath(skill.entryFile || "SKILL.md", [skillRoot], skillRoot);
+  if (!existsSync(entryPath)) {
+    throw new Error(`Skill 入口文件不存在：${skill.entryFile || "SKILL.md"}`);
+  }
+  return readFileSync(entryPath, "utf8");
+}
+
+function listSkillTopLevelFiles(skill: SkillCatalogRecord) {
+  if (isSystemBuiltinSkill(skill) || !skill.installPath || !existsSync(skill.installPath)) {
+    return "file SKILL.md";
+  }
+  return listDirEntries(skill.installPath);
+}
+
+function readSkillRelativeFile(skill: SkillCatalogRecord, relativePath: string | undefined) {
+  const requestedPath = relativePath?.trim() || skill.entryFile || "SKILL.md";
+  if (isSystemBuiltinSkill(skill)) {
+    if (requestedPath === "SKILL.md" || requestedPath === skill.entryFile) {
+      return TEAMALIGNED_ASSISTANT_SKILL_DEFINITION;
+    }
+    throw new Error("系统内置 TeamAligned Assistant Skill 只提供 SKILL.md。");
+  }
+  if (!skill.installPath) {
+    throw new Error(`Skill ${getSkillLabel(skill)} 尚未安装。`);
+  }
+  const skillRoot = resolve(skill.installPath);
+  const targetPath = resolveAllowedPath(requestedPath, [skillRoot], skillRoot);
+  if (!existsSync(targetPath)) {
+    throw new Error(`Skill 文件不存在：${requestedPath}`);
+  }
+  const stats = statSync(targetPath);
+  if (stats.isDirectory()) {
+    return `目录：${targetPath}\n\n${listDirEntries(targetPath) || "目录为空。"}`;
+  }
+  if (!stats.isFile()) {
+    throw new Error(`Skill 路径不是文件：${requestedPath}`);
+  }
+  return trimText(readFileSync(targetPath, "utf8"), MAX_TEXT_READ);
+}
+
+function formatSkillCatalogSummary(input: {
+  skills: SkillCatalogRecord[];
+  activeSkill: SkillCatalogRecord | null;
+  language: RuntimeLanguage;
+}) {
+  if (input.skills.length === 0) {
+    return byLanguage(input.language, {
+      zh: "当前 Agent 没有可用的白名单 Skills。",
+      en: "This agent has no allowlisted Skills available.",
+    });
+  }
+
+  const rows = input.skills
+    .slice(0, 24)
+    .map((skill) => {
+      const description = trimText(skill.description.replace(/\s+/g, " "), 160);
+      return `- /${skill.slug} (${skill.id}) — ${getSkillLabel(skill)}: ${description}`;
+    })
+    .join("\n");
+  const active = input.activeSkill ? getSkillLabel(input.activeSkill) : null;
+
+  return byLanguage(input.language, {
+    zh: [
+      "白名单 Skills 已按标准 Skill 用法接入：不要因为用户没有显式输入 /skill-id 就忽略它们。",
+      active ? `当前会话偏好 Skill：${active}。如果任务相关，请优先调用 skill_load 加载完整说明。` : "",
+      "可用 Skills（先根据描述判断是否相关，相关时调用 skill_load；需要附属材料时用 skill_read_file；需要脚本时用 skill_run_script）：",
+      rows,
+    ].filter(Boolean).join("\n"),
+    en: [
+      "Allowlisted Skills are available with standard progressive disclosure: do not ignore them just because the user did not type /skill-id.",
+      active ? `Preferred Skill for this conversation: ${active}. If relevant, call skill_load before using it.` : "",
+      "Available Skills (judge relevance from descriptions, call skill_load when relevant, use skill_read_file for bundled references/templates/assets, and skill_run_script for scripts):",
+      rows,
+    ].filter(Boolean).join("\n"),
+  });
 }
 
 async function withInvocation<T>(
@@ -324,14 +439,17 @@ export function buildRuntimeLangChainTools(input: {
   provider: ProviderConfig | null;
   responseLanguage: RuntimeLanguage;
   activeSkill: SkillCatalogRecord | null;
+  availableSkills?: SkillCatalogRecord[];
   onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
 }) {
   const workspaceRoot = resolve(input.workspacePath);
   const allowedRoots = [workspaceRoot, ...input.attachmentRoots.map((root) => resolve(root))];
-  if (input.activeSkill?.installPath) {
-    allowedRoots.push(resolve(input.activeSkill.installPath));
-  }
+  const availableSkills = normalizeAvailableSkills([
+    ...(input.availableSkills ?? []),
+    ...(input.activeSkill ? [input.activeSkill] : []),
+  ]);
+  const activeSkill = input.activeSkill ? findAvailableSkill(availableSkills, input.activeSkill.id) : null;
 
   const tools: StructuredToolInterface[] = [
     tool(
@@ -353,7 +471,7 @@ export function buildRuntimeLangChainTools(input: {
               operation: "read",
               riskLevel: "low",
               args: { path },
-              description: "List files in the current workspace or allowed attachment/skill roots.",
+              description: "List files in the current workspace or allowed attachment roots.",
             },
           },
           async () => {
@@ -371,7 +489,7 @@ export function buildRuntimeLangChainTools(input: {
       },
       {
         name: "workspace_list_directory",
-        description: "列出 workspace、附件目录或当前激活 skill 目录中的文件和子目录。",
+        description: "列出 workspace 或附件目录中的文件和子目录。Skill 附属文件请使用 skill_read_file。",
         schema: z.object({
           path: z.string().default(".").describe("相对或绝对目录路径。"),
         }),
@@ -396,7 +514,7 @@ export function buildRuntimeLangChainTools(input: {
               operation: "read",
               riskLevel: "low",
               args: { path },
-              description: "Read a text file from the current workspace or allowed attachment/skill roots.",
+              description: "Read a text file from the current workspace or allowed attachment roots.",
             },
           },
           async () => {
@@ -414,7 +532,7 @@ export function buildRuntimeLangChainTools(input: {
       },
       {
         name: "workspace_read_text_file",
-        description: "读取 workspace、附件目录或当前激活 skill 目录中的文本文件内容。",
+        description: "读取 workspace 或附件目录中的文本文件内容。Skill 附属文件请使用 skill_read_file。",
         schema: z.object({
           path: z.string().describe("相对或绝对文件路径。"),
         }),
@@ -675,149 +793,260 @@ export function buildRuntimeLangChainTools(input: {
     ),
   );
 
-  if (!input.activeSkill?.installPath) {
-    return {
-      tools,
-      summary: byLanguage(input.responseLanguage, {
-        zh: "Workspace 文件、搜索、命令与网页工具（web_search / web_fetch）已可用。",
-        en: "Workspace file/search/command tools and web tools (web_search / web_fetch) are available.",
-      }),
-    };
-  }
-
-  const skillRoot = resolve(input.activeSkill.installPath);
-  const skillScriptsDir = join(skillRoot, "scripts");
-  const skillFiles = readdirSync(skillRoot, { withFileTypes: true }).map((entry) => entry.name);
-
   tools.push(
     tool(
-      async ({ relativePath }) => {
+      async () => {
         return withInvocation(
           {
-            invocationId: createInvocationId("skill_read"),
-            serverId: input.activeSkill!.id,
-            serverName: input.activeSkill!.displayName,
-            toolName: "read_skill_bundle",
-            args: { relativePath },
+            invocationId: createInvocationId("skill_list"),
+            serverId: "teamaligned-skills",
+            serverName: "TeamAligned Skills",
+            toolName: "skill_list",
+            args: {},
             onInvocation: input.onInvocation,
             approvalPolicy: input.approvalPolicy,
             policyRequest: {
-              serverId: input.activeSkill!.id,
-              serverName: input.activeSkill!.displayName,
-              toolName: "read_skill_bundle",
+              serverId: "teamaligned-skills",
+              serverName: "TeamAligned Skills",
+              toolName: "skill_list",
               operation: "skill",
               riskLevel: "low",
-              args: { relativePath },
-              description: "Read bundled files from the active skill.",
+              args: {},
+              description: "List allowlisted Skills available to this agent.",
             },
           },
           async () => {
-            if (!relativePath?.trim()) {
-              return [
-                `技能：${input.activeSkill!.displayName}`,
-                `目录：${skillRoot}`,
-                `入口：${input.activeSkill!.entryFile}`,
-                `文件：${skillFiles.join("、") || "无"}`,
-              ].join("\n");
+            if (availableSkills.length === 0) {
+              return byLanguage(input.responseLanguage, {
+                zh: "当前 Agent 没有可用的白名单 Skills。",
+                en: "This agent has no allowlisted Skills available.",
+              });
             }
-            const targetPath = resolveAllowedPath(relativePath, [skillRoot], skillRoot);
-            if (!existsSync(targetPath)) {
-              throw new Error(`技能文件不存在：${relativePath}`);
-            }
-            const stats = statSync(targetPath);
-            if (stats.isDirectory()) {
-              return `目录：${targetPath}\n\n${listDirEntries(targetPath) || "目录为空。"}`;
-            }
-            return trimText(readFileSync(targetPath, "utf8"), MAX_TEXT_READ);
+            return JSON.stringify(
+              availableSkills.map((skill) => ({
+                id: skill.id,
+                slug: skill.slug,
+                name: getSkillLabel(skill),
+                description: skill.description,
+                version: skill.installedVersion ?? skill.version,
+                entryFile: skill.entryFile || "SKILL.md",
+                files: listSkillTopLevelFiles(skill).split("\n").filter(Boolean),
+                systemBuiltin: isSystemBuiltinSkill(skill),
+              })),
+              null,
+              2,
+            );
           },
           (result) => result,
         );
       },
       {
-        name: `skill_${slugify(input.activeSkill.slug)}_bundle`,
-        description: `查看技能 ${input.activeSkill.displayName} 的入口文件、脚本和附属数据文件。`,
+        name: "skill_list",
+        description: byLanguage(input.responseLanguage, {
+          zh: "列出当前 Agent 白名单中可按需加载的 Skills。用于先判断哪些 Skill 可能适合当前任务。",
+          en: "List allowlisted Skills that can be loaded on demand for this agent.",
+        }),
+        schema: z.object({}),
+      },
+    ),
+    tool(
+      async ({ skillId }) => {
+        const skill = findAvailableSkill(availableSkills, skillId);
+        return withInvocation(
+          {
+            invocationId: createInvocationId("skill_load"),
+            serverId: skill?.id ?? "teamaligned-skills",
+            serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+            toolName: "skill_load",
+            args: { skillId },
+            onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: skill?.id ?? "teamaligned-skills",
+              serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+              toolName: "skill_load",
+              operation: "skill",
+              riskLevel: "low",
+              args: { skillId },
+              description: "Load the full SKILL.md instructions for an allowlisted Skill.",
+            },
+          },
+          async () => {
+            if (!skill) {
+              throw new Error(`当前 Agent 白名单中没有这个 Skill：${skillId}`);
+            }
+            return JSON.stringify(
+              {
+                id: skill.id,
+                slug: skill.slug,
+                name: getSkillLabel(skill),
+                description: skill.description,
+                version: skill.installedVersion ?? skill.version,
+                entryFile: skill.entryFile || "SKILL.md",
+                files: listSkillTopLevelFiles(skill).split("\n").filter(Boolean),
+                definition: readSkillDefinition(skill),
+              },
+              null,
+              2,
+            );
+          },
+          (result) => result,
+        );
+      },
+      {
+        name: "skill_load",
+        description: byLanguage(input.responseLanguage, {
+          zh: "按需加载某个白名单 Skill 的完整 SKILL.md。任务与 Skill 描述相关时，即使用户没显式输入 /skill-id 也应调用。",
+          en: "Load the full SKILL.md for an allowlisted Skill. Use when the task matches a Skill description, even without explicit /skill-id.",
+        }),
         schema: z.object({
-          relativePath: z.string().optional().describe("技能目录内的相对路径；留空则返回技能概览。"),
+          skillId: z.string().describe("Skill 的 id、slug、name 或 displayName。"),
+        }),
+      },
+    ),
+    tool(
+      async ({ skillId, relativePath }) => {
+        const skill = findAvailableSkill(availableSkills, skillId);
+        return withInvocation(
+          {
+            invocationId: createInvocationId("skill_read"),
+            serverId: skill?.id ?? "teamaligned-skills",
+            serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+            toolName: "skill_read_file",
+            args: { skillId, relativePath },
+            onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: skill?.id ?? "teamaligned-skills",
+              serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+              toolName: "skill_read_file",
+              operation: "skill",
+              riskLevel: "low",
+              args: { skillId, relativePath },
+              description: "Read a bundled reference/template/asset file from an allowlisted Skill.",
+            },
+          },
+          async () => {
+            if (!skill) {
+              throw new Error(`当前 Agent 白名单中没有这个 Skill：${skillId}`);
+            }
+            return readSkillRelativeFile(skill, relativePath);
+          },
+          (result) => result,
+        );
+      },
+      {
+        name: "skill_read_file",
+        description: byLanguage(input.responseLanguage, {
+          zh: "读取白名单 Skill 中的附属文件，例如 references、templates、assets 或 SKILL.md。",
+          en: "Read bundled files from an allowlisted Skill, such as references, templates, assets, or SKILL.md.",
+        }),
+        schema: z.object({
+          skillId: z.string().describe("Skill 的 id、slug、name 或 displayName。"),
+          relativePath: z.string().describe("Skill 目录内的相对路径，例如 references/checklist.md。"),
+        }),
+      },
+    ),
+    tool(
+      async ({ skillId, scriptPath, argumentsLine }) => {
+        const skill = findAvailableSkill(availableSkills, skillId);
+        return withInvocation(
+          {
+            invocationId: createInvocationId("skill_script"),
+            serverId: skill?.id ?? "teamaligned-skills",
+            serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+            toolName: "skill_run_script",
+            args: { skillId, scriptPath, argumentsLine },
+            onInvocation: input.onInvocation,
+            approvalPolicy: input.approvalPolicy,
+            policyRequest: {
+              serverId: skill?.id ?? "teamaligned-skills",
+              serverName: skill ? getSkillLabel(skill) : "TeamAligned Skills",
+              toolName: "skill_run_script",
+              operation: "skill",
+              riskLevel: "medium",
+              args: { skillId, scriptPath, argumentsLine },
+              description: "Run a bundled script from an allowlisted Skill.",
+            },
+          },
+          async () => {
+            if (!skill) {
+              throw new Error(`当前 Agent 白名单中没有这个 Skill：${skillId}`);
+            }
+            if (isSystemBuiltinSkill(skill)) {
+              throw new Error("系统内置 TeamAligned Assistant Skill 不提供可执行脚本。");
+            }
+            if (!skill.installPath) {
+              throw new Error(`Skill ${getSkillLabel(skill)} 尚未安装。`);
+            }
+            const skillRoot = resolve(skill.installPath);
+            const scriptsRoot = resolve(skillRoot, "scripts");
+            const normalizedScriptPath = scriptPath.trim().startsWith("scripts/")
+              ? scriptPath.trim().slice("scripts/".length)
+              : scriptPath.trim();
+            const targetScript = resolveAllowedPath(normalizedScriptPath, [scriptsRoot], scriptsRoot);
+            if (!existsSync(targetScript)) {
+              throw new Error(`Skill 脚本不存在：${scriptPath}`);
+            }
+            const stats = statSync(targetScript);
+            if (!stats.isFile()) {
+              throw new Error(`Skill 脚本路径不是文件：${scriptPath}`);
+            }
+            const interpreter = detectScriptInterpreter(targetScript);
+            if (!interpreter) {
+              throw new Error(`不支持的 Skill 脚本类型：${scriptPath}`);
+            }
+            const command = `${interpreter} "${targetScript}" ${argumentsLine?.trim() || ""}`.trim();
+            try {
+              const { stdout, stderr } = await execFileAsync("zsh", ["-lc", command], {
+                cwd: skillRoot,
+                maxBuffer: 1024 * 1024,
+              });
+              return trimText(
+                `${stdout || ""}${stderr ? `\n${stderr}` : ""}` || "脚本执行完成，没有输出。",
+                MAX_COMMAND_OUTPUT,
+              );
+            } catch (error) {
+              const output = readCommandFailureOutput(error);
+              if (output) {
+                return trimText(output, MAX_COMMAND_OUTPUT);
+              }
+              throw error;
+            }
+          },
+          (result) => result,
+        );
+      },
+      {
+        name: "skill_run_script",
+        description: byLanguage(input.responseLanguage, {
+          zh: "执行白名单 Skill 的 scripts/ 目录内脚本。用于 Skill 明确要求脚本辅助完成任务时。",
+          en: "Run a script from an allowlisted Skill's scripts/ directory when the Skill calls for it.",
+        }),
+        schema: z.object({
+          skillId: z.string().describe("Skill 的 id、slug、name 或 displayName。"),
+          scriptPath: z.string().describe("scripts/ 内脚本路径，例如 analyze.py 或 scripts/analyze.py。"),
+          argumentsLine: z
+            .string()
+            .optional()
+            .describe("直接传给脚本的一整行参数，例如 --design-system -p \"Project Name\"。"),
         }),
       },
     ),
   );
 
-  if (existsSync(skillScriptsDir)) {
-    const scriptFiles = readdirSync(skillScriptsDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => join(skillScriptsDir, entry.name))
-      .filter((filePath) => detectScriptInterpreter(filePath));
-
-    for (const scriptPath of scriptFiles) {
-      const interpreter = detectScriptInterpreter(scriptPath);
-      if (!interpreter) continue;
-      const toolName = `skill_${slugify(input.activeSkill.slug)}_${slugify(basename(scriptPath, extname(scriptPath)))}`;
-
-      tools.push(
-        tool(
-          async ({ argumentsLine }) => {
-            return withInvocation(
-              {
-                invocationId: createInvocationId("skill_script"),
-                serverId: input.activeSkill!.id,
-                serverName: input.activeSkill!.displayName,
-                toolName,
-                args: { argumentsLine },
-                onInvocation: input.onInvocation,
-                approvalPolicy: input.approvalPolicy,
-                policyRequest: {
-                  serverId: input.activeSkill!.id,
-                  serverName: input.activeSkill!.displayName,
-                  toolName,
-                  operation: "skill",
-                  riskLevel: "medium",
-                  args: { argumentsLine },
-                  description: `Run bundled script ${basename(scriptPath)} from the active skill.`,
-                },
-              },
-              async () => {
-                const command = `${interpreter} "${scriptPath}" ${argumentsLine?.trim() || ""}`.trim();
-                try {
-                  const { stdout, stderr } = await execFileAsync("zsh", ["-lc", command], {
-                    cwd: skillRoot,
-                    maxBuffer: 1024 * 1024,
-                  });
-                  return trimText(
-                    `${stdout || ""}${stderr ? `\n${stderr}` : ""}` || "脚本执行完成，没有输出。",
-                    MAX_COMMAND_OUTPUT,
-                  );
-                } catch (error) {
-                  const output = readCommandFailureOutput(error);
-                  if (output) {
-                    return trimText(output, MAX_COMMAND_OUTPUT);
-                  }
-                  throw error;
-                }
-              },
-              (result) => result,
-            );
-          },
-          {
-            name: toolName,
-            description: `执行技能 ${input.activeSkill.displayName} 附带脚本 ${basename(scriptPath)}。需要时可传入原始命令参数。`,
-            schema: z.object({
-              argumentsLine: z
-                .string()
-                .optional()
-                .describe("直接传给脚本的一整行参数，例如 --design-system -p \"Project Name\"。"),
-            }),
-          },
-        ),
-      );
-    }
-  }
-
   return {
     tools,
-    summary: byLanguage(input.responseLanguage, {
-      zh: `Workspace 与网页工具已可用，当前技能 ${input.activeSkill.displayName} 也已接入 bundle 和脚本工具。`,
-      en: `Workspace and web tools are available. Active skill ${input.activeSkill.displayName} also has bundle/script tools enabled.`,
-    }),
+    summary: [
+      byLanguage(input.responseLanguage, {
+        zh: "Workspace 文件、搜索、命令与网页工具（web_search / web_fetch）已可用。",
+        en: "Workspace file/search/command tools and web tools (web_search / web_fetch) are available.",
+      }),
+      formatSkillCatalogSummary({
+        skills: availableSkills,
+        activeSkill,
+        language: input.responseLanguage,
+      }),
+    ].join("\n\n"),
   };
 }

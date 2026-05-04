@@ -755,6 +755,7 @@ async function invokeWorkerText(input: {
   approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
 }) {
   const worker = createEphemeralWorker(input);
@@ -1519,6 +1520,7 @@ export async function executeNaturalTeamWorkItem(input: {
   }) => void | Promise<void>;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
 }) {
   const responseLanguage = input.responseLanguage ?? "zh";
@@ -1529,6 +1531,7 @@ export async function executeNaturalTeamWorkItem(input: {
       `你的能力：${input.workItem.owner.capabilities.join("、") || "未设置"}。`,
       "当前已经进入执行模式，请真正完成分配给你的工作，而不是只讨论。",
       "你可以使用已经注入的文件、搜索、命令和 MCP 工具。",
+      input.runtimeToolSummary ? `可用运行时能力：\n${input.runtimeToolSummary}` : "",
       "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
       "请只在当前 workspace 内工作。",
       "如果本次任务是创建 writeTargets 中的新文件，且 readTargets 为空，不要先读取或列出目标文件/父目录；直接调用写入工具创建文件。",
@@ -1556,6 +1559,7 @@ export async function executeNaturalTeamWorkItem(input: {
       `Your capabilities: ${formatList(input.workItem.owner.capabilities, responseLanguage)}.`,
       "This turn is in execution mode. Complete your assigned work instead of discussing only.",
       "You can use injected file, search, command, and MCP tools.",
+      input.runtimeToolSummary ? `Available runtime capabilities:\n${input.runtimeToolSummary}` : "",
       "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
       "Only work inside the current workspace.",
       "If this task creates new writeTargets and readTargets is empty, do not read or list the target file/parent directory first; call a write tool directly to create the file.",
@@ -1704,6 +1708,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   approvalPolicy?: ToolExecutionPolicy;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   additionalTools?: StructuredToolInterface[];
+  runtimeToolSummary?: string;
   responseLanguage?: RuntimeLanguage;
 }) {
   const responseLanguage = input.responseLanguage ?? "zh";
@@ -1738,6 +1743,7 @@ export async function generateNaturalTeamAgentMessage(input: {
       buildNaturalRoster(input.members, responseLanguage),
       "",
       `当前可用 MCP 服务：${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+      input.runtimeToolSummary ? `可用运行时能力：\n${input.runtimeToolSummary}` : "",
       "",
       "用户资料：",
       `- 姓名：${input.profile.name}`,
@@ -1764,6 +1770,7 @@ export async function generateNaturalTeamAgentMessage(input: {
       buildNaturalRoster(input.members, responseLanguage),
       "",
       `Available MCP servers: ${formatList(input.mcpServers.map((server) => server.name), responseLanguage)}`,
+      input.runtimeToolSummary ? `Available runtime capabilities:\n${input.runtimeToolSummary}` : "",
       "",
       "User profile:",
       `- Name: ${input.profile.name}`,

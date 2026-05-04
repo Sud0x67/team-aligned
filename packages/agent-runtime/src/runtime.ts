@@ -55,7 +55,6 @@ import {
 import {
   fetchSkillCatalog,
   installSkillFromRegistry,
-  readInstalledSkillDefinition,
 } from "./skill-registry.ts";
 import {
   buildMcpConnection,
@@ -1905,8 +1904,7 @@ export class TeamalignedRuntime extends EventEmitter {
       if (event.phase === "start") {
         let content: string | null = null;
         if (
-          ["list_directory", "read_text_file", "read_file", "search_workspace", "read_skill_bundle"].includes(toolName) ||
-          toolName.startsWith("skill_")
+          ["list_directory", "read_text_file", "read_file", "search_workspace", "skill_list", "skill_load", "skill_read_file"].includes(toolName)
         ) {
           if (!announcedContextLookup) {
             announcedContextLookup = true;
@@ -1944,6 +1942,11 @@ export class TeamalignedRuntime extends EventEmitter {
           content = byLanguage(input.responseLanguage, {
             zh: `${input.speaker.name}：我先跑一个命令确认一下。`,
             en: `${input.speaker.name}: I'll run a command to verify this first.`,
+          });
+        } else if (toolName === "skill_run_script") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：我会运行 Skill 附带脚本来辅助处理。`,
+            en: `${input.speaker.name}: I’ll run a bundled Skill script to help with this.`,
           });
         } else {
           content = isLocalTool
@@ -2002,9 +2005,13 @@ export class TeamalignedRuntime extends EventEmitter {
             zh: `${input.speaker.name}：命令已经跑完了，我继续往下处理。`,
             en: `${input.speaker.name}: Command finished. I'll continue.`,
           });
+        } else if (toolName === "skill_run_script") {
+          content = byLanguage(input.responseLanguage, {
+            zh: `${input.speaker.name}：Skill 脚本已经执行完成，我继续整理结果。`,
+            en: `${input.speaker.name}: The Skill script finished. I’ll continue synthesizing the result.`,
+          });
         } else if (
-          !["list_directory", "read_text_file", "read_file", "search_workspace", "read_skill_bundle"].includes(toolName) &&
-          !toolName.startsWith("skill_")
+          !["list_directory", "read_text_file", "read_file", "search_workspace", "skill_list", "skill_load", "skill_read_file"].includes(toolName)
         ) {
           content = isLocalTool
             ? byLanguage(input.responseLanguage, {
@@ -2522,11 +2529,13 @@ export class TeamalignedRuntime extends EventEmitter {
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const activeSkillRecord = slashContext.skill ?? (activeSkill ? this.storage.findSkillCatalogEntryByNameOrId(activeSkill) : null);
-    const activeSkillLabel = activeSkillRecord?.displayName || activeSkillRecord?.name || activeSkill;
-    const activeSkillDefinition =
-      activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id)
-        ? readInstalledSkillDefinition(activeSkillRecord)
-        : null;
+    const availableSkillRecords = this.storage
+      .listSkillCatalog()
+      .filter((skill) => skill.installed && agent.skillWhitelist.includes(skill.id));
+    const allowedActiveSkillRecord =
+      activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null;
+    const activeSkillLabel =
+      allowedActiveSkillRecord?.displayName || allowedActiveSkillRecord?.name || allowedActiveSkillRecord?.slug || null;
     const transcriptPaths = this.storage.getConversationTranscriptPaths(conversation.id);
     const toolInvocationObserver = this.createAgentToolInvocationObserver({
       conversationId: conversation.id,
@@ -2545,7 +2554,8 @@ export class TeamalignedRuntime extends EventEmitter {
       attachmentRoots: this.storage.getConversationAttachmentRoots(conversation.id),
       provider,
       responseLanguage,
-      activeSkill: activeSkillRecord && agent.skillWhitelist.includes(activeSkillRecord.id) ? activeSkillRecord : null,
+      activeSkill: allowedActiveSkillRecord,
+      availableSkills: availableSkillRecords,
       onInvocation: toolInvocationObserver,
       approvalPolicy,
     });
@@ -2571,12 +2581,18 @@ export class TeamalignedRuntime extends EventEmitter {
         execute: () => {
           const skillText = activeSkillLabel
             ? byLanguage(responseLanguage, {
-                zh: `当前会话激活技能：${activeSkillLabel}。`,
-                en: `Active skill in this conversation: ${activeSkillLabel}.`,
+                zh: `当前会话偏好 Skill：${activeSkillLabel}，模型会在任务相关时加载完整说明。`,
+                en: `Preferred Skill in this conversation: ${activeSkillLabel}; the model will load full instructions when relevant.`,
               })
             : byLanguage(responseLanguage, {
-                zh: "当前使用默认技能栈。",
-                en: "Using the default skill stack.",
+                zh:
+                  availableSkillRecords.length > 0
+                    ? `可用白名单 Skills：${availableSkillRecords.map((skill) => skill.displayName || skill.name).join("、")}，模型会按需加载。`
+                    : "当前没有可用的白名单 Skills。",
+                en:
+                  availableSkillRecords.length > 0
+                    ? `Available allowlisted Skills: ${availableSkillRecords.map((skill) => skill.displayName || skill.name).join(", ")}; the model will load them on demand.`
+                    : "No allowlisted Skills are available.",
               });
           this.addRunMessage(
             conversation.id,
@@ -2601,7 +2617,7 @@ export class TeamalignedRuntime extends EventEmitter {
               agent,
               profile: snapshot.profile,
               activeSkill: activeSkillLabel,
-              activeSkillDefinition,
+              activeSkillDefinition: null,
               mcpServers: availableMcpServers,
               mcpConnections: availableMcpConnections,
               workspacePath,
@@ -2621,7 +2637,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
                 const existingMessageId = currentRun.metadata?.streamMessageId;
                 const baseMetadata = {
-                  skill: activeSkillRecord?.id ?? activeSkill,
+                  skill: allowedActiveSkillRecord?.id ?? null,
                   skillLabel: activeSkillLabel,
                   streaming: true,
                 };
@@ -2700,7 +2716,7 @@ export class TeamalignedRuntime extends EventEmitter {
               {
                 content: response.text,
                 metadata: {
-                  skill: activeSkillRecord?.id ?? activeSkill,
+                  skill: allowedActiveSkillRecord?.id ?? null,
                   skillLabel: activeSkillLabel,
                   streaming: false,
                 },
@@ -2718,7 +2734,7 @@ export class TeamalignedRuntime extends EventEmitter {
               content: response.text,
               mentions: ["user"],
               runId,
-              metadata: { skill: activeSkillRecord?.id ?? activeSkill, skillLabel: activeSkillLabel },
+              metadata: { skill: allowedActiveSkillRecord?.id ?? null, skillLabel: activeSkillLabel },
               createdAt: Date.now(),
             });
           }
@@ -2854,7 +2870,7 @@ export class TeamalignedRuntime extends EventEmitter {
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const attachmentRoots = this.storage.getConversationAttachmentRoots(conversation.id);
     const createTeamRuntimeTools = (input: {
-      actorName: string;
+      actor: AgentRecord;
       onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
     }) =>
       buildRuntimeLangChainTools({
@@ -2863,11 +2879,14 @@ export class TeamalignedRuntime extends EventEmitter {
         provider,
         responseLanguage,
         activeSkill: null,
+        availableSkills: this.storage
+          .listSkillCatalog()
+          .filter((skill) => skill.installed && input.actor.skillWhitelist.includes(skill.id)),
         onInvocation: input.onInvocation,
         approvalPolicy: this.createToolExecutionPolicy({
           conversationId: conversation.id,
           runId,
-          actorName: input.actorName,
+          actorName: input.actor.name,
           responseLanguage,
         }),
       });
@@ -3249,6 +3268,10 @@ export class TeamalignedRuntime extends EventEmitter {
                         });
                       },
                     });
+                    const runtimeTools = createTeamRuntimeTools({
+                      actor: item.owner,
+                      onInvocation: teamToolObserver,
+                    });
                     const content = await executeNaturalTeamWorkItem({
                       provider: provider!,
                       profile: snapshot.profile,
@@ -3337,10 +3360,8 @@ export class TeamalignedRuntime extends EventEmitter {
                         }
                         this.emitSnapshot();
                       },
-                      additionalTools: createTeamRuntimeTools({
-                        actorName: item.owner.name,
-                        onInvocation: teamToolObserver,
-                      }).tools,
+                      additionalTools: runtimeTools.tools,
+                      runtimeToolSummary: runtimeTools.summary,
                     });
                     return { item, ok: true as const, content, streamMessageId };
                   } catch (error) {
@@ -3572,6 +3593,10 @@ export class TeamalignedRuntime extends EventEmitter {
                   });
                 },
               });
+              const runtimeTools = createTeamRuntimeTools({
+                actor: speaker,
+                onInvocation: teamToolObserver,
+              });
               const message = await generateNaturalTeamAgentMessage({
                 provider: provider!,
                 profile: snapshot.profile,
@@ -3645,10 +3670,8 @@ export class TeamalignedRuntime extends EventEmitter {
                   }
                   this.emitSnapshot();
                 },
-                additionalTools: createTeamRuntimeTools({
-                  actorName: speaker.name,
-                  onInvocation: teamToolObserver,
-                }).tools,
+                additionalTools: runtimeTools.tools,
+                runtimeToolSummary: runtimeTools.summary,
               });
               if (!shouldContinueRun()) {
                 return;

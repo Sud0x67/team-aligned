@@ -9,6 +9,11 @@
 - 全局安装路径为 `~/.teamaligned/skills/<skill-id>/<version>/`
 - Agent 使用 `skillWhitelist` 控制允许加载哪些 skill
 - 当前新安装 skill 会默认加入所有 Agent 的白名单，后续再收紧为显式配置
+- Runtime 采用标准 Skill progressive disclosure：
+  - system prompt 只注入白名单 Skill 的轻量 catalog（id、slug、description）
+  - 模型判断任务相关时调用 `skill_load` 读取完整 `SKILL.md`
+  - 需要附属材料时调用 `skill_read_file` 读取 `references/`、`templates/`、`assets/`
+  - 需要执行附带脚本时调用 `skill_run_script`，脚本仍走工具确认策略
 
 ### 内置 Skill（不走远端下载）
 
@@ -32,9 +37,14 @@
   - 启动时同步 Skill catalog
   - 提供安装 Skill 的 runtime API
   - `/skills` 只展示当前会话可用且已安装的 skill
+  - 单聊和群聊按 Agent 白名单注入可用 Skill catalog
 
 - `packages/agent-runtime/src/deep-agent.ts`
-  - 将已安装 skill 的 `SKILL.md` 内容注入单聊 system prompt
+  - 提示模型按需加载白名单 Skill，而不是默认注入完整 `SKILL.md`
+
+- `packages/agent-runtime/src/agent-tools.ts`
+  - 提供通用 `skill_list`、`skill_load`、`skill_read_file`、`skill_run_script`
+  - 不再为单个 active Skill 动态生成专属工具名
 
 ## Registry 仓库约定
 
@@ -59,5 +69,5 @@ skills/
 ## 后续待补
 
 1. Skill 升级与版本固定
-2. Team 级 skillWhitelist
-3. 从 `SKILL.md` frontmatter 自动生成 catalog
+2. 从 `SKILL.md` frontmatter 自动生成 catalog
+3. Skill 升级时的差异提示与回滚

@@ -459,7 +459,9 @@ function buildSystemPrompt(input: {
       `当前模型供应商：${provider.label}，模型：${provider.defaultModel}。`,
       `当前 workspace：${workspacePath}。`,
       `你的能力标签：${capabilities}。`,
-      activeSkill ? `当前会话激活技能：${activeSkill}。` : "当前会话未指定额外技能。",
+      activeSkill
+        ? `当前会话偏好 Skill：${activeSkill}。如果本轮任务与它相关，请先调用 skill_load 读取完整 SKILL.md，再按说明执行。`
+        : "当前会话未强制指定 Skill；如果用户请求匹配可用 Skill catalog，请按需调用 skill_load 加载完整说明。",
       activeSkillDefinition
         ? `请严格参考下面这份 SKILL 定义执行：\n\n${activeSkillDefinition}`
         : "",
@@ -470,6 +472,7 @@ function buildSystemPrompt(input: {
       "请优先使用与用户相同的语言回复。",
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
       "如果需要读取、搜索、写入当前 workspace 的真实文件，请优先使用 workspace_* 工具；这些工具会被 TeamAligned 记录为可见过程。",
+      "不要仅因为用户没有显式输入 /skill-id 就忽略白名单 Skills；请根据 Skill 描述自动判断是否需要加载。",
       runtimeToolSummary,
       "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
     ],
@@ -479,7 +482,9 @@ function buildSystemPrompt(input: {
       `Current model provider: ${provider.label}, model: ${provider.defaultModel}.`,
       `Current workspace: ${workspacePath}.`,
       `Your capability tags: ${capabilities}.`,
-      activeSkill ? `Active skill for this conversation: ${activeSkill}.` : "No extra skill is active for this conversation.",
+      activeSkill
+        ? `Preferred Skill for this conversation: ${activeSkill}. If this turn is relevant to it, call skill_load before using it.`
+        : "No Skill is forced for this conversation. If the request matches an available Skill catalog entry, call skill_load on demand.",
       activeSkillDefinition
         ? `Strictly follow this SKILL definition:\n\n${activeSkillDefinition}`
         : "",
@@ -490,6 +495,7 @@ function buildSystemPrompt(input: {
       "Reply in the same language the user is currently using.",
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
       "When reading, searching, or writing real files in the current workspace, prefer the workspace_* tools so TeamAligned can surface visible progress.",
+      "Do not ignore allowlisted Skills just because the user did not explicitly type /skill-id; infer relevance from Skill descriptions.",
       runtimeToolSummary,
       "If local config or request constraints block progress, clearly explain what information or configuration is missing.",
     ],
@@ -520,6 +526,7 @@ function createSignature(input: {
   activeSkill: string | null;
   activeSkillDefinition: string | null;
   mcpToolSignature: string;
+  runtimeToolSummary: string;
   workspacePath: string;
   responseLanguage: RuntimeLanguage;
 }) {
@@ -530,6 +537,7 @@ function createSignature(input: {
     activeSkill,
     activeSkillDefinition,
     mcpToolSignature,
+    runtimeToolSummary,
     workspacePath,
     responseLanguage,
   } =
@@ -555,6 +563,7 @@ function createSignature(input: {
     activeSkill,
     activeSkillDefinition,
     mcpToolSignature,
+    runtimeToolSummary,
     workspacePath,
     responseLanguage,
   });
@@ -757,6 +766,7 @@ export async function invokeSingleChatDeepAgent(input: {
     activeSkill,
     activeSkillDefinition,
     mcpToolSignature,
+    runtimeToolSummary: runtimeToolSummary ?? "",
     workspacePath,
     responseLanguage,
   });
