@@ -25,6 +25,26 @@ test("normalizeDeepAgentWorkspacePath converts workspace absolute paths to virtu
   }
 });
 
+test("normalizeDeepAgentWorkspacePath collapses duplicated workspace roots", () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const workspaceWithoutLeadingSlash = workspacePath.replace(/^[\\/]+/, "");
+    assert.equal(
+      normalizeDeepAgentWorkspacePath(
+        join(workspacePath, workspaceWithoutLeadingSlash, "docs", "spec.md"),
+        workspacePath,
+      ),
+      "/docs/spec.md",
+    );
+    assert.equal(
+      normalizeDeepAgentWorkspacePath(join(workspaceWithoutLeadingSlash, "docs", "spec.md"), workspacePath),
+      "/docs/spec.md",
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
 test("normalizeDeepAgentWorkspacePath preserves virtual workspace paths", () => {
   const workspacePath = createTempWorkspace();
   try {
@@ -59,6 +79,25 @@ test("workspace filesystem backend writes workspace absolute paths without dupli
     assert.equal(existsSync(targetPath), true);
     assert.equal(readFileSync(targetPath, "utf8"), "hello TeamAligned");
     assert.equal(existsSync(join(workspacePath, workspacePath.replace(/^[\\/]+/, ""))), false);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace filesystem backend collapses duplicated absolute workspace prefixes", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const backend = createWorkspaceFilesystemBackend(workspacePath);
+    const workspaceWithoutLeadingSlash = workspacePath.replace(/^[\\/]+/, "");
+    const duplicatedPath = join(workspacePath, workspaceWithoutLeadingSlash, "hello.md");
+    const targetPath = join(workspacePath, "hello.md");
+
+    const result = await backend.write(duplicatedPath, "hello TeamAligned");
+
+    assert.equal(result.error, undefined);
+    assert.equal(existsSync(targetPath), true);
+    assert.equal(readFileSync(targetPath, "utf8"), "hello TeamAligned");
+    assert.equal(existsSync(duplicatedPath), false);
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }

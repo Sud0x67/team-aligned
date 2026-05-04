@@ -46,6 +46,15 @@ function pathError(filePath: string, workspaceRoot: string) {
   return `Host absolute path is outside the workspace sandbox. Use a workspace-relative path instead. path=${filePath}, workspace=${workspaceRoot}`;
 }
 
+function stripDuplicatedWorkspaceRoot(filePath: string, workspaceRoot: string) {
+  const portablePath = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  const portableRoot = toPortablePath(workspaceRoot).replace(/^\/+/, "");
+  if (!portableRoot) return null;
+  if (portablePath === portableRoot) return "/";
+  if (!portablePath.startsWith(`${portableRoot}/`)) return null;
+  return `/${portablePath.slice(portableRoot.length + 1)}`;
+}
+
 export function normalizeDeepAgentWorkspacePath(filePath: string, workspaceRoot: string) {
   const trimmed = filePath.trim();
   if (!trimmed) return filePath;
@@ -55,13 +64,21 @@ export function normalizeDeepAgentWorkspacePath(filePath: string, workspaceRoot:
     const resolvedInput = resolve(trimmed);
     if (isInsidePath(resolvedInput, root)) {
       const relativePath = relative(root, resolvedInput);
-      return relativePath ? `/${toPortablePath(relativePath)}` : "/";
+      if (!relativePath) return "/";
+      const deduplicatedPath = stripDuplicatedWorkspaceRoot(toPortablePath(relativePath), root);
+      return deduplicatedPath ?? `/${toPortablePath(relativePath)}`;
     }
+
+    const deduplicatedPath = stripDuplicatedWorkspaceRoot(trimmed, root);
+    if (deduplicatedPath) return deduplicatedPath;
 
     if (looksLikeHostAbsolutePath(trimmed)) {
       throw new Error(pathError(filePath, workspaceRoot));
     }
   }
+
+  const deduplicatedPath = stripDuplicatedWorkspaceRoot(trimmed, root);
+  if (deduplicatedPath) return deduplicatedPath;
 
   return filePath;
 }
