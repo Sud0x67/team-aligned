@@ -48,7 +48,7 @@ Results:
 Fixes validated by this run:
 
 - Provider replay now isolates every scenario in a separate runtime to prevent state pollution.
-- Team orchestrator has a default 30-second timeout and falls back to local routing when the Provider stalls.
+- Team orchestrator currently has a default 90-second timeout and falls back to local routing when the Provider stalls.
 - Fallback execution planning recognizes inline Agent names and workspace paths such as `Designer`, `Coder`, `docs/...`, and `src/...`.
 - Dependency-waiting assertions now require a waiting update, `read_text_file`, `write_text_file`, and zero failed tool invocations.
 

@@ -1,17 +1,18 @@
-# 路线与 TODO
+# 路线图归档
 
 ## 当前说明
 
 从 2026-04-07 开始，路线重点已经从“继续补功能”切换到“收口 beta”。
 
-因此本文件保留历史演进脉络，但当前执行请优先参考：
+因此本文件只保留历史演进脉络；当前状态和执行项请优先参考：
 
 - [Beta 计划](./beta-plan.md)
 - [开发 TODO](./todo.md)
+- [系统架构](./architecture.md)
 
 ## 路线总览
 
-这份路线图按“先把可体验骨架做出来，再把 mock 替换成真实能力”的顺序推进。
+这份路线图记录早期“先做可体验骨架，再替换为真实能力”的演进。当前版本已经接入真实 Provider、工具层和群聊编排。
 
 ## 版本 0.1：可体验 MVP 骨架
 
@@ -30,7 +31,7 @@
 
 ## 版本 0.2：真实运行时接线
 
-状态：大部分完成
+状态：已完成
 
 目标：把当前“能体验”的产品变成“能真实执行”的产品。
 
@@ -39,14 +40,14 @@
 - 接入真实 OpenAI / Qwen 请求链路
 - 建立正式 Provider Registry
 - 把 slash 命令接到真实执行链
-- 用 DeepAgents / LangGraph 替换当前 mock runtime
-- 让群组中的 manager / specialist 协作进入真实调度
+- 用 DeepAgents / LangGraph 接入真实 Agent runtime
+- 让群组协作进入 orchestrator + handoff 调度
 
 当前进展：
 
 - 单聊场景的 Qwen / OpenAI 真实调用已接入
 - 当前默认仍建议优先使用 Qwen 做测试
-- 群聊 manager / specialist 真实协作已接入
+- 群聊 orchestrator / handoff 真实协作已接入
 - Skills registry、安装、白名单和 prompt 注入已接入
 - MCP registry、健康检查、白名单和 runtime 注入已接入
 - Skill 脚本执行、工具层接线和 UI 可视化已基本落地
@@ -70,7 +71,7 @@
 - [x] stdio MCP
 - [x] HTTP MCP
 - [x] MCP 配置与健康检查
-- [x] Agent / Team 白名单
+- [x] Agent 级 Skill/MCP 白名单
 - [x] 文件工具
 - [x] 终端工具统一并入 agent tool layer
 - [x] 本地搜索工具
@@ -118,7 +119,7 @@
 - 聊天体验继续打磨
 - 通知机制测试与确认
 - 群聊稳定性、失败恢复与统一错误态
-- MCP tool 级白名单与配置模板
+- MCP tool 级白名单暂不进入近期主线；当前依靠 Agent 级 MCP 白名单和高风险确认
 - transcript / artifact / memory 导出与检索
 - Electron 打包、应用图标、发布流程
 - 自动化测试与端到端测试

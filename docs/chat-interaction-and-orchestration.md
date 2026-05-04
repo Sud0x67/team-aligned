@@ -179,7 +179,7 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 
 这样可以避免：
 
-- 所有 specialist 共享同一份混杂记忆
+- 所有 Agent 共享同一份混杂记忆
 - 群组 prompt 越积越大
 - 多 Agent 对同一信息的理解失控
 
@@ -272,7 +272,7 @@ system orchestrator 的发言选择、轮数控制和停止判断不作为群成
 - 子任务分派
 - tool call
 - MCP 调用
-- specialist 内部对话
+- Agent 内部过程
 
 应放入可展开的 run 详情中。
 

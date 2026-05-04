@@ -2,9 +2,9 @@
 
 [English version](./en/architecture.md)
 
-更新时间：2026-05-02
+更新时间：2026-05-04
 
-当前版本：`0.5.0-beta`
+当前版本：`0.5.1-beta`
 
 ## 文档范围
 
@@ -67,7 +67,7 @@ teamaligned
 
 - 左侧：会话搜索和会话列表。
 - 中间：消息线程和输入区。
-- 右侧：默认收起的信息栏，展示 token、workspace、打开目录、当前 Skill/MCP、最近工具调用等。
+- 右侧：默认收起的信息栏，展示 token、workspace、打开目录、会话导出、当前 Skill/MCP 和当前运行状态。
 
 输入区支持：
 
@@ -123,7 +123,7 @@ teamaligned
 
 - 显式 `@Agent` 优先。
 - 无 `@` 时由 orchestrator 判断适合发言或执行的 Agent。
-- orchestrator 默认 30 秒超时；超时后使用本地 fallback，避免 Provider 长尾导致群聊静默卡住。
+- orchestrator 默认 90 秒超时；超时后使用本地 fallback，避免 Provider 长尾导致群聊静默卡住。
 - fallback 会识别文本里直接出现的 Agent 名称和 workspace 路径，用于生成基础执行计划。
 - handoff 状态记录谁刚发言、谁应接棒、原因和 revision。
 - 普通问题通常 1-2 个 Agent 发言。
@@ -210,8 +210,8 @@ MCP 当前支持：
 
 当前尚未完成：
 
-- MCP tool 级白名单。
-- 更细的 OAuth 重新授权状态提示，例如 token 过期、scope 变化、用户主动 revoke。
+- MCP tool 级白名单当前不在主线优先级内；现阶段依靠 Agent 级 MCP 白名单和高风险工具确认。
+- 更细的 OAuth 重新授权状态提示，例如 scope 变化、用户主动 revoke。
 - 更细的高风险 tool 风险分级与用户提示，例如命令内容、文件路径、MCP tool 能力。
 
 ## Web Tools
@@ -327,19 +327,19 @@ workspace 根目录留给用户生成和管理真实文件。
 
 当前架构还需要继续增强：
 
-- 群聊真实 Provider 回放覆盖不足。
+- 群聊真实 Provider 回放已覆盖主链路，但复杂长链路仍需要持续观察。
 - 长任务 checkpoint / failure recovery 仍不完整。
-- MCP tool 级白名单尚未实现。
-- OAuth 型 MCP 已具备基础授权闭环和聊天内审批队列，但重授权状态还需要更细打磨。
+- MCP tool 级白名单尚未实现，且暂不作为近期主线。
+- OAuth 型 MCP 已具备基础授权闭环和聊天内审批队列，但 scope 变化、用户主动 revoke 等重授权状态还需要更细打磨。
 - transcript / artifact / attachment 的项目包导出仍需完善。
-- 关键聊天 UI 组件测试和 Electron E2E 测试仍不足。
+- Electron E2E 与 macOS 安装体验检查仍不足。
 
 ## 下一阶段建议
 
 优先顺序：
 
-1. 群聊真实回放与失败恢复。
-2. 工具权限、MCP tool 级白名单和高风险操作提示。
-3. 长任务 checkpoint 与可恢复执行。
+1. 长任务 checkpoint 与失败恢复。
+2. 高风险操作提示和权限解释。
+3. 可恢复执行和失败后继续路径。
 4. 项目包导出和全文搜索。
 5. 发布检查、安装体验和 E2E 测试。

@@ -6,7 +6,19 @@ All notable changes to TeamAligned are documented in this file.
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Documentation and minor UX polish for the `0.5.1-beta` hardening line.
+
+## 0.5.1-beta - 2026-05-04
+
+### Improved
+
+- Hardened workspace path normalization for generated file operations so duplicated absolute workspace prefixes are collapsed before tool execution.
+- Extended runtime visibility for long-running model and tool work, including elapsed-time status and diagnostic logging for timeout/error paths.
+- Refreshed architecture, TODO, and release checklist docs to match the current `0.5.1-beta` runtime and UI behavior.
+
+### Fixed
+
+- Fixed documentation drift around team orchestrator timeout defaults, right-sidebar contents, and the built-in TeamAligned Assistant constraints.
 
 ## 0.5.0-beta - 2026-05-03
 

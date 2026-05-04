@@ -2,9 +2,9 @@
 
 [中文版本](../architecture.md)
 
-Updated: 2026-05-02
+Updated: 2026-05-04
 
-Current version: `0.5.0-beta`
+Current version: `0.5.1-beta`
 
 ## Scope
 
@@ -67,7 +67,7 @@ Current chat layout:
 
 - Left: conversation search and list.
 - Center: message thread and composer.
-- Right: collapsed by default info panel with tokens, workspace, open-folder action, active Skill/MCP, and recent tool calls.
+- Right: collapsed by default info panel with tokens, workspace, open-folder action, conversation export, active Skill/MCP, and active run state.
 
 The composer supports:
 
@@ -123,7 +123,7 @@ Core rules:
 
 - Explicit `@Agent` wins.
 - Without `@`, the orchestrator chooses suitable speakers or execution owners.
-- The orchestrator has a default 30-second timeout; if the Provider stalls, local fallback routing prevents silent freezes.
+- The orchestrator has a default 90-second timeout; if the Provider stalls, local fallback routing prevents silent freezes.
 - Fallback routing recognizes inline Agent names and workspace paths to build a basic execution plan.
 - Handoff state tracks the last speaker, next speakers, reason, and revision.
 - Simple questions usually involve 1-2 Agents.
@@ -210,8 +210,8 @@ MCP currently supports:
 
 Not yet complete:
 
-- MCP tool-level allowlists.
-- Finer OAuth re-authorization states, such as token expiry, scope changes, and user revocation.
+- MCP tool-level allowlists are not in the near-term mainline; the current model relies on Agent-level MCP allowlists plus high-risk tool confirmation.
+- Finer OAuth re-authorization states, such as scope changes and user revocation.
 - Finer high-risk tool classification and prompts by command content, file path, and MCP tool capability.
 
 ## Web Tools
@@ -327,19 +327,19 @@ Diagnostics are redacted by default:
 
 The architecture still needs improvement in:
 
-- Real-provider team-chat replay coverage.
+- Real-provider team-chat replay covers the main paths, while complex long-running chains still need observation.
 - Long-task checkpoint / failure recovery.
-- MCP tool-level allowlists.
-- OAuth MCP now has a foundational authorization loop and in-chat approval queue, but re-authorization states still need more polish.
+- MCP tool-level allowlists are not implemented and are not a near-term mainline priority.
+- OAuth MCP now has a foundational authorization loop and in-chat approval queue, but scope changes and user-initiated revocation still need more polish.
 - Project-package export for transcripts, artifacts, and attachments.
-- Key chat UI component tests and Electron E2E tests.
+- Electron E2E and macOS install-experience checks.
 
 ## Next Priorities
 
 Recommended order:
 
-1. Real-provider team replay and failure recovery.
-2. Tool permissions, MCP tool-level allowlists, and high-risk operation prompts.
-3. Long-task checkpoint and recoverable execution.
+1. Long-task checkpoint and failure recovery.
+2. High-risk operation prompts and permission explainability.
+3. Recoverable execution and continuation paths after failure.
 4. Project-package export and full-text search.
 5. Release gates, install checks, and E2E coverage.

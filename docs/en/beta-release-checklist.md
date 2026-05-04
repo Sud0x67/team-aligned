@@ -2,9 +2,9 @@
 
 [中文版本](../beta-release-checklist.md)
 
-Updated: 2026-05-03
+Updated: 2026-05-04
 
-Current version: `0.5.0-beta`
+Current version: `0.5.1-beta`
 
 ## 1. Automated Gate
 
@@ -92,7 +92,7 @@ Ask users to include:
 ## 5. Known Limits
 
 1. MCP reliability depends on third-party services; timeouts use the unified recovery copy.
-2. OAuth MCP has authorization entry points and manual Client ID/Secret compatibility, but token-expiry and re-auth UX still need polish.
+2. OAuth MCP has authorization entry points, manual Client ID/Secret compatibility, and stale-token cleanup; finer re-auth states such as scope changes and user-initiated revocation still need polish.
 3. Conversation export currently supports minimal JSON / image export, not a full project archive.
 4. Complex long-running team chat still needs observation, especially multi-Agent parallel work with dependency waits.
 5. Node/Electron may print experimental runtime warnings, such as SQLite ExperimentalWarning; these do not block core functionality.

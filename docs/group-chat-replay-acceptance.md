@@ -102,7 +102,7 @@
 ### 本轮修复
 
 - 回放脚本改为每个场景独立 runtime，避免上一场景的长上下文、未完成 run 或取消状态污染下一场景。
-- 群聊 orchestrator 增加默认 30 秒超时，超时后走本地 fallback，避免真实 Provider 长尾导致群聊像卡住。
+- 群聊 orchestrator 当前默认 90 秒超时，超时后走本地 fallback，避免真实 Provider 长尾导致群聊像卡住。
 - fallback 执行计划现在能识别用户文本里的 Agent 名称和 workspace 路径，例如 `Designer`、`Coder`、`docs/...`、`src/...`。
 - 依赖等待验收收紧为：必须有 waiting 过程消息、`read_text_file`、`write_text_file`，且不能出现失败工具调用。
 

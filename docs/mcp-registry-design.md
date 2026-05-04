@@ -113,14 +113,14 @@ team-aligned-mcps/
 - 支持 OAuth 手动 Client ID/Secret fallback
 - 支持本地配置
 - 支持健康检查
-- 支持 Agent / Team 白名单
+- 支持 Agent 级 MCP 白名单
 - 支持 discovered tools 注入 runtime
 - 支持聊天内确认高风险 MCP 工具
 
 ## 推荐开发顺序
 
 1. 增加 MCP tool call 审计与运行记录
-2. 增加 tool 级白名单
-3. 增加更细粒度的错误提示与配置模板
-4. 在消息流中展示 MCP 调用过程与结果
-5. 继续打磨 OAuth 重授权体验
+2. 增加更细粒度的错误提示与配置模板
+3. 在消息流中展示 MCP 调用过程与结果
+4. 继续打磨 OAuth 重授权体验
+5. 仅在用户反馈需要时再评估 tool 级白名单

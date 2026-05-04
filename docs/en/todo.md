@@ -2,9 +2,9 @@
 
 [中文版本](../todo.md)
 
-Updated: 2026-05-03
+Updated: 2026-05-04
 
-Current version: `0.5.0-beta`
+Current version: `0.5.1-beta`
 
 ## Current State
 
@@ -39,13 +39,12 @@ Goal: users should clearly feel that Agents are working, cancellable, and recove
 
 Goal: users should understand what each Agent can use and when high-risk tools are being called.
 
-- [ ] Add MCP tool-level allowlists so one MCP connection does not expose every discovered tool by default.
 - [x] Add a generic pre-execution tool policy hook so file writes, commands, network tools, Skills, and MCP can be intercepted or require confirmation consistently.
 - [x] Add in-chat approval cards and an approve/deny queue for high-risk shell, file-write, Skill, and MCP tool calls.
 - [ ] Continue refining high-risk prompts with more precise risk explanations by MCP tool, command content, and file path.
-- [ ] Keep the right info panel focused on useful information: tokens, workspace, open-folder action, active Skill/MCP, and recent tool calls.
+- [x] Keep the right info panel focused on useful information: tokens, workspace, Finder shortcut, conversation export, active Skill/MCP, and active run state.
 - [ ] Keep `/skills`, `/mcp`, `/<skill-id>`, and `/<prompt-alias>` responses conversational rather than console-like.
-- [ ] Keep TeamAligned Assistant non-editable, non-deletable, and locked to the built-in app-assistant Skill.
+- [x] Keep TeamAligned Assistant non-editable, non-deletable, and locked to the built-in app-assistant Skill.
 
 ## P2: Long-Task Recovery And Auditability
 
@@ -84,7 +83,8 @@ These should stay out of the next mainline unless user feedback strongly demands
 - Adding more model providers.
 - Large marketplace expansion.
 - Multi-user online collaboration.
-- OAuth MCP has a foundational authorization loop and in-chat approval queue; the remaining lower-priority work is full tool-level permissions and finer re-authorization state handling.
+- MCP tool-level allowlists; the current model keeps Agent-level MCP allowlists plus high-risk tool confirmation.
+- OAuth MCP has a foundational authorization loop and in-chat approval queue; the remaining lower-priority work is finer re-authorization states such as scope changes and user-initiated revocation.
 
 ## Completion Criteria
 

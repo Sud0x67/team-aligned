@@ -112,6 +112,7 @@ export function ChatComposer({
     message: string;
   } | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+  const [dismissedSuggestionToken, setDismissedSuggestionToken] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [workspaceFileSuggestions, setWorkspaceFileSuggestions] = useState<WorkspaceFileSuggestion[]>(
     [],
@@ -276,6 +277,10 @@ export function ChatComposer({
   }, [suggestionState?.type, suggestionState?.items.length]);
 
   useEffect(() => {
+    setDismissedSuggestionToken(null);
+  }, [activeToken]);
+
+  useEffect(() => {
     if (!emojiOpen) return;
     const handlePointerDown = (event: MouseEvent) => {
       if (!emojiPanelRef.current?.contains(event.target as Node)) {
@@ -311,6 +316,7 @@ export function ChatComposer({
   const applySuggestion = (value: string) => {
     if (!activeToken) return;
     setFeedback(null);
+    setDismissedSuggestionToken(null);
     setInput((current) =>
       current.replace(/(?:^|\s)([@/#][^\s]*)$/, (match, token: string) => match.replace(token, value)),
     );
@@ -367,9 +373,11 @@ export function ChatComposer({
 
   const showMentionButton = mentionCandidates.length > 0;
   const interactionLocked = busy || uploading;
+  const suggestionsDismissed = !!activeToken && dismissedSuggestionToken === activeToken;
   const showFileSuggestionsPanel =
     !busy &&
     !!suggestionState &&
+    !suggestionsDismissed &&
     (suggestionState.items.length > 0 ||
       (activeToken?.startsWith("#") &&
         (loadingWorkspaceFileSuggestions || activeToken.slice(1).trim().length > 0)));
@@ -594,7 +602,14 @@ export function ChatComposer({
                 return;
               }
 
-              if (suggestionState && suggestionState.items.length > 0) {
+              if (suggestionState && !suggestionsDismissed && event.key === "Escape") {
+                event.preventDefault();
+                setActiveSuggestionIndex(0);
+                setDismissedSuggestionToken(activeToken);
+                return;
+              }
+
+              if (suggestionState && !suggestionsDismissed && suggestionState.items.length > 0) {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
                   setActiveSuggestionIndex((current) =>
@@ -612,11 +627,6 @@ export function ChatComposer({
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   applySuggestion(suggestionState.items[activeSuggestionIndex]?.value ?? "");
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setActiveSuggestionIndex(0);
                   return;
                 }
               }

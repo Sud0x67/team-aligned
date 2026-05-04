@@ -1,5 +1,7 @@
 # MVP 计划
 
+> 这份文档保留 MVP 阶段的历史目标。当前产品状态以 [系统架构](./architecture.md) 和 [开发 TODO](./todo.md) 为准。
+
 ## MVP 定义
 
 `teamaligned` 的 MVP 不是完整形态，而是一个可以稳定验证核心交互的本地桌面版本。
@@ -10,7 +12,7 @@ MVP 要证明三件事：
 2. Agent 可以在本地执行任务，并且支持取消当前任务
 3. Skills、MCP、workspace、memory 这些能力能以清晰的产品方式接入
 
-## 当前状态（2026-04-06）
+## 历史状态（2026-04-06）
 
 当前仓库已经完成了 MVP 的“可体验骨架”部分：
 
@@ -19,7 +21,7 @@ MVP 要证明三件事：
 - 单聊与群聊可以切换并交互
 - `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>` 已接入消息流
 - 单聊已接入真实 Qwen / OpenAI 模型调用
-- 群聊已接入真实 manager / specialist 协作链路
+- 群聊已接入真实 orchestrator / handoff 协作链路
 - Skills 已支持 registry、安装、白名单和 prompt 注入
 - MCP 已支持 stdio / HTTP、健康检查、白名单和 runtime 注入
 - 本地 run 状态、通知、资料弹窗、头像上传、本地 workspace 打开已可体验
@@ -30,7 +32,7 @@ MVP 要证明三件事：
 
 - 群聊稳定性与失败恢复
 - 通知机制测试与确认
-- MCP tool 级白名单与配置模板
+- MCP tool 级白名单暂不作为近期主线；当前依靠 Agent 级 MCP 白名单和高风险确认
 - transcript / artifact / memory 导出与检索
 - 导出、全文检索与发布能力
 
@@ -72,7 +74,7 @@ MVP 要证明三件事：
 - `/mcp` 查看和调用当前可用的 MCP 能力
 - `/<skill-id>` 临时使用某个 Skill
 - `/<prompt-alias>` 使用用户自定义 Prompt 模板
-- 复杂任务的暂停、继续、取消
+- 复杂任务的取消、重试和 `/clear`
 - 流式输出与执行状态展示
 
 ### 群聊能力范围
@@ -83,8 +85,8 @@ Team 群聊需要支持：
 - Agent 之间互相通信
 - Agent 互相 `@` 触发协作
 - Agent 感知群组上下文
-- manager agent 作为统一入口
-- specialist subagent 之间的分工协作
+- orchestrator 作为不可见编排层
+- Agent 之间通过 handoff 与显式 `@` 分工协作
 - 群组任务进度和运行结果可见
 
 ### 能力范围
@@ -107,7 +109,7 @@ Team 群聊需要支持：
 - 管理页
 - 扩展页
 - 设置页
-- 仪表盘页
+- 仪表盘页曾属于早期 MVP 骨架；当前主导航已移除仪表盘，聚焦对话、管理、扩展和设置
 
 ## 明确不做
 

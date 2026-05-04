@@ -16,4 +16,4 @@ Define chat interaction semantics and orchestration behavior for single and grou
 
 ## Current Direction
 
-Move from rigid manager-driven turns to natural conversational handoff with bounded execution safeguards.
+Move from rigid centrally orchestrated turns to natural conversational handoff with bounded execution safeguards.

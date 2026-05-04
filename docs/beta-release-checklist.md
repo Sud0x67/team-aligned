@@ -2,9 +2,9 @@
 
 [English version](./en/beta-release-checklist.md)
 
-更新时间：2026-05-03
+更新时间：2026-05-04
 
-当前版本：`0.5.0-beta`
+当前版本：`0.5.1-beta`
 
 ## 1. 自动门禁
 
@@ -92,7 +92,7 @@ npm run dist:mac
 ## 5. 已知限制
 
 1. MCP 外部服务稳定性依赖第三方服务可用性，超时会按统一错误文案提示。
-2. OAuth MCP 已支持授权入口和手动 Client ID/Secret 兼容，但 token 过期与 re-auth 体验仍需继续打磨。
+2. OAuth MCP 已支持授权入口、手动 Client ID/Secret 兼容和过期 token 清理；scope 变化、用户主动 revoke 等更细 re-auth 状态仍需继续打磨。
 3. 会话导出当前是最小可用 JSON / 图片导出，不包含完整项目归档包。
 4. 群聊复杂长链路仍需持续观察，尤其是多 Agent 并行与依赖等待组合。
 5. Node/Electron 运行时可能出现实验性告警（例如 SQLite ExperimentalWarning），不影响核心功能。

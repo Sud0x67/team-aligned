@@ -39,5 +39,5 @@ MCP setup should be explicit, recoverable, and easy to understand in UI and runt
 ## Current Boundaries
 
 - MCP tool-level allowlists are not implemented yet.
-- OAuth re-authorization still needs finer states for token expiry, scope changes, and user revocation.
+- OAuth re-authorization still needs finer states for scope changes and user revocation.
 - MCP call history and richer run-detail visualization still need more work.

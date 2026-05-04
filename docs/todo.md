@@ -2,9 +2,9 @@
 
 [English version](./en/todo.md)
 
-更新时间：2026-05-03
+更新时间：2026-05-04
 
-当前版本：`0.5.0-beta`
+当前版本：`0.5.1-beta`
 
 ## 当前状态
 
@@ -39,13 +39,12 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 
 目标：让用户清楚每个 Agent 当前能用什么工具，以及高风险工具何时会被调用。
 
-- [ ] 增加 MCP tool 级白名单，避免一个 MCP 连接暴露全部工具。
 - [x] 增加通用工具执行前 policy hook，文件写入、命令、网络、Skill、MCP 均可被统一拦截或要求确认。
 - [x] 为 shell / 文件写入 / Skill / MCP 等高风险工具补聊天内确认卡片和 approve/deny 队列。
 - [ ] 继续细化高风险提示：按 MCP tool、命令内容、文件路径给出更精确的风险解释。
-- [ ] 右侧信息栏继续聚焦真正有用的信息：token、workspace、打开目录、当前 Skill/MCP、最近工具调用。
+- [x] 右侧信息栏保持聚焦：token、workspace、Finder 打开、会话导出、当前 Skill/MCP 和当前运行状态。
 - [ ] 优化 `/skills`、`/mcp`、`/<skill-id>`、`/<prompt-alias>` 的反馈，让它们继续保持“像聊天”而不是控制台。
-- [ ] 明确 TeamAligned Assistant 不能修改自身、不能删除、只绑定内置应用助手 Skill。
+- [x] 明确 TeamAligned Assistant 不能修改自身、不能删除、只绑定内置应用助手 Skill。
 
 ## P2：长任务恢复与审计
 
@@ -84,7 +83,8 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - 新增更多模型 Provider。
 - 大规模 marketplace 能力扩张。
 - 多用户在线协作。
-- OAuth 型 MCP 已有基础授权闭环和聊天内审批队列；暂不优先的是完整 tool 级权限与更细的重授权状态管理。
+- MCP tool 级白名单；当前保留 Agent 级 MCP 白名单和高风险工具确认。
+- OAuth 型 MCP 已有基础授权闭环和聊天内审批队列；暂不优先的是更细的 scope 变化、用户主动 revoke 等重授权状态管理。
 
 ## 完成标准
 

@@ -1,5 +1,7 @@
 # Beta 计划
 
+> 这份文档是 beta 收口阶段的原则归档。当前实时状态以 [系统架构](./architecture.md) 和 [开发 TODO](./todo.md) 为准。
+
 ## 阶段目标
 
 当前阶段最重要的目标，不是继续增加 feature，而是产出一个**真正能让用户使用的 beta 版本**。
@@ -70,7 +72,7 @@
 
 - 创建或选择群组
 - 发送任务
-- manager 和 specialist 正常协作
+- orchestrator 与 handoff 协作正常
 - 失败时可理解、可恢复
 - run 过程和结果清晰可见
 
@@ -99,7 +101,7 @@
 - 同步 catalog
 - 配置连接
 - 健康检查
-- 配置 Agent / Team 白名单
+- 配置 Agent 级 MCP 白名单
 - 在会话中被真实调用
 - 失败时给出明确提示
 

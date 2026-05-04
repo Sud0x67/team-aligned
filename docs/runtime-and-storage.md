@@ -472,8 +472,8 @@ MCP 的静态 metadata 来自远端 registry，本地真实连接状态建议保
 - 用户 → Agent
 - Agent → 用户
 - Agent → Agent
-- manager → specialist
-- specialist → manager
+- Agent → Agent
+- orchestrator → Agent
 
 建议消息可见性定义为：
 
