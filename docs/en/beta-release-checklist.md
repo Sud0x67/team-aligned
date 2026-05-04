@@ -4,7 +4,7 @@
 
 Updated: 2026-05-04
 
-Current version: `0.5.1-beta`
+Current version: `0.5.2-beta`
 
 ## 1. Automated Gate
 

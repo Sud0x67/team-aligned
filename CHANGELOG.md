@@ -6,7 +6,13 @@ All notable changes to TeamAligned are documented in this file.
 
 ## Unreleased
 
-- Documentation and minor UX polish for the `0.5.1-beta` hardening line.
+- Documentation and minor UX polish for the `0.5.2-beta` hardening line.
+
+## 0.5.2-beta - 2026-05-04
+
+### Changed
+
+- Bumped the app and internal workspace package versions to `0.5.2-beta`.
 - Security review hardening for local tool execution and workspace-opening IPC.
 
 ## 0.5.1-beta - 2026-05-04
