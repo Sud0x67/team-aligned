@@ -62,6 +62,7 @@ export type ToolExecutionPolicyRequest = {
   riskLevel: ToolExecutionRisk;
   args: Record<string, unknown>;
   description: string;
+  workspaceScoped?: boolean;
 };
 
 export type ToolExecutionPolicyDecision =
@@ -558,6 +559,7 @@ export function buildRuntimeLangChainTools(input: {
               riskLevel: "high",
               args: { path },
               description: "Write or overwrite a text file inside the current workspace.",
+              workspaceScoped: true,
             },
           },
           async () => {

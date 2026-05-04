@@ -44,3 +44,16 @@ test("formatActiveRunProgressText keeps non-elapsed progress unchanged", () => {
     "Designer is calling the model and waiting for the streamed reply.",
   );
 });
+
+test("formatActiveRunProgressText advances active heartbeat progress every tick", () => {
+  assert.equal(
+    formatActiveRunProgressText(
+      {
+        content: "Designer 仍在等待模型返回，已用时 60 秒。",
+        createdAt: 100_000,
+      },
+      119_000,
+    ),
+    "Designer 仍在等待模型返回，已用时 79 秒。",
+  );
+});

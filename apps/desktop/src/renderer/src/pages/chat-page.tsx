@@ -16,7 +16,7 @@ import { ChatConversationSidebar } from "../components/chat/chat-conversation-si
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 import { ResizeHandle } from "../components/layout/resize-handle";
-import { formatActiveRunProgressText, formatElapsedDuration } from "../lib/run-progress";
+import { formatActiveRunProgressText, formatElapsedDuration, refreshProgressElapsedText } from "../lib/run-progress";
 
 const conversationPaneWidthStorageKey = "chat.layout.conversationPaneWidth";
 const composerPaneHeightStorageKey = "chat.layout.composerPaneHeight.v2";
@@ -295,8 +295,14 @@ export function ChatPage() {
       return null;
     }
 
+    const latestSystemContent = refreshProgressElapsedText(
+      latestSystem.content,
+      latestSystem.createdAt,
+      clockNow,
+    );
+
     if (!latestVisibleAgent) {
-      return latestSystem.content;
+      return latestSystemContent;
     }
 
     const latestSystemStage =
@@ -315,11 +321,11 @@ export function ChatPage() {
         ].includes(latestSystemStage)
       : true;
     if (shouldKeepShowing && latestSystem.createdAt >= latestVisibleAgent.createdAt) {
-      return latestSystem.content;
+      return latestSystemContent;
     }
 
     return null;
-  }, [activeMessages, activeRun, hasStreamingMessage, t]);
+  }, [activeMessages, activeRun, clockNow, hasStreamingMessage, t]);
 
   const pendingSystemUpdates = useMemo(() => {
     if (!activeRun || activeConversation?.kind !== "team") {
@@ -339,7 +345,7 @@ export function ChatPage() {
           message.metadata?.teamUpdate === true,
       )
       .sort((left, right) => left.createdAt - right.createdAt)
-      .map((message) => message.content.trim())
+      .map((message) => refreshProgressElapsedText(message.content.trim(), message.createdAt, clockNow))
       .filter((content) => content.length > 0);
 
     const deduped: string[] = [];
@@ -355,7 +361,7 @@ export function ChatPage() {
 
     const normalizedPending = pendingSystemMessage.trim();
     return tail.filter((item, index) => !(item === normalizedPending && index === tail.length - 1));
-  }, [activeConversation?.kind, activeMessages, activeRun, pendingSystemMessage]);
+  }, [activeConversation?.kind, activeMessages, activeRun, clockNow, pendingSystemMessage]);
 
   const conversationTokenUsage = useMemo(() => {
     if (!activeConversation) {

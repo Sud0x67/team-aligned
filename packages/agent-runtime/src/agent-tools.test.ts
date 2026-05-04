@@ -151,6 +151,50 @@ test("tool approval policy does not interrupt read operations", () => {
   );
 });
 
+test("tool approval policy does not interrupt workspace-scoped writes", () => {
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "local-workspace",
+      serverName: "Workspace",
+      toolName: "write_text_file",
+      operation: "write",
+      riskLevel: "high",
+      args: { path: "notes.md" },
+      description: "Write a text file inside the current workspace.",
+      workspaceScoped: true,
+    }),
+    false,
+  );
+});
+
+test("tool approval policy still protects non-workspace writes and commands", () => {
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "external-files",
+      serverName: "External Files",
+      toolName: "write_text_file",
+      operation: "write",
+      riskLevel: "high",
+      args: { path: "/tmp/outside.md" },
+      description: "Write a file outside the current workspace.",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRequireToolApproval({
+      serverId: "local-shell",
+      serverName: "Workspace Shell",
+      toolName: "run_workspace_command",
+      operation: "command",
+      riskLevel: "high",
+      args: { command: "npm test" },
+      description: "Run a shell command in the current workspace.",
+      workspaceScoped: true,
+    }),
+    true,
+  );
+});
+
 test("tool approval policy still protects executable skill scripts", () => {
   assert.equal(
     shouldRequireToolApproval({

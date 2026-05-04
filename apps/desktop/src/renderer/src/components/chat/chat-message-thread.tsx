@@ -17,6 +17,7 @@ import type {
   MessageRecord,
   RunRecord,
   TeamRecord,
+  ToolApprovalDecision,
   UserProfile,
 } from "@shared";
 import { createTranslator } from "../../i18n";
@@ -135,6 +136,114 @@ function isMessageSelectable(message: MessageRecord) {
   return message.visibility === "public";
 }
 
+function isToolApprovalMessage(message: MessageRecord) {
+  return message.metadata?.cardType === "tool_approval";
+}
+
+function getOneLineArgsPreview(message: MessageRecord) {
+  const argsPreview = message.metadata?.argsPreview;
+  if (typeof argsPreview !== "string" || argsPreview.trim() === "{}") {
+    return null;
+  }
+  return argsPreview.replace(/\s+/g, " ").trim();
+}
+
+function ToolApprovalDock({
+  messages,
+  language,
+  onResolve,
+}: {
+  messages: MessageRecord[];
+  language: "zh" | "en";
+  onResolve: (approvalId: string, decision: ToolApprovalDecision) => void;
+}) {
+  const t = createTranslator(language);
+  const pendingApprovals = messages
+    .filter(
+      (message) => isToolApprovalMessage(message) && message.metadata?.approvalStatus === "pending",
+    )
+    .sort((left, right) => left.createdAt - right.createdAt);
+  const approval = pendingApprovals.at(-1);
+
+  if (!approval) {
+    return null;
+  }
+
+  const toolName = [
+    String(approval.metadata?.serverName ?? "").trim(),
+    String(approval.metadata?.toolName ?? "").trim(),
+  ]
+    .filter(Boolean)
+    .join(".");
+  const argsPreview = getOneLineArgsPreview(approval);
+  const hiddenCount = Math.max(0, pendingApprovals.length - 1);
+
+  return (
+    <div className="shrink-0 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--card)_94%,var(--background)_6%)] px-5 py-2">
+      <div className="flex min-h-12 items-center gap-3 rounded-2xl border border-[color-mix(in_srgb,var(--primary)_24%,transparent)] bg-[color-mix(in_srgb,var(--primary)_7%,var(--card)_93%)] px-3 py-2 shadow-sm">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--primary)_14%,transparent)] text-[var(--primary)]">
+          <ShieldAlert className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="shrink-0 text-sm font-semibold text-[var(--foreground)]">
+              {t.chat("toolApprovalTitle")}
+            </p>
+            {toolName ? (
+              <span className="truncate rounded-full bg-[var(--card)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">
+                {toolName}
+              </span>
+            ) : null}
+            <span className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-medium text-[var(--primary)]">
+              {String(approval.metadata?.operation ?? "")} · {String(approval.metadata?.riskLevel ?? "")}
+            </span>
+            {hiddenCount > 0 ? (
+              <span className="shrink-0 text-[11px] text-[var(--muted-foreground)]">
+                {language === "en" ? `+${hiddenCount} more` : `另有 ${hiddenCount} 个`}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">
+            {argsPreview ?? approval.content}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--primary)_22%,transparent)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_8%,transparent)]"
+            onClick={() =>
+              onResolve(String(approval.metadata?.approvalId ?? ""), "approved")
+            }
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t.chat("toolApprovalAllow")}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+            onClick={() =>
+              onResolve(String(approval.metadata?.approvalId ?? ""), "approved_for_conversation")
+            }
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t.chat("toolApprovalAllowForConversation")}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            onClick={() =>
+              onResolve(String(approval.metadata?.approvalId ?? ""), "denied")
+            }
+          >
+            <X className="h-3.5 w-3.5" />
+            {t.chat("toolApprovalDeny")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChatMessageThread({
   conversationId,
   messages,
@@ -195,6 +304,10 @@ export function ChatMessageThread({
   const authorizeMcp = useAppStore((state) => state.authorizeMcp);
   const t = createTranslator(language);
   const visibleMessages = getConversationVisibleMessages(messages, showInternalMessages);
+  const threadMessages = useMemo(
+    () => visibleMessages.filter((message) => !isToolApprovalMessage(message)),
+    [visibleMessages],
+  );
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -209,14 +322,14 @@ export function ChatMessageThread({
   const selectedMessageSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds]);
   const selectedMessageCount = selectedMessageIds.length;
   const hasStreamingVisibleMessage = useMemo(() => {
-    return visibleMessages.some(
+    return threadMessages.some(
       (message) =>
         message.visibility === "public" &&
         message.senderKind === "agent" &&
         message.metadata?.streaming === true &&
         (!run || message.runId === run.id),
     );
-  }, [run, visibleMessages]);
+  }, [run, threadMessages]);
   const visiblePendingUpdates = useMemo(() => {
     const compacted = pendingSystemUpdates.map((item) => item.trim()).filter((item) => item.length > 0);
     if (!pendingSystemMessage) {
@@ -261,7 +374,7 @@ export function ChatMessageThread({
 
     if (!shouldStickToBottomRef.current) return;
     anchor.scrollIntoView({ block: "end" });
-  }, [visibleMessages, pendingSystemMessage, run?.id, run?.stepIndex, run?.status]);
+  }, [threadMessages, pendingSystemMessage, run?.id, run?.stepIndex, run?.status]);
 
   useEffect(() => {
     if (lastRunIdRef.current === run?.id) return;
@@ -339,12 +452,11 @@ export function ChatMessageThread({
             </div>
           ) : null}
 
-          {visibleMessages.map((message) => {
+          {threadMessages.map((message) => {
             const isUser = message.senderKind === "user";
             const isInternal = message.visibility === "internal";
             const isNotification = message.messageType === "notification";
             const isCommandCard = message.metadata?.cardType === "command_result";
-            const isToolApprovalCard = message.metadata?.cardType === "tool_approval";
             const isMcpOAuthCard = message.metadata?.cardType === "mcp_oauth";
             const isStreaming = message.metadata?.streaming === true;
             const attachments = getAttachments(message);
@@ -426,76 +538,6 @@ export function ChatMessageThread({
                               : t.chat("notificationLabel")}
                         </div>
                       ) : null}
-                      {isToolApprovalCard ? (
-                        <div className="space-y-3">
-                          <div className="flex items-start gap-2">
-                            <ShieldAlert className="mt-1 h-4 w-4 shrink-0 text-[var(--primary)]" />
-                            <div>
-                              <p className="font-semibold">{t.chat("toolApprovalTitle")}</p>
-                              <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
-                                {message.content}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
-                            <p>
-                              <span className="font-semibold text-[var(--foreground)]">
-                                {String(message.metadata?.serverName ?? "")}.{String(message.metadata?.toolName ?? "")}
-                              </span>
-                              {" · "}
-                              {String(message.metadata?.operation ?? "")}
-                              {" · "}
-                              {String(message.metadata?.riskLevel ?? "")}
-                            </p>
-                            {typeof message.metadata?.description === "string" ? (
-                              <p className="mt-1">{message.metadata.description}</p>
-                            ) : null}
-                            {typeof message.metadata?.argsPreview === "string" && message.metadata.argsPreview !== "{}" ? (
-                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--muted)] px-2 py-2 font-mono text-[11px] text-[var(--foreground)]">
-                                {message.metadata.argsPreview}
-                              </pre>
-                            ) : null}
-                          </div>
-                          {message.metadata?.approvalStatus === "pending" ? (
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
-                                onClick={() =>
-                                  void resolveToolExecutionApproval({
-                                    approvalId: String(message.metadata?.approvalId ?? ""),
-                                    decision: "approved",
-                                  })
-                                }
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                {t.chat("toolApprovalAllow")}
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--muted)]"
-                                onClick={() =>
-                                  void resolveToolExecutionApproval({
-                                    approvalId: String(message.metadata?.approvalId ?? ""),
-                                    decision: "denied",
-                                  })
-                                }
-                              >
-                                <X className="h-3.5 w-3.5" />
-                                {t.chat("toolApprovalDeny")}
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="inline-flex items-center rounded-full bg-[var(--muted)] px-2.5 py-1 text-xs font-medium text-[var(--muted-foreground)]">
-                              {message.metadata?.approvalStatus === "approved"
-                                ? t.chat("toolApprovalStatusApproved")
-                                : message.metadata?.approvalStatus === "denied"
-                                  ? t.chat("toolApprovalStatusDenied")
-                                  : t.chat("toolApprovalStatusCancelled")}
-                            </p>
-                          )}
-                        </div>
-                      ) : null}
                       {isMcpOAuthCard ? (
                         <div className="space-y-3">
                           <div className="flex items-start gap-2">
@@ -519,7 +561,7 @@ export function ChatMessageThread({
                           ) : null}
                         </div>
                       ) : null}
-                      {!isCommandCard && !isToolApprovalCard && !isMcpOAuthCard ? (
+                      {!isCommandCard && !isMcpOAuthCard ? (
                         <ChatMarkdownContent content={message.content} inverted={isUser} />
                       ) : null}
                       {isStreaming ? (
@@ -649,6 +691,15 @@ export function ChatMessageThread({
           <div ref={bottomAnchorRef} />
         </div>
       </div>
+
+      <ToolApprovalDock
+        messages={visibleMessages}
+        language={language}
+        onResolve={(approvalId, decision) => {
+          if (!approvalId) return;
+          void resolveToolExecutionApproval({ approvalId, decision });
+        }}
+      />
 
       {contextMessage ? (
         <div

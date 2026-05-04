@@ -12,7 +12,7 @@ export type McpOAuthStatus =
   | "authorization_pending"
   | "authorized"
   | "error";
-export type ToolApprovalDecision = "approved" | "denied";
+export type ToolApprovalDecision = "approved" | "approved_for_conversation" | "denied";
 export type AvatarAssetScope = "profile" | "agents" | "teams";
 export type SenderKind = "user" | "agent" | "system";
 export type MessageType =

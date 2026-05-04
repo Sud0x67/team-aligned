@@ -47,6 +47,8 @@ import type {
 } from "@teamaligned/shared";
 import { AppStorage } from "./storage.ts";
 import {
+  createProviderModel,
+  extractAgentText,
   invokeSingleChatDeepAgent,
   normalizeProviderErrorMessage,
   testProviderConnection as runProviderConnectionTest,
@@ -100,6 +102,11 @@ import {
   searchWorkspaceFiles as searchWorkspaceFilesInWorkspace,
 } from "./workspace-file-search.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
+import {
+  compactMemoryFile,
+  formatMemoryEntry,
+  type MemoryCompactionSummaryInput,
+} from "./memory-compaction.ts";
 
 type RunStep = {
   label: string;
@@ -141,6 +148,16 @@ type PendingToolApproval = {
   actorName: string;
   responseLanguage: RuntimeLanguage;
   resolve: (decision: ToolExecutionPolicyDecision) => void;
+};
+
+type MemoryAppendContext = {
+  provider?: ProviderConfig;
+  responseLanguage?: RuntimeLanguage;
+  conversationId?: string;
+  runId?: string;
+  actorId?: string | null;
+  actorName?: string | null;
+  phase?: string;
 };
 
 function sleep(ms: number) {
@@ -185,6 +202,10 @@ function previewToolArgs(args: Record<string, unknown>, max = 1400) {
 
 export function shouldRequireToolApproval(request: ToolExecutionPolicyRequest) {
   if (request.operation === "read") {
+    return false;
+  }
+
+  if (request.workspaceScoped && request.operation === "write") {
     return false;
   }
 
@@ -406,6 +427,8 @@ export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
   private readonly pendingToolApprovals = new Map<string, PendingToolApproval>();
+  private readonly toolApprovalTrustedConversationIds = new Set<string>();
+  private readonly memoryCompactions = new Map<string, Promise<void>>();
   private readonly conversationReadPresence = new Map<string, number>();
   private catalogSyncStarted = false;
   private static readonly notificationPresenceWindowMs = 15_000;
@@ -891,13 +914,41 @@ export class TeamalignedRuntime extends EventEmitter {
       return this.getSnapshot();
     }
 
-    this.pendingToolApprovals.delete(payload.approvalId);
-    const approved = payload.decision === "approved";
+    if (payload.decision === "approved_for_conversation") {
+      this.toolApprovalTrustedConversationIds.add(pending.conversationId);
+    }
+
+    const approvals =
+      payload.decision === "approved_for_conversation"
+        ? [...this.pendingToolApprovals.values()].filter(
+            (item) => item.conversationId === pending.conversationId,
+          )
+        : [pending];
+
+    for (const item of approvals) {
+      this.resolvePendingToolApproval(item, payload.decision);
+    }
+
+    this.emitSnapshot();
+    return this.getSnapshot();
+  }
+
+  private resolvePendingToolApproval(
+    pending: PendingToolApproval,
+    decision: ToolExecutionApprovalInput["decision"],
+  ) {
+    this.pendingToolApprovals.delete(pending.id);
+    const approved = decision === "approved" || decision === "approved_for_conversation";
     const content = approved
-      ? byLanguage(pending.responseLanguage, {
-          zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
-          en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}.`,
-        })
+      ? decision === "approved_for_conversation"
+        ? byLanguage(pending.responseLanguage, {
+            zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}，并且当前会话后续工具确认将自动允许。`,
+            en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}, and future tool approvals in this conversation will be allowed automatically.`,
+          })
+        : byLanguage(pending.responseLanguage, {
+            zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
+            en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}.`,
+          })
       : byLanguage(pending.responseLanguage, {
           zh: `已拒绝 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
           en: `Denied ${pending.actorName} from running ${pending.request.serverName}.${pending.request.toolName}.`,
@@ -910,7 +961,7 @@ export class TeamalignedRuntime extends EventEmitter {
       content,
       metadata: {
         ...(message?.metadata ?? {}),
-        approvalStatus: payload.decision,
+        approvalStatus: decision,
         resolvedAt: Date.now(),
       },
     });
@@ -926,8 +977,6 @@ export class TeamalignedRuntime extends EventEmitter {
             }),
           },
     );
-    this.emitSnapshot();
-    return this.getSnapshot();
   }
 
   async searchWorkspaceFiles(payload: SearchWorkspaceFilesInput) {
@@ -1673,6 +1722,10 @@ export class TeamalignedRuntime extends EventEmitter {
   }): ToolExecutionPolicy {
     return async (request) => {
       if (!shouldRequireToolApproval(request)) {
+        return { allow: true };
+      }
+
+      if (this.toolApprovalTrustedConversationIds.has(input.conversationId)) {
         return { allow: true };
       }
 
@@ -2886,10 +2939,23 @@ export class TeamalignedRuntime extends EventEmitter {
           const memoryPath = this.appendMemory(
             workspacePath,
             `${workspaceInternalDirName}/memory/MEMORY.md`,
-            byLanguage(responseLanguage, {
-              zh: `- ${this.formatTimestamp()} | 任务：${trimHeadline(input)} | 输出：${trimHeadline(response.text)}`,
-              en: `- ${this.formatTimestamp()} | task: ${trimHeadline(input)} | output: ${trimHeadline(response.text)}`,
+            formatMemoryEntry({
+              timestamp: this.formatTimestamp(),
+              kind: "agent",
+              inputLabel: byLanguage(responseLanguage, { zh: "任务", en: "Task" }),
+              input,
+              outputLabel: byLanguage(responseLanguage, { zh: "输出", en: "Output" }),
+              output: response.text,
             }),
+            {
+              provider: provider!,
+              responseLanguage,
+              conversationId: conversation.id,
+              runId,
+              actorId: agent.id,
+              actorName: agent.name,
+              phase: "single_chat_memory",
+            },
           );
           const currentRun = this.storage.getRun(runId);
           const usage = response.usage;
@@ -4173,10 +4239,25 @@ export class TeamalignedRuntime extends EventEmitter {
           const sharedMemoryPath = this.appendMemory(
             workspacePath,
             `${workspaceInternalDirName}/shared-memory.md`,
-            byLanguage(responseLanguage, {
-              zh: `- ${this.formatTimestamp()} | 话题：${trimHeadline(input)} | 发言：${activeSpeakers.join("、") || "无"} | 结论：${trimHeadline(finalLine)}`,
-              en: `- ${this.formatTimestamp()} | topic: ${trimHeadline(input)} | speakers: ${activeSpeakers.join(", ") || "none"} | conclusion: ${trimHeadline(finalLine)}`,
+            formatMemoryEntry({
+              timestamp: this.formatTimestamp(),
+              kind: "team",
+              inputLabel: byLanguage(responseLanguage, { zh: "话题", en: "Topic" }),
+              input,
+              speakerLabel: byLanguage(responseLanguage, { zh: "发言成员", en: "Speakers" }),
+              speakers: activeSpeakers,
+              outputLabel: byLanguage(responseLanguage, { zh: "结论", en: "Conclusion" }),
+              output: finalLine,
             }),
+            {
+              provider: provider!,
+              responseLanguage,
+              conversationId: conversation.id,
+              runId,
+              actorId: team.id,
+              actorName: team.name,
+              phase: "team_shared_memory",
+            },
           );
           this.addRunMessage(
             conversation.id,
@@ -4883,7 +4964,12 @@ export class TeamalignedRuntime extends EventEmitter {
     writeFileSync(filePath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
   }
 
-  private appendMemory(workspacePath: string, relativePath: string, line: string) {
+  private appendMemory(
+    workspacePath: string,
+    relativePath: string,
+    entry: string,
+    options: MemoryAppendContext = {},
+  ) {
     this.ensureWorkspaceFolders(workspacePath);
     const filePath = join(workspacePath, relativePath);
     const title = relativePath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "memory";
@@ -4891,8 +4977,113 @@ export class TeamalignedRuntime extends EventEmitter {
     if (header) {
       this.writeTextFile(filePath, header);
     }
-    appendFileSync(filePath, `${line}\n`, "utf8");
+    appendFileSync(filePath, `${entry.trimEnd()}\n\n`, "utf8");
+
+    if (options.provider) {
+      this.scheduleMemoryCompaction(filePath, title, {
+        ...options,
+        provider: options.provider,
+      });
+    }
+
     return filePath;
+  }
+
+  private scheduleMemoryCompaction(
+    filePath: string,
+    title: string,
+    options: MemoryAppendContext & { provider: ProviderConfig },
+  ) {
+    const previous = this.memoryCompactions.get(filePath) ?? Promise.resolve();
+    const task = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          const result = await compactMemoryFile(filePath, {
+            title,
+            summarize: (summaryInput) =>
+              this.summarizeMemoryContent(
+                options.provider,
+                options.responseLanguage ?? "zh",
+                summaryInput,
+              ),
+          });
+          if (result.compacted && options.runId) {
+            this.appendRunProgressMetadata(options.runId, {
+              kind: "memory",
+              phase: "memory_compacted",
+              actorId: options.actorId,
+              actorName: options.actorName,
+              content: byLanguage(options.responseLanguage ?? "zh", {
+                zh: `长期记忆已压缩：保留最近 ${result.keptEntryCount} 条原始记忆，汇总 ${result.summarizedEntryCount} 条旧记忆。`,
+                en: `Long-term memory compacted: kept ${result.keptEntryCount} recent raw entries and summarized ${result.summarizedEntryCount} older entries.`,
+              }),
+            });
+            this.emitSnapshot();
+          }
+        } catch (error) {
+          this.emitRunRuntimeError("runtime:memory-compaction", error, {
+            conversationId: options.conversationId,
+            runId: options.runId,
+            actorId: options.actorId,
+            actorName: options.actorName,
+            phase: options.phase ?? "memory_compaction",
+            memoryPath: filePath,
+          });
+        }
+      });
+    const trackedTask = task.finally(() => {
+      if (this.memoryCompactions.get(filePath) === trackedTask) {
+        this.memoryCompactions.delete(filePath);
+      }
+    });
+    this.memoryCompactions.set(filePath, trackedTask);
+  }
+
+  private async summarizeMemoryContent(
+    provider: ProviderConfig,
+    responseLanguage: RuntimeLanguage,
+    input: MemoryCompactionSummaryInput,
+  ) {
+    const model = createProviderModel(provider);
+    const systemPrompt = byLanguage(responseLanguage, {
+      zh: [
+        "你是 TeamAligned 的长期记忆压缩器。",
+        "把旧的 Agent/team memory 压缩为稳定、可复用的长期记忆摘要。",
+        "保留用户偏好、长期事实、项目约定、重要决策、反复出现的任务模式和恢复上下文。",
+        "删除临时寒暄、重复内容和低价值过程噪音。",
+        "不要保存 API Key、OAuth token、密码、secret、header/env 敏感值。",
+        "只输出 Markdown 摘要，不要解释你的压缩过程。",
+      ].join("\n"),
+      en: [
+        "You compact TeamAligned long-term memory.",
+        "Condense older Agent/team memory into stable, reusable long-term memory.",
+        "Preserve user preferences, durable facts, project conventions, key decisions, recurring task patterns, and recovery context.",
+        "Drop transient small talk, duplicates, and low-value process noise.",
+        "Never preserve API keys, OAuth tokens, passwords, secrets, headers, or env values.",
+        "Return only the Markdown summary. Do not explain the compaction process.",
+      ].join("\n"),
+    });
+    const userPrompt = byLanguage(responseLanguage, {
+      zh: [
+        `目标摘要最大长度：${input.maxSummaryChars} 字符。`,
+        input.existingSummary ? `已有摘要：\n${input.existingSummary}` : "暂无已有摘要。",
+        "请压缩以下旧记忆内容：",
+        input.contentToSummarize,
+      ].join("\n\n"),
+      en: [
+        `Target summary max length: ${input.maxSummaryChars} characters.`,
+        input.existingSummary ? `Existing summary:\n${input.existingSummary}` : "No existing summary.",
+        "Compact the older memory content below:",
+        input.contentToSummarize,
+      ].join("\n\n"),
+    });
+    return extractAgentText(
+      await model.invoke([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ]),
+    );
   }
 
   private writeAgentArtifact(
