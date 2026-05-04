@@ -118,6 +118,11 @@ function toErrorText(error: unknown) {
   return Array.from(new Set(texts)).join(" | ");
 }
 
+export function isProviderTimeoutError(error: unknown) {
+  const normalized = toErrorText(error).toLowerCase();
+  return /timeout|timed out|etimedout|deadline|aborted|abort|signal timed out|request timed out/.test(normalized);
+}
+
 function extractTroubleshootingUrl(rawMessage: string) {
   const matchedUrl =
     rawMessage.match(/Troubleshooting URL:\s*(https?:\/\/\S+)/i)?.[1] ??
@@ -183,7 +188,7 @@ export function normalizeProviderErrorMessage(
     });
   }
 
-  if (/timeout|timed out|etimedout|aborted|abort/i.test(normalized)) {
+  if (isProviderTimeoutError(error)) {
     return byLanguage(language, {
       zh: `连接 ${providerLabel} 超时。请检查网络和 Base URL${baseUrlHint}，然后重试。`,
       en: `Connection to ${providerLabel} timed out. Check network and Base URL${baseUrlHint}, then retry.`,
@@ -892,6 +897,9 @@ export async function invokeSingleChatDeepAgent(input: {
         phase: "stream",
         elapsedMs: Date.now() - streamStartedAt,
       });
+      if (isProviderTimeoutError(error)) {
+        throw error;
+      }
       // Fallback to non-streaming invoke below after logging the stream failure.
     }
   }

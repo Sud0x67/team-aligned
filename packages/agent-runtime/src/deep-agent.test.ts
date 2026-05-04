@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   extractStreamReasoningText,
+  isProviderTimeoutError,
   normalizeProviderErrorMessage,
   validateProviderForSingleChat,
 } from "./deep-agent.ts";
@@ -32,6 +33,21 @@ test("normalizes timeout related provider errors", () => {
   const message = normalizeProviderErrorMessage("request timed out after 120000ms", provider);
   assert.match(message, /超时/);
   assert.match(message, /Base URL/);
+});
+
+test("detects nested provider timeout errors", () => {
+  const error = {
+    message: "Connection error.",
+    cause: {
+      message: "The operation was aborted due to timeout",
+      code: "ETIMEDOUT",
+    },
+  };
+  assert.equal(isProviderTimeoutError(error), true);
+});
+
+test("does not classify generic provider errors as timeout", () => {
+  assert.equal(isProviderTimeoutError("401 Unauthorized: invalid_api_key"), false);
 });
 
 test("normalizes model-not-found provider errors", () => {

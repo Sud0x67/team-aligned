@@ -16,6 +16,7 @@ import { ChatConversationSidebar } from "../components/chat/chat-conversation-si
 import { ChatMessageThread } from "../components/chat/chat-message-thread";
 import { getLatestActiveRun } from "../components/chat/chat-utils";
 import { ResizeHandle } from "../components/layout/resize-handle";
+import { resolveNextConversationSelection } from "../lib/conversation-selection";
 import { formatActiveRunProgressText, formatElapsedDuration, refreshProgressElapsedText } from "../lib/run-progress";
 
 const conversationPaneWidthStorageKey = "chat.layout.conversationPaneWidth";
@@ -102,25 +103,40 @@ export function ChatPage() {
   const conversationWidthResizeStartRef = useRef<number | null>(null);
   const composerHeightResizeStartRef = useRef<number | null>(null);
   const conversationSidebarWidthResizeStartRef = useRef<number | null>(null);
+  const handledRequestedConversationIdRef = useRef<string | null>(null);
+  const initialConversationSelectionDoneRef = useRef(false);
 
   useEffect(() => {
     if (!requestedConversationId) return;
-    if (!conversations.some((item) => item.id === requestedConversationId)) return;
-    setActiveConversationId(requestedConversationId);
-  }, [requestedConversationId, conversations]);
+    if (handledRequestedConversationIdRef.current === requestedConversationId) return;
+    if (conversations.length === 0) return;
+    if (conversations.some((item) => item.id === requestedConversationId)) return;
+    handledRequestedConversationIdRef.current = requestedConversationId;
+    navigate(location.pathname, { replace: true, state: null });
+  }, [requestedConversationId, conversations, location.pathname, navigate]);
 
   useEffect(() => {
-    if (!activeConversationId && conversations.length > 0) {
-      setActiveConversationId(conversations[0].id);
-    }
-  }, [activeConversationId, conversations]);
+    const selection = resolveNextConversationSelection({
+      activeConversationId,
+      conversationIds: conversations.map((item) => item.id),
+      handledRequestedConversationId: handledRequestedConversationIdRef.current,
+      initialSelectionDone: initialConversationSelectionDoneRef.current,
+      requestedConversationId,
+    });
+    if (!selection) return;
 
-  useEffect(() => {
-    if (!activeConversationId || conversations.some((item) => item.id === activeConversationId)) {
-      return;
+    if (selection.reason === "route-request") {
+      handledRequestedConversationIdRef.current = selection.conversationId;
+      initialConversationSelectionDoneRef.current = true;
+      navigate(location.pathname, { replace: true, state: null });
     }
-    setActiveConversationId(conversations[0]?.id ?? "");
-  }, [activeConversationId, conversations]);
+
+    if (selection.reason === "initial" || selection.reason === "missing-active") {
+      initialConversationSelectionDoneRef.current = true;
+    }
+
+    setActiveConversationId(selection.conversationId);
+  }, [activeConversationId, conversations, location.pathname, navigate, requestedConversationId]);
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -530,6 +546,7 @@ export function ChatPage() {
   };
 
   const handleSelectConversation = (conversationId: string) => {
+    initialConversationSelectionDoneRef.current = true;
     setActiveConversationId(conversationId);
     const conversation = conversations.find((item) => item.id === conversationId);
     if (conversation && conversation.unread > 0) {

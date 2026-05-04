@@ -50,6 +50,7 @@ import {
   createProviderModel,
   extractAgentText,
   invokeSingleChatDeepAgent,
+  isProviderTimeoutError,
   normalizeProviderErrorMessage,
   testProviderConnection as runProviderConnectionTest,
   validateProviderForSingleChat,
@@ -587,8 +588,10 @@ export class TeamalignedRuntime extends EventEmitter {
   private createAppNotification(
     input: Omit<NotificationRecord, "id" | "read" | "createdAt"> & { createdAt?: number },
     channel: SystemNotificationChannel = null,
+    options: { bypassReadSuppression?: boolean } = {},
   ) {
     if (
+      !options.bypassReadSuppression &&
       input.relatedConversationId &&
       this.shouldSuppressConversationNotification(input.relatedConversationId)
     ) {
@@ -1741,6 +1744,14 @@ export class TeamalignedRuntime extends EventEmitter {
 
       const approvalId = `approval-${nanoid(8)}`;
       const argsPreview = previewToolArgs(request.args);
+      const approvalTitle = byLanguage(input.responseLanguage, {
+        zh: "需要确认工具执行",
+        en: "Tool execution needs approval",
+      });
+      const approvalBody = byLanguage(input.responseLanguage, {
+        zh: `${input.actorName} 想执行 ${request.serverName}.${request.toolName}，需要你确认。`,
+        en: `${input.actorName} wants to run ${request.serverName}.${request.toolName}. Please confirm.`,
+      });
       const message = this.storage.addMessage(
         {
           conversationId: input.conversationId,
@@ -1749,10 +1760,7 @@ export class TeamalignedRuntime extends EventEmitter {
           senderKind: "system",
           messageType: "notification",
           visibility: "system",
-          content: byLanguage(input.responseLanguage, {
-            zh: `${input.actorName} 想执行 ${request.serverName}.${request.toolName}，需要你确认。`,
-            en: `${input.actorName} wants to run ${request.serverName}.${request.toolName}. Please confirm.`,
-          }),
+          content: approvalBody,
           mentions: [],
           runId: input.runId,
           metadata: {
@@ -1771,6 +1779,18 @@ export class TeamalignedRuntime extends EventEmitter {
           createdAt: Date.now(),
         },
         { skipTranscript: true },
+      );
+      this.storage.touchConversation(input.conversationId, approvalBody, true);
+      this.createAppNotification(
+        {
+          type: "system",
+          title: approvalTitle,
+          body: approvalBody,
+          relatedConversationId: input.conversationId,
+          relatedRunId: input.runId,
+        },
+        this.getConversationNotificationChannel(input.conversationId),
+        { bypassReadSuppression: true },
       );
       this.emitSnapshot();
 
@@ -2899,6 +2919,24 @@ export class TeamalignedRuntime extends EventEmitter {
               }),
             });
           } catch (error) {
+            const elapsedMs = Date.now() - modelStartedAt;
+            const timeoutMs = getRuntimeTimeouts().singleChatModelMs;
+            const normalizedError = normalizeProviderErrorMessage(error, {
+              id: provider!.id,
+              label: provider!.label,
+              baseUrl: provider!.baseUrl,
+              defaultModel: provider!.defaultModel,
+            }, responseLanguage);
+            const timedOut = isProviderTimeoutError(error);
+            const content = timedOut
+              ? byLanguage(responseLanguage, {
+                  zh: `${agent.name} 模型调用超时（已等待 ${Math.round(elapsedMs / 1000)} 秒，当前超时上限 ${Math.round(timeoutMs / 1000)} 秒）。请检查网络、Base URL 或模型服务状态后重试。`,
+                  en: `${agent.name} model call timed out after ${Math.round(elapsedMs / 1000)} seconds (limit ${Math.round(timeoutMs / 1000)} seconds). Check network, Base URL, or provider status, then retry.`,
+                })
+              : byLanguage(responseLanguage, {
+                  zh: `${agent.name} 模型调用失败：${normalizedError}`,
+                  en: `${agent.name} model call failed: ${normalizedError}`,
+                });
             this.emitRunRuntimeError("single-chat:model", error, {
               conversationId: conversation.id,
               runId,
@@ -2907,16 +2945,18 @@ export class TeamalignedRuntime extends EventEmitter {
               providerId: provider!.id,
               model: provider!.defaultModel,
               phase: "model_call",
-              elapsedMs: Date.now() - modelStartedAt,
+              timeoutMs,
+              elapsedMs,
+              timedOut,
             });
-            throw new Error(
-              normalizeProviderErrorMessage(error, {
-                id: provider!.id,
-                label: provider!.label,
-                baseUrl: provider!.baseUrl,
-                defaultModel: provider!.defaultModel,
-              }, responseLanguage),
-            );
+            this.appendRunProgressMetadata(runId, {
+              kind: "model",
+              phase: timedOut ? "model_timeout" : "model_error",
+              actorId: agent.id,
+              actorName: agent.name,
+              content,
+            });
+            throw new Error(content);
           } finally {
             if (heartbeat) {
               clearInterval(heartbeat);
@@ -4516,10 +4556,11 @@ export class TeamalignedRuntime extends EventEmitter {
     } catch (error) {
       controller.busy = false;
       const failedAt = Date.now();
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.storage.updateRunStep(runId, run.stepIndex, {
         status: "failed",
         completedAt: failedAt,
-        errorText: error instanceof Error ? error.message : String(error),
+        errorText: errorMessage,
       });
       this.emitRunRuntimeError("runtime:run-step", error, {
         conversationId: run.conversationId,
@@ -4536,17 +4577,24 @@ export class TeamalignedRuntime extends EventEmitter {
       this.storage.updateRun(runId, {
         status: "failed",
         metadata: {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
         },
       });
       this.addRunMessage(
         run.conversationId,
         runId,
         byLanguage(responseLanguage, {
-          zh: `任务执行失败：${error instanceof Error ? error.message : String(error)}`,
-          en: `Run failed: ${error instanceof Error ? error.message : String(error)}`,
+          zh: `任务执行失败：${errorMessage}`,
+          en: `Run failed: ${errorMessage}`,
         }),
         "system",
+      );
+      this.addPublicNotice(
+        run.conversationId,
+        byLanguage(responseLanguage, {
+          zh: `任务执行失败：${errorMessage}`,
+          en: `Run failed: ${errorMessage}`,
+        }),
       );
       const notificationChannel = this.getConversationNotificationChannel(run.conversationId);
       const conversation = this.storage.getConversation(run.conversationId);

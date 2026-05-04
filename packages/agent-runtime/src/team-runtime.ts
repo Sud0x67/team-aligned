@@ -17,6 +17,7 @@ import {
   createProviderModel,
   extractAgentText,
   extractStreamReasoningText,
+  isProviderTimeoutError,
   normalizeProviderErrorMessage,
   normalizeMessageContent,
 } from "./deep-agent.ts";
@@ -869,8 +870,13 @@ async function invokeWorkerText(input: {
         ...(input.runtimeMetadata ?? {}),
         phase: "stream",
         threadId: input.threadId,
+        timeoutMs: getTeamWorkerStreamIdleTimeoutMs(),
+        timedOut: isProviderTimeoutError(error),
         elapsedMs: Date.now() - streamStartedAt,
       });
+      if (isProviderTimeoutError(error)) {
+        throw error;
+      }
       // Fallback to non-streaming invoke below after logging the stream failure.
     }
   }

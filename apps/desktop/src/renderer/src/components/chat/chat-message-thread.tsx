@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -140,12 +140,12 @@ function isToolApprovalMessage(message: MessageRecord) {
   return message.metadata?.cardType === "tool_approval";
 }
 
-function getOneLineArgsPreview(message: MessageRecord) {
+function getArgsPreview(message: MessageRecord) {
   const argsPreview = message.metadata?.argsPreview;
   if (typeof argsPreview !== "string" || argsPreview.trim() === "{}") {
     return null;
   }
-  return argsPreview.replace(/\s+/g, " ").trim();
+  return argsPreview.trim();
 }
 
 function ToolApprovalDock({
@@ -158,12 +158,51 @@ function ToolApprovalDock({
   onResolve: (approvalId: string, decision: ToolApprovalDecision) => void;
 }) {
   const t = createTranslator(language);
+  const minDockHeight = 72;
+  const [dockHeight, setDockHeight] = useState(minDockHeight);
+  const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const pendingApprovals = messages
     .filter(
       (message) => isToolApprovalMessage(message) && message.metadata?.approvalStatus === "pending",
     )
     .sort((left, right) => left.createdAt - right.createdAt);
   const approval = pendingApprovals.at(-1);
+
+  useEffect(() => {
+    function handleMouseMove(event: globalThis.MouseEvent) {
+      const state = resizeStateRef.current;
+      if (!state) return;
+      const maxDockHeight = Math.max(160, Math.min(420, Math.round(window.innerHeight * 0.42)));
+      const nextHeight = state.startHeight + state.startY - event.clientY;
+      setDockHeight(Math.min(maxDockHeight, Math.max(minDockHeight, nextHeight)));
+    }
+
+    function handleMouseUp() {
+      if (!resizeStateRef.current) return;
+      resizeStateRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  function startResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    resizeStateRef.current = {
+      startY: event.clientY,
+      startHeight: dockHeight,
+    };
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }
 
   if (!approval) {
     return null;
@@ -175,22 +214,31 @@ function ToolApprovalDock({
   ]
     .filter(Boolean)
     .join(".");
-  const argsPreview = getOneLineArgsPreview(approval);
+  const argsPreview = getArgsPreview(approval);
   const hiddenCount = Math.max(0, pendingApprovals.length - 1);
 
   return (
-    <div className="shrink-0 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--card)_94%,var(--background)_6%)] px-5 py-2">
-      <div className="flex min-h-12 items-center gap-3 rounded-2xl border border-[color-mix(in_srgb,var(--primary)_24%,transparent)] bg-[color-mix(in_srgb,var(--primary)_7%,var(--card)_93%)] px-3 py-2 shadow-sm">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--primary)_14%,transparent)] text-[var(--primary)]">
+    <div
+      className="relative shrink-0 overflow-hidden border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--card)_94%,var(--background)_6%)] px-5 py-2"
+      style={{ height: dockHeight }}
+    >
+      <div
+        className="absolute left-1/2 top-1 h-1.5 w-16 -translate-x-1/2 cursor-row-resize rounded-full bg-[color-mix(in_srgb,var(--muted-foreground)_18%,transparent)] transition hover:bg-[color-mix(in_srgb,var(--primary)_35%,transparent)]"
+        title={language === "en" ? "Drag to resize approval details" : "拖拽调整确认详情高度"}
+        onMouseDown={startResize}
+        onDoubleClick={() => setDockHeight(minDockHeight)}
+      />
+      <div className="flex h-full min-h-0 items-stretch gap-3 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--primary)_24%,transparent)] bg-[color-mix(in_srgb,var(--primary)_7%,var(--card)_93%)] px-3 py-2 shadow-sm">
+        <div className="grid h-8 w-8 shrink-0 place-items-center self-center rounded-full bg-[color-mix(in_srgb,var(--primary)_14%,transparent)] text-[var(--primary)]">
           <ShieldAlert className="h-4 w-4" />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center overflow-hidden pr-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="shrink-0 text-sm font-semibold text-[var(--foreground)]">
               {t.chat("toolApprovalTitle")}
             </p>
             {toolName ? (
-              <span className="truncate rounded-full bg-[var(--card)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">
+              <span className="max-w-full break-all rounded-full bg-[var(--card)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">
                 {toolName}
               </span>
             ) : null}
@@ -203,14 +251,17 @@ function ToolApprovalDock({
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">
+          <pre
+            className="mt-1 min-h-0 overflow-y-auto whitespace-pre-wrap break-all font-sans text-xs leading-5 text-[var(--muted-foreground)]"
+            style={{ maxHeight: Math.max(20, dockHeight - 50) }}
+          >
             {argsPreview ?? approval.content}
-          </p>
+          </pre>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <div className="flex max-w-[48%] shrink-0 flex-wrap items-center justify-end gap-2 overflow-hidden">
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--primary)_22%,transparent)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_8%,transparent)]"
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--primary)_22%,transparent)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)] transition hover:bg-[color-mix(in_srgb,var(--primary)_8%,transparent)]"
             onClick={() =>
               onResolve(String(approval.metadata?.approvalId ?? ""), "approved")
             }
@@ -220,17 +271,17 @@ function ToolApprovalDock({
           </button>
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+            className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-[var(--primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
             onClick={() =>
               onResolve(String(approval.metadata?.approvalId ?? ""), "approved_for_conversation")
             }
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
-            {t.chat("toolApprovalAllowForConversation")}
+            <span className="truncate">{t.chat("toolApprovalAllowForConversation")}</span>
           </button>
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--muted)]"
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition hover:bg-[var(--muted)]"
             onClick={() =>
               onResolve(String(approval.metadata?.approvalId ?? ""), "denied")
             }
@@ -390,7 +441,7 @@ export function ChatMessageThread({
     shouldStickToBottomRef.current = true;
   }, [showInternalMessages]);
 
-  const openContextMenu = (event: MouseEvent, message: MessageRecord) => {
+  const openContextMenu = (event: ReactMouseEvent, message: MessageRecord) => {
     event.preventDefault();
     setContextMenu({
       message,
