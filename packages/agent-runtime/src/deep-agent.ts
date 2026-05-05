@@ -1,7 +1,8 @@
 import { createDeepAgent } from "deepagents";
-import { MemorySaver } from "@langchain/langgraph";
+import { Command, MemorySaver } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import type { HITLRequest, HITLResponse, InterruptOnConfig } from "langchain";
 import { readFileSync } from "node:fs";
 import type {
   AgentRecord,
@@ -32,6 +33,12 @@ type DeepAgentSession = {
   agent: ReturnType<typeof createDeepAgent>;
   initialized: boolean;
 };
+
+export type ToolApprovalInterruptOn = Record<string, boolean | InterruptOnConfig>;
+
+export type ToolApprovalInterruptHandler = (
+  request: HITLRequest,
+) => HITLResponse | Promise<HITLResponse>;
 
 type RuntimeErrorReporter = (
   source: string,
@@ -116,6 +123,41 @@ function toErrorText(error: unknown) {
   const texts = collectErrorTexts(error);
   if (texts.length === 0) return "";
   return Array.from(new Set(texts)).join(" | ");
+}
+
+function isHitlRequest(value: unknown): value is HITLRequest {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return Array.isArray(record.actionRequests) && Array.isArray(record.reviewConfigs);
+}
+
+export function extractHitlRequest(value: unknown, depth = 0): HITLRequest | null {
+  if (!value || typeof value !== "object" || depth > 5) return null;
+  if (isHitlRequest(value)) return value;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const request = extractHitlRequest(item, depth + 1);
+      if (request) return request;
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const interrupt = record.__interrupt__;
+  if (Array.isArray(interrupt)) {
+    for (const item of interrupt) {
+      const interruptRecord = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const request = extractHitlRequest(interruptRecord.value ?? item, depth + 1);
+      if (request) return request;
+    }
+  }
+
+  return (
+    extractHitlRequest(record.value, depth + 1) ||
+    extractHitlRequest(record.output, depth + 1) ||
+    extractHitlRequest(record.data, depth + 1)
+  );
 }
 
 export function isProviderTimeoutError(error: unknown) {
@@ -256,6 +298,57 @@ export function normalizeMessageContent(content: unknown): string {
   return "";
 }
 
+function readStringField(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function readMessageType(message: Record<string, unknown>) {
+  const explicitType = readStringField(message, "type").toLowerCase();
+  if (explicitType) return explicitType;
+
+  const role = readStringField(message, "role").toLowerCase();
+  if (role) return role;
+
+  const getType = message._getType;
+  if (typeof getType === "function") {
+    try {
+      const type = getType.call(message);
+      return typeof type === "string" ? type.toLowerCase() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  return "";
+}
+
+function hasToolCalls(message: Record<string, unknown>) {
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
+  if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) return true;
+
+  const additionalKwargs =
+    message.additional_kwargs && typeof message.additional_kwargs === "object"
+      ? (message.additional_kwargs as Record<string, unknown>)
+      : null;
+  return Array.isArray(additionalKwargs?.tool_calls) && additionalKwargs.tool_calls.length > 0;
+}
+
+function isToolMessage(message: Record<string, unknown>) {
+  const type = readMessageType(message);
+  return type === "tool" || type === "function" || "tool_call_id" in message || "toolCallId" in message;
+}
+
+function isUserMessage(message: Record<string, unknown>) {
+  const type = readMessageType(message);
+  return type === "human" || type === "user";
+}
+
+function isAssistantMessage(message: Record<string, unknown>) {
+  const type = readMessageType(message);
+  return type === "ai" || type === "assistant" || type === "model";
+}
+
 export function extractAgentText(result: unknown): string {
   if (typeof result === "string") {
     return result.trim();
@@ -269,11 +362,15 @@ export function extractAgentText(result: unknown): string {
     for (let index = result.messages.length - 1; index >= 0; index -= 1) {
       const message = result.messages[index];
       if (!message || typeof message !== "object") continue;
-      if ("content" in message) {
-        const text = normalizeMessageContent(message.content);
-        if (text) {
-          return text;
-        }
+      const record = message as Record<string, unknown>;
+      if (isToolMessage(record)) continue;
+      if (isUserMessage(record)) break;
+      if (!isAssistantMessage(record) || hasToolCalls(record)) {
+        continue;
+      }
+      if ("content" in record) {
+        const text = normalizeMessageContent(record.content);
+        if (text) return text;
       }
     }
   }
@@ -486,6 +583,7 @@ function buildSystemPrompt(input: {
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
       "如果需要读取、搜索、写入当前 workspace 的真实文件，请优先使用 workspace_* 工具；这些工具会被 TeamAligned 记录为可见过程。",
       "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
+      "如果 write_file 返回文件已存在，这不是最终答案：除非用户明确要求覆盖，请换一个描述性新文件名重试；如果需要覆盖，请先 read_file 再 edit_file。",
       "不要仅因为用户没有显式输入 /skill-id 就忽略白名单 Skills；请根据 Skill 描述自动判断是否需要加载。",
       runtimeToolSummary,
       "如果本地配置或请求本身存在阻塞，请明确说明缺少什么信息或配置。",
@@ -510,6 +608,7 @@ function buildSystemPrompt(input: {
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
       "When reading, searching, or writing real files in the current workspace, prefer the workspace_* tools so TeamAligned can surface visible progress.",
       "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
+      "If write_file says the file already exists, that is not a final answer: unless the user explicitly asked to overwrite, retry with a descriptive new filename; if overwriting is intended, read_file first and then edit_file.",
       "Do not ignore allowlisted Skills just because the user did not explicitly type /skill-id; infer relevance from Skill descriptions.",
       runtimeToolSummary,
       "If local config or request constraints block progress, clearly explain what information or configuration is missing.",
@@ -544,6 +643,7 @@ function createSignature(input: {
   runtimeToolSummary: string;
   workspacePath: string;
   responseLanguage: RuntimeLanguage;
+  interruptOn?: string[];
 }) {
   const {
     provider,
@@ -581,6 +681,7 @@ function createSignature(input: {
     runtimeToolSummary,
     workspacePath,
     responseLanguage,
+    interruptOn: input.interruptOn ?? [],
   });
 }
 
@@ -727,6 +828,8 @@ export async function invokeSingleChatDeepAgent(input: {
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
+  interruptOn?: ToolApprovalInterruptOn;
+  onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   additionalTools?: StructuredToolInterface[];
   runtimeToolSummary?: string;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
@@ -787,6 +890,7 @@ export async function invokeSingleChatDeepAgent(input: {
     runtimeToolSummary: runtimeToolSummary ?? "",
     workspacePath,
     responseLanguage,
+    interruptOn: input.interruptOn ? Object.keys(input.interruptOn).sort() : [],
   });
   const cached = sessions.get(conversationId);
   const shouldCreate = !cached || cached.signature !== signature;
@@ -814,6 +918,7 @@ export async function invokeSingleChatDeepAgent(input: {
             backend: createWorkspaceFilesystemBackend(workspacePath),
             checkpointer: new MemorySaver(),
             memory: ["/.team-aligned/memory/MEMORY.md"],
+            interruptOn: input.interruptOn,
           }),
         }
       : cached;
@@ -839,45 +944,64 @@ export async function invokeSingleChatDeepAgent(input: {
       const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
         input.onDeepAgentToolInvocation,
       );
-      const stream = await (session.agent as {
-        streamEvents: (
-          input: unknown,
-          options?: Record<string, unknown>,
-        ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
-      }).streamEvents(
-        { messages },
-        { configurable: { thread_id: conversationId }, version: "v2" },
-      );
+      let invocationInput: unknown = { messages };
+      while (true) {
+        finalOutput = null;
+        let interruptRequest: HITLRequest | null = null;
+        const stream = await (session.agent as {
+          streamEvents: (
+            input: unknown,
+            options?: Record<string, unknown>,
+          ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
+        }).streamEvents(
+          invocationInput,
+          { configurable: { thread_id: conversationId }, version: "v2" },
+        );
 
-      for await (const event of stream) {
-        if (!event || typeof event !== "object") continue;
-        await emitDeepAgentToolInvocation(event);
-        if (event.event === "on_chat_model_stream") {
-          const chunk =
-            "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
-              ? event.data.chunk
-              : null;
-          const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
-          if (provider.supportsStreaming && onReasoningStream && reasoningDelta) {
-            reasoningText += reasoningDelta;
-            await onReasoningStream(reasoningText, reasoningDelta);
-          }
-          if (!provider.supportsStreaming || !onTextStream) {
+        for await (const event of stream) {
+          if (!event || typeof event !== "object") continue;
+          await emitDeepAgentToolInvocation(event);
+          interruptRequest = extractHitlRequest(event) ?? interruptRequest;
+          if (event.event === "on_chat_model_stream") {
+            const chunk =
+              "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
+                ? event.data.chunk
+                : null;
+            const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
+            if (provider.supportsStreaming && onReasoningStream && reasoningDelta) {
+              reasoningText += reasoningDelta;
+              await onReasoningStream(reasoningText, reasoningDelta);
+            }
+            if (!provider.supportsStreaming || !onTextStream) {
+              continue;
+            }
+            const delta = extractStreamText(chunk);
+            if (!delta) continue;
+            streamedText += delta;
+            await onTextStream(streamedText, delta);
             continue;
           }
-          const delta = extractStreamText(chunk);
-          if (!delta) continue;
-          streamedText += delta;
-          await onTextStream(streamedText, delta);
+
+          if (event.event === "on_chain_end" || event.event === "on_graph_end") {
+            finalOutput =
+              "data" in event && event.data && typeof event.data === "object" && "output" in event.data
+                ? event.data.output
+                : finalOutput;
+          }
+        }
+
+        interruptRequest = extractHitlRequest(finalOutput) ?? interruptRequest;
+        if (interruptRequest) {
+          if (!input.onToolApprovalInterrupt) {
+            throw new Error("Tool approval interrupt was not handled.");
+          }
+          invocationInput = new Command({
+            resume: await input.onToolApprovalInterrupt(interruptRequest),
+          });
           continue;
         }
 
-        if (event.event === "on_chain_end" || event.event === "on_graph_end") {
-          finalOutput =
-            "data" in event && event.data && typeof event.data === "object" && "output" in event.data
-              ? event.data.output
-              : finalOutput;
-        }
+        break;
       }
 
       session.initialized = true;
@@ -904,10 +1028,24 @@ export async function invokeSingleChatDeepAgent(input: {
     }
   }
 
-  const result = await session.agent.invoke(
-    { messages },
-    { configurable: { thread_id: conversationId } },
-  );
+  let invocationInput: unknown = { messages };
+  let result: unknown = null;
+  while (true) {
+    result = await (session.agent as {
+      invoke: (input: unknown, options?: Record<string, unknown>) => Promise<unknown>;
+    }).invoke(
+      invocationInput,
+      { configurable: { thread_id: conversationId } },
+    );
+    const interruptRequest = extractHitlRequest(result);
+    if (!interruptRequest) break;
+    if (!input.onToolApprovalInterrupt) {
+      throw new Error("Tool approval interrupt was not handled.");
+    }
+    invocationInput = new Command({
+      resume: await input.onToolApprovalInterrupt(interruptRequest),
+    });
+  }
 
   session.initialized = true;
 

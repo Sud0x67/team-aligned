@@ -8,6 +8,7 @@ import {
   buildRuntimeLangChainTools,
   normalizeRuntimeToolErrorMessage,
   ToolExecutionApprovalRequiredError,
+  type RuntimeToolInvocationEvent,
 } from "./agent-tools.ts";
 import { shouldRequireToolApproval } from "./runtime.ts";
 
@@ -116,6 +117,79 @@ test("workspace tools honor the generic execution policy before running", async 
     );
 
     assert.equal(existsSync(join(workspacePath, "blocked.md")), false);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace command tool requires approval before executing simple commands", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const markerPath = join(workspacePath, "command-ran.txt");
+    const requests: string[] = [];
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+      approvalPolicy: (request) => {
+        requests.push(`${request.toolName}:${request.operation}`);
+        return request.operation === "command"
+          ? { allow: false, reason: "needs user confirmation", requiresConfirmation: true }
+          : { allow: true };
+      },
+    });
+    const commandTool = tools.find((tool) => tool.name === "workspace_run_command");
+    assert.ok(commandTool);
+
+    await assert.rejects(
+      () =>
+        commandTool.invoke({
+          command: `touch "${markerPath}"`,
+        }),
+      ToolExecutionApprovalRequiredError,
+    );
+
+    assert.deepEqual(requests, ["run_workspace_command:command"]);
+    assert.equal(existsSync(markerPath), false);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace tools return an explicit denied result to the model when user denies execution", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const invocations: RuntimeToolInvocationEvent[] = [];
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+      onInvocation: (event) => {
+        invocations.push(event);
+      },
+      approvalPolicy: (request) =>
+        request.operation === "write"
+          ? { allow: false, reason: "用户拒绝了这次工具执行。" }
+          : { allow: true },
+    });
+    const writeTool = tools.find((tool) => tool.name === "workspace_write_text_file");
+    assert.ok(writeTool);
+
+    const output = await writeTool.invoke({
+      path: "blocked.md",
+      content: "should not be written",
+    });
+    const outputText = String(output);
+
+    assert.match(outputText, /TOOL_EXECUTION_DENIED/);
+    assert.match(outputText, /用户拒绝了这次工具执行/);
+    assert.match(outputText, /do not re-request the same permission/i);
+    assert.equal(existsSync(join(workspacePath, "blocked.md")), false);
+    assert.equal(invocations.some((event) => event.phase === "error"), true);
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }

@@ -92,13 +92,101 @@ async function ensureToolExecutionAllowed(input: {
   request?: ToolExecutionPolicyRequest;
 }) {
   if (!input.approvalPolicy || !input.request) {
-    return;
+    return { allow: true } as const;
   }
   const decision = await input.approvalPolicy(input.request);
   if (decision.allow) {
-    return;
+    return { allow: true } as const;
   }
-  throw new ToolExecutionApprovalRequiredError(decision.reason, input.request);
+  if (decision.requiresConfirmation) {
+    throw new ToolExecutionApprovalRequiredError(decision.reason, input.request);
+  }
+  return {
+    allow: false,
+    reason: decision.reason,
+  } as const;
+}
+
+function formatToolExecutionDeniedOutput(reason: string) {
+  return [
+    "TOOL_EXECUTION_DENIED",
+    `Reason: ${reason}`,
+    "Required: do not re-request the same permission automatically. Explain to the user that the action was not executed, and offer an alternative approach.",
+  ].join("\n");
+}
+
+async function emitDeniedInvocation(input: {
+  invocationId: string;
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  error: string;
+}) {
+  const startedAt = Date.now();
+  await input.onInvocation?.({
+    phase: "start",
+    invocationId: input.invocationId,
+    startedAt,
+    serverId: input.serverId,
+    serverName: input.serverName,
+    toolName: input.toolName,
+    args: input.args,
+  });
+  await input.onInvocation?.({
+    phase: "error",
+    invocationId: input.invocationId,
+    startedAt,
+    completedAt: Date.now(),
+    serverId: input.serverId,
+    serverName: input.serverName,
+    toolName: input.toolName,
+    args: input.args,
+    error: input.error,
+  });
+}
+
+async function withDeniedToolResult<T>(
+  input: {
+    invocationId: string;
+    serverId: string;
+    serverName: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  },
+  reason: string,
+): Promise<T> {
+  await emitDeniedInvocation({
+    ...input,
+    error: reason,
+  });
+  return formatToolExecutionDeniedOutput(reason) as T;
+}
+
+async function ensureOrReturnDenied<T>(input: {
+  approvalPolicy?: ToolExecutionPolicy;
+  request?: ToolExecutionPolicyRequest;
+  invocation: {
+    invocationId: string;
+    serverId: string;
+    serverName: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
+  };
+}): Promise<{ deniedResult: T | null }> {
+  if (!input.approvalPolicy || !input.request) {
+    return { deniedResult: null };
+  }
+  const decision = await ensureToolExecutionAllowed(input);
+  if (decision.allow) {
+    return { deniedResult: null };
+  }
+  return {
+    deniedResult: await withDeniedToolResult<T>(input.invocation, decision.reason),
+  };
 }
 
 function trimText(value: string, max: number) {
@@ -378,10 +466,21 @@ async function withInvocation<T>(
   execute: () => Promise<T>,
   serialize: (result: T) => string,
 ) {
-  await ensureToolExecutionAllowed({
+  const approvalCheck = await ensureOrReturnDenied<T>({
     approvalPolicy: input.approvalPolicy,
     request: input.policyRequest,
+    invocation: {
+      invocationId: input.invocationId,
+      serverId: input.serverId,
+      serverName: input.serverName,
+      toolName: input.toolName,
+      args: input.args,
+      onInvocation: input.onInvocation,
+    },
   });
+  if (approvalCheck.deniedResult !== null) {
+    return approvalCheck.deniedResult;
+  }
   const startedAt = Date.now();
   await input.onInvocation?.({
     phase: "start",

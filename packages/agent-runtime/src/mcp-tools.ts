@@ -5,7 +5,7 @@ import { callMcpTool } from "./mcp-runtime.ts";
 import type { RuntimeLanguage } from "./runtime-language.ts";
 import { ToolExecutionApprovalRequiredError, type ToolExecutionPolicy } from "./agent-tools.ts";
 
-function sanitizeToolName(serverSlug: string, toolName: string) {
+export function sanitizeMcpToolName(serverSlug: string, toolName: string) {
   const normalized = `${serverSlug}_${toolName}`.replace(/[^a-zA-Z0-9_]/g, "_");
   return normalized.slice(0, 64);
 }
@@ -158,7 +158,7 @@ export function buildMcpLangChainTools(input: {
           }
         },
         {
-          name: sanitizeToolName(server.slug, toolItem.name),
+          name: sanitizeMcpToolName(server.slug, toolItem.name),
           description:
             toolItem.description?.trim() ||
             `${server.name} 提供的 MCP 工具 ${toolItem.name}。优先在需要 ${server.name} 能力时使用。`,

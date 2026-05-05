@@ -2,7 +2,9 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -142,10 +144,31 @@ type ClearConversationHistoryResult = {
   removedRuns: number;
   removedAttachments: number;
   removedArtifacts: number;
+  removedWorkspaceArtifactFiles: number;
+  resetWorkspaceMemoryFiles: number;
   removedToolInvocations: number;
   removedRunSteps: number;
   removedNotifications: number;
 };
+
+function countFilesRecursively(path: string): number {
+  if (!existsSync(path)) return 0;
+  let total = 0;
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    const entryPath = join(path, entry.name);
+    total += entry.isDirectory() ? countFilesRecursively(entryPath) : 1;
+  }
+  return total;
+}
+
+function clearDirectoryContents(directoryPath: string): number {
+  if (!existsSync(directoryPath)) return 0;
+  const removedFiles = countFilesRecursively(directoryPath);
+  for (const entry of readdirSync(directoryPath)) {
+    rmSync(join(directoryPath, entry), { recursive: true, force: true });
+  }
+  return removedFiles;
+}
 
 function now() {
   return Date.now();
@@ -893,6 +916,8 @@ export class AppStorage {
         removedRuns: 0,
         removedAttachments: 0,
         removedArtifacts: 0,
+        removedWorkspaceArtifactFiles: 0,
+        resetWorkspaceMemoryFiles: 0,
         removedToolInvocations: 0,
         removedRunSteps: 0,
         removedNotifications: 0,
@@ -955,14 +980,11 @@ export class AppStorage {
     conversation.lastMessage = "";
     conversation.lastActivityAt = now();
 
+    const workspaceRuntimeReset = this.resetConversationWorkspaceRuntimeFiles(conversation);
+
     if (conversation.kind === "team") {
       const team = this.getTeam(conversation.targetId);
       if (team) {
-        const layout = this.ensureWorkspaceLayout(team.workspacePath, {
-          type: "team",
-          title: team.name,
-          summary: team.description,
-        });
         const language = this.getLanguage();
         const previousHandoffRevision = team.context.handoff?.revision ?? 0;
         team.context = {
@@ -993,28 +1015,6 @@ export class AppStorage {
             updatedAt: now(),
           },
         };
-        writeFileSync(
-          layout.memoryFilePath,
-          this.byLanguage(
-            {
-              zh: `# ${team.name} 记忆\n\n- 类型：团队\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
-              en: `# ${team.name} Memory\n\n- Type: Team\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear\n`,
-            },
-            language,
-          ),
-          "utf8",
-        );
-        writeFileSync(
-          layout.sharedMemoryPath,
-          this.byLanguage(
-            {
-              zh: `# ${team.name} 共享记忆\n\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置\n`,
-              en: `# ${team.name} Shared Memory\n\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear\n`,
-            },
-            language,
-          ),
-          "utf8",
-        );
       }
     }
 
@@ -1033,9 +1033,79 @@ export class AppStorage {
       removedRuns,
       removedAttachments,
       removedArtifacts,
+      ...workspaceRuntimeReset,
       removedToolInvocations,
       removedRunSteps,
       removedNotifications,
+    };
+  }
+
+  private resetConversationWorkspaceRuntimeFiles(conversation: ConversationRecord) {
+    const layout = this.getConversationWorkspaceLayout(conversation.id);
+    if (!layout) {
+      return {
+        removedWorkspaceArtifactFiles: 0,
+        resetWorkspaceMemoryFiles: 0,
+      };
+    }
+
+    const removedWorkspaceArtifactFiles = clearDirectoryContents(layout.artifactsPath);
+    mkdirSync(layout.artifactsPath, { recursive: true });
+    mkdirSync(layout.attachmentsPath, { recursive: true });
+
+    clearDirectoryContents(layout.memoryPath);
+    mkdirSync(layout.memoryPath, { recursive: true });
+
+    const language = this.getLanguage();
+    let resetWorkspaceMemoryFiles = 0;
+    if (conversation.kind === "agent") {
+      const agent = this.getAgent(conversation.targetId);
+      if (agent) {
+        writeFileSync(
+          layout.memoryFilePath,
+          this.byLanguage(
+            {
+              zh: `# ${agent.name} 记忆\n\n- 类型：Agent\n- 说明：${agent.description}\n- 最近更新：会话上下文已通过 /clear 重置，长期记忆已清空\n`,
+              en: `# ${agent.name} Memory\n\n- Type: Agent\n- Summary: ${agent.description}\n- Last update: conversation context reset via /clear; long-term memory cleared\n`,
+            },
+            language,
+          ),
+          "utf8",
+        );
+        resetWorkspaceMemoryFiles += 1;
+      }
+    } else {
+      const team = this.getTeam(conversation.targetId);
+      if (team) {
+        writeFileSync(
+          layout.memoryFilePath,
+          this.byLanguage(
+            {
+              zh: `# ${team.name} 记忆\n\n- 类型：团队\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置，长期记忆已清空\n`,
+              en: `# ${team.name} Memory\n\n- Type: Team\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear; long-term memory cleared\n`,
+            },
+            language,
+          ),
+          "utf8",
+        );
+        writeFileSync(
+          layout.sharedMemoryPath,
+          this.byLanguage(
+            {
+              zh: `# ${team.name} 共享记忆\n\n- 说明：${team.description}\n- 最近更新：会话上下文已通过 /clear 重置，长期记忆已清空\n`,
+              en: `# ${team.name} Shared Memory\n\n- Summary: ${team.description}\n- Last update: conversation context reset via /clear; long-term memory cleared\n`,
+            },
+            language,
+          ),
+          "utf8",
+        );
+        resetWorkspaceMemoryFiles += 2;
+      }
+    }
+
+    return {
+      removedWorkspaceArtifactFiles,
+      resetWorkspaceMemoryFiles,
     };
   }
 

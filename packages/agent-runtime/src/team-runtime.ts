@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createDeepAgent } from "deepagents";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { MemorySaver } from "@langchain/langgraph";
+import { Command, MemorySaver } from "@langchain/langgraph";
+import type { HITLRequest } from "langchain";
 import { z } from "zod";
 import type {
   AgentRecord,
@@ -16,10 +17,13 @@ import type {
 import {
   createProviderModel,
   extractAgentText,
+  extractHitlRequest,
   extractStreamReasoningText,
   isProviderTimeoutError,
   normalizeProviderErrorMessage,
   normalizeMessageContent,
+  type ToolApprovalInterruptHandler,
+  type ToolApprovalInterruptOn,
 } from "./deep-agent.ts";
 import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-tools.ts";
 import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
@@ -748,6 +752,7 @@ function createEphemeralWorker(input: {
   onMcpInvocation?: (event: McpInvocationEvent) => void | Promise<void>;
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
+  interruptOn?: ToolApprovalInterruptOn;
   additionalTools?: StructuredToolInterface[];
 }) {
   const tools = buildMcpLangChainTools({
@@ -766,6 +771,7 @@ function createEphemeralWorker(input: {
     backend: createWorkspaceFilesystemBackend(input.workspacePath),
     checkpointer: new MemorySaver(),
     memory: input.memoryPaths ?? [],
+    interruptOn: input.interruptOn,
   });
 }
 
@@ -784,6 +790,8 @@ async function invokeWorkerText(input: {
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
+  interruptOn?: ToolApprovalInterruptOn;
+  onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onRuntimeError?: RuntimeErrorReporter;
@@ -813,52 +821,71 @@ async function invokeWorkerText(input: {
       const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
         input.onDeepAgentToolInvocation,
       );
-      const stream = await (worker as {
-        streamEvents: (
-          input: unknown,
-          options?: Record<string, unknown>,
-        ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
-      }).streamEvents(
-        { messages },
-        { configurable: { thread_id: input.threadId }, version: "v2" },
-      );
-
-      const iterator = stream[Symbol.asyncIterator]();
+      let invocationInput: unknown = { messages };
       while (true) {
-        const { value: event, done } = await withRuntimeTimeout(
-          iterator.next(),
-          getTeamWorkerStreamIdleTimeoutMs(),
-          "Team worker stream stalled",
+        finalOutput = null;
+        let interruptRequest: HITLRequest | null = null;
+        const stream = await (worker as {
+          streamEvents: (
+            input: unknown,
+            options?: Record<string, unknown>,
+          ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
+        }).streamEvents(
+          invocationInput,
+          { configurable: { thread_id: input.threadId }, version: "v2" },
         );
-        if (done) break;
-        if (!event || typeof event !== "object") continue;
-        await emitDeepAgentToolInvocation(event);
-        if (event.event === "on_chat_model_stream") {
-          const chunk =
-            "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
-              ? event.data.chunk
-              : null;
-          const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
-          if (input.provider.supportsStreaming && input.onReasoningStream && reasoningDelta) {
-            reasoningText += reasoningDelta;
-            await input.onReasoningStream(reasoningText, reasoningDelta);
-          }
-          if (!input.provider.supportsStreaming || !input.onTextStream) {
+
+        const iterator = stream[Symbol.asyncIterator]();
+        while (true) {
+          const { value: event, done } = await withRuntimeTimeout(
+            iterator.next(),
+            getTeamWorkerStreamIdleTimeoutMs(),
+            "Team worker stream stalled",
+          );
+          if (done) break;
+          if (!event || typeof event !== "object") continue;
+          await emitDeepAgentToolInvocation(event);
+          interruptRequest = extractHitlRequest(event) ?? interruptRequest;
+          if (event.event === "on_chat_model_stream") {
+            const chunk =
+              "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
+                ? event.data.chunk
+                : null;
+            const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
+            if (input.provider.supportsStreaming && input.onReasoningStream && reasoningDelta) {
+              reasoningText += reasoningDelta;
+              await input.onReasoningStream(reasoningText, reasoningDelta);
+            }
+            if (!input.provider.supportsStreaming || !input.onTextStream) {
+              continue;
+            }
+            const delta = extractStreamText(chunk);
+            if (!delta) continue;
+            streamedText += delta;
+            await input.onTextStream(streamedText, delta);
             continue;
           }
-          const delta = extractStreamText(chunk);
-          if (!delta) continue;
-          streamedText += delta;
-          await input.onTextStream(streamedText, delta);
+
+          if (event.event === "on_chain_end" || event.event === "on_graph_end") {
+            finalOutput =
+              "data" in event && event.data && typeof event.data === "object" && "output" in event.data
+                ? event.data.output
+                : finalOutput;
+          }
+        }
+
+        interruptRequest = extractHitlRequest(finalOutput) ?? interruptRequest;
+        if (interruptRequest) {
+          if (!input.onToolApprovalInterrupt) {
+            throw new Error("Tool approval interrupt was not handled.");
+          }
+          invocationInput = new Command({
+            resume: await input.onToolApprovalInterrupt(interruptRequest),
+          });
           continue;
         }
 
-        if (event.event === "on_chain_end" || event.event === "on_graph_end") {
-          finalOutput =
-            "data" in event && event.data && typeof event.data === "object" && "output" in event.data
-              ? event.data.output
-              : finalOutput;
-        }
+        break;
       }
 
       const finalText = extractAgentText(finalOutput) || streamedText.trim();
@@ -881,11 +908,25 @@ async function invokeWorkerText(input: {
     }
   }
 
-  const result = await withRuntimeTimeout(
-    worker.invoke({ messages }, { configurable: { thread_id: input.threadId } }),
-    getTeamWorkerTimeoutMs(),
-    "Team worker timed out",
-  );
+  let invocationInput: unknown = { messages };
+  let result: unknown = null;
+  while (true) {
+    result = await withRuntimeTimeout(
+      (worker as {
+        invoke: (input: unknown, options?: Record<string, unknown>) => Promise<unknown>;
+      }).invoke(invocationInput, { configurable: { thread_id: input.threadId } }),
+      getTeamWorkerTimeoutMs(),
+      "Team worker timed out",
+    );
+    const interruptRequest = extractHitlRequest(result);
+    if (!interruptRequest) break;
+    if (!input.onToolApprovalInterrupt) {
+      throw new Error("Tool approval interrupt was not handled.");
+    }
+    invocationInput = new Command({
+      resume: await input.onToolApprovalInterrupt(interruptRequest),
+    });
+  }
   return (
     extractAgentText(result) ||
     normalizeMessageContent(result) ||
@@ -1573,6 +1614,8 @@ export async function executeNaturalTeamWorkItem(input: {
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
+  interruptOn?: ToolApprovalInterruptOn;
+  onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onUpdate?: (event: {
     phase: "started" | "streaming" | "completed" | "failed";
     owner: AgentRecord;
@@ -1598,6 +1641,7 @@ export async function executeNaturalTeamWorkItem(input: {
       "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
       "请只在当前 workspace 内工作。",
       "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
+      "如果 write_file 返回文件已存在，这不是最终答案：除非用户明确要求覆盖，请换一个描述性新文件名重试；如果需要覆盖，请先 read_file 再 edit_file。",
       "如果本次任务是创建 writeTargets 中的新文件，且 readTargets 为空，不要先读取或列出目标文件/父目录；直接调用写入工具创建文件。",
       "不要读取你正要创建的新文件，除非它明确出现在读取范围里。",
       "如果任务无法执行，请明确说明阻塞原因。",
@@ -1627,6 +1671,7 @@ export async function executeNaturalTeamWorkItem(input: {
       "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
       "Only work inside the current workspace.",
       "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
+      "If write_file says the file already exists, that is not a final answer: unless the user explicitly asked to overwrite, retry with a descriptive new filename; if overwriting is intended, read_file first and then edit_file.",
       "If this task creates new writeTargets and readTargets is empty, do not read or list the target file/parent directory first; call a write tool directly to create the file.",
       "Do not read a file you are about to create unless it is explicitly listed in the read scope.",
       "If the task cannot proceed, clearly explain the blocker.",
@@ -1695,6 +1740,8 @@ export async function executeNaturalTeamWorkItem(input: {
       onMcpConnectionUpdated: input.onMcpConnectionUpdated,
       onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       approvalPolicy: input.approvalPolicy,
+      interruptOn: input.interruptOn,
+      onToolApprovalInterrupt: input.onToolApprovalInterrupt,
       onReasoningStream: input.onReasoningStream,
       onRuntimeError: input.onRuntimeError,
       runtimeMetadata: {
@@ -1781,6 +1828,8 @@ export async function generateNaturalTeamAgentMessage(input: {
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
+  interruptOn?: ToolApprovalInterruptOn;
+  onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onRuntimeError?: RuntimeErrorReporter;
@@ -1897,6 +1946,8 @@ export async function generateNaturalTeamAgentMessage(input: {
           onMcpConnectionUpdated: input.onMcpConnectionUpdated,
           onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
           approvalPolicy: input.approvalPolicy,
+          interruptOn: input.interruptOn,
+          onToolApprovalInterrupt: input.onToolApprovalInterrupt,
           onTextStream: input.onTextStream,
           onReasoningStream: input.onReasoningStream,
           onRuntimeError: input.onRuntimeError,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -445,6 +445,67 @@ test("clearConversationHistory resets team context and team memory files for gro
       ),
       true,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("clearConversationHistory clears hidden workspace artifacts and resets agent memory only", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const agent = storage.createAgent({
+      name: "Cleaner",
+      role: "Test Agent",
+      description: "Used to verify hidden workspace cleanup.",
+      capabilities: ["test"],
+      workspacePath: join(root, "workspaces", "agents", "agent-cleaner"),
+      avatarPath: null,
+    });
+    const snapshot = storage.getSnapshot();
+    const conversation = snapshot.conversations.find((item) => item.kind === "agent" && item.targetId === agent.id);
+    assert.ok(conversation);
+
+    const internalPath = join(agent.workspacePath, ".team-aligned");
+    const artifactsPath = join(internalPath, "artifacts");
+    const attachmentsPath = join(artifactsPath, "attachments");
+    const memoryPath = join(internalPath, "memory");
+    const memoryFilePath = join(memoryPath, "MEMORY.md");
+    const artifactFilePath = join(artifactsPath, "agent-run.md");
+    const attachmentFilePath = join(attachmentsPath, "image.png");
+    const extraMemoryFilePath = join(memoryPath, "old-notes.md");
+    const userWorkspaceFilePath = join(agent.workspacePath, "user-output.md");
+
+    mkdirSync(attachmentsPath, { recursive: true });
+    mkdirSync(memoryPath, { recursive: true });
+    writeFileSync(artifactFilePath, "old artifact", "utf8");
+    writeFileSync(attachmentFilePath, "old attachment", "utf8");
+    writeFileSync(memoryFilePath, "old memory", "utf8");
+    writeFileSync(extraMemoryFilePath, "old extra memory", "utf8");
+    writeFileSync(userWorkspaceFilePath, "keep me", "utf8");
+    storage.recordArtifact({
+      conversationId: conversation.id,
+      runId: null,
+      artifactKind: "agent_output",
+      title: "old artifact",
+      path: artifactFilePath,
+      workspacePath: agent.workspacePath,
+      metadata: null,
+    });
+
+    const removed = storage.clearConversationHistory(conversation.id);
+
+    assert.equal(removed.removedWorkspaceArtifactFiles, 2);
+    assert.equal(removed.resetWorkspaceMemoryFiles, 1);
+    assert.equal(existsSync(artifactFilePath), false);
+    assert.equal(existsSync(attachmentFilePath), false);
+    assert.equal(existsSync(attachmentsPath), true);
+    assert.equal(existsSync(extraMemoryFilePath), false);
+    assert.equal(existsSync(memoryFilePath), true);
+    assert.equal(readFileSync(memoryFilePath, "utf8").includes("会话上下文已通过 /clear 重置"), true);
+    assert.equal(existsSync(userWorkspaceFilePath), true);
+    assert.equal(readFileSync(userWorkspaceFilePath, "utf8"), "keep me");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

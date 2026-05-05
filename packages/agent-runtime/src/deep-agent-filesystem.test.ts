@@ -84,6 +84,24 @@ test("workspace filesystem backend writes workspace absolute paths without dupli
   }
 });
 
+test("workspace filesystem backend returns recoverable guidance when write target exists", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const backend = createWorkspaceFilesystemBackend(workspacePath);
+    const targetPath = join(workspacePath, "aws-health-iot-architecture.drawio");
+
+    await backend.write(targetPath, "first");
+    const result = await backend.write(targetPath, "second");
+
+    assert.match(result.error ?? "", /already exists/);
+    assert.match(result.error ?? "", /Do not stop/);
+    assert.match(result.error ?? "", /aws-health-iot-architecture-2\.drawio/);
+    assert.equal(readFileSync(targetPath, "utf8"), "first");
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
 test("workspace filesystem backend collapses duplicated absolute workspace prefixes", async () => {
   const workspacePath = createTempWorkspace();
   try {

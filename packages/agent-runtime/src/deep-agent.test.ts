@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  extractAgentText,
   extractStreamReasoningText,
   isProviderTimeoutError,
   normalizeProviderErrorMessage,
@@ -123,4 +124,50 @@ test("extractStreamReasoningText reads typed reasoning content parts", () => {
     }),
     "I need to inspect the workspace first.",
   );
+});
+
+test("extractAgentText ignores trailing tool messages", () => {
+  const text = extractAgentText({
+    messages: [
+      { role: "user", content: "create a file" },
+      {
+        role: "assistant",
+        content: "I will create it.",
+        tool_calls: [{ name: "write_file", args: { file_path: "/demo.md" } }],
+      },
+      {
+        role: "tool",
+        name: "write_file",
+        tool_call_id: "call-write",
+        content: "Cannot write to /demo.md because it already exists.",
+      },
+    ],
+  });
+
+  assert.equal(text, "");
+});
+
+test("extractAgentText returns the latest assistant answer after tool recovery", () => {
+  const text = extractAgentText({
+    messages: [
+      { role: "user", content: "create a file" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ name: "write_file", args: { file_path: "/demo.md" } }],
+      },
+      {
+        role: "tool",
+        name: "write_file",
+        tool_call_id: "call-write",
+        content: "Cannot write to /demo.md because it already exists.",
+      },
+      {
+        role: "assistant",
+        content: "The original file exists, so I created /demo-2.md instead.",
+      },
+    ],
+  });
+
+  assert.equal(text, "The original file exists, so I created /demo-2.md instead.");
 });

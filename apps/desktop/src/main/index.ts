@@ -34,8 +34,9 @@ import type {
   UpdateProviderInput,
   UpdateSettingsInput,
 } from "@shared";
+import { resolveAssetProtocolRequest } from "./asset-protocol.ts";
 import { evaluateNotificationDispatch, type RuntimeNotificationChannel } from "./notification-policy.ts";
-import { isPathInside, resolveAllowedWorkspaceOpenPath } from "./path-policy.ts";
+import { resolveAllowedWorkspaceOpenPath } from "./path-policy.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -751,14 +752,28 @@ function getAllowedAssetRoots() {
 }
 
 function registerAssetProtocol() {
-  protocol.handle("teamaligned-asset", (request) => {
-    const url = new URL(request.url);
-    const assetPath = resolve(decodeURIComponent(url.pathname.slice(1)));
-    const allowedRoots = getAllowedAssetRoots();
-    if (!allowedRoots.some((root) => isPathInside(root, assetPath))) {
-      return new Response("Forbidden", { status: 403 });
+  protocol.handle("teamaligned-asset", async (request) => {
+    const resolvedRequest = resolveAssetProtocolRequest(request.url, getAllowedAssetRoots());
+    if (!resolvedRequest.ok) {
+      appendErrorLog("asset:request-rejected", {
+        requestUrl: request.url,
+        reason: resolvedRequest.reason,
+        status: resolvedRequest.status,
+        assetPath: resolvedRequest.assetPath ?? null,
+      });
+      return new Response(resolvedRequest.reason, { status: resolvedRequest.status });
     }
-    return net.fetch(pathToFileURL(assetPath).toString());
+
+    try {
+      return await net.fetch(pathToFileURL(resolvedRequest.assetPath).toString());
+    } catch (error) {
+      appendErrorLog("asset:fetch-failed", {
+        requestUrl: request.url,
+        assetPath: resolvedRequest.assetPath,
+        error: serializeError(error),
+      });
+      return new Response("missing_asset", { status: 404 });
+    }
   });
 }
 

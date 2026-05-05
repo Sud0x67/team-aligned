@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "no
 import { spawn } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
+import type { HITLRequest, HITLResponse, InterruptOnConfig } from "langchain";
 import {
   isSystemBuiltinSkillId,
   isTeamAlignedAssistantAgentId,
@@ -53,6 +54,8 @@ import {
   isProviderTimeoutError,
   normalizeProviderErrorMessage,
   testProviderConnection as runProviderConnectionTest,
+  type ToolApprovalInterruptHandler,
+  type ToolApprovalInterruptOn,
   validateProviderForSingleChat,
 } from "./deep-agent.ts";
 import {
@@ -69,7 +72,7 @@ import {
   checkMcpConnection as healthCheckMcpConnection,
 } from "./mcp-runtime.ts";
 import { buildChildProcessEnv } from "./process-env.ts";
-import type { McpInvocationEvent } from "./mcp-tools.ts";
+import { sanitizeMcpToolName, type McpInvocationEvent } from "./mcp-tools.ts";
 import {
   buildRuntimeLangChainTools,
   normalizeRuntimeToolErrorMessage,
@@ -146,9 +149,19 @@ type PendingToolApproval = {
   runId: string;
   messageId: string;
   request: ToolExecutionPolicyRequest;
+  requestFingerprint: string;
   actorName: string;
   responseLanguage: RuntimeLanguage;
+  allowNextMatchingRequest: boolean;
   resolve: (decision: ToolExecutionPolicyDecision) => void;
+};
+
+type ToolApprovalRequestFactory = (args: Record<string, unknown>) => ToolExecutionPolicyRequest;
+
+type ToolApprovalInterruptRuntime = {
+  interruptOn: ToolApprovalInterruptOn;
+  requestByToolName: Map<string, ToolApprovalRequestFactory>;
+  handler: ToolApprovalInterruptHandler;
 };
 
 type MemoryAppendContext = {
@@ -225,6 +238,92 @@ export function shouldRequireToolApproval(request: ToolExecutionPolicyRequest) {
     request.operation === "skill" ||
     request.riskLevel === "high"
   );
+}
+
+function createApprovalInterruptConfig(description: string): InterruptOnConfig {
+  return {
+    allowedDecisions: ["approve", "reject"],
+    description,
+  };
+}
+
+function normalizeToolArgs(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return {};
+  }
+  return args as Record<string, unknown>;
+}
+
+function createToolApprovalRequestFingerprint(
+  conversationId: string,
+  request: ToolExecutionPolicyRequest,
+) {
+  return JSON.stringify({
+    conversationId,
+    serverId: request.serverId,
+    toolName: request.toolName,
+    operation: request.operation,
+    args: request.args,
+  });
+}
+
+function createToolApprovalRejectMessage(input: {
+  actorName: string;
+  request: ToolExecutionPolicyRequest;
+  responseLanguage: RuntimeLanguage;
+  reason?: string;
+}) {
+  const reason =
+    input.reason ||
+    byLanguage(input.responseLanguage, {
+      zh: "用户拒绝了这次工具执行。",
+      en: "The user denied this tool execution.",
+    });
+  return byLanguage(input.responseLanguage, {
+    zh: `${reason} 不要再次自动请求同一个权限。请明确告诉用户 ${input.actorName} 未执行 ${input.request.serverName}.${input.request.toolName}，并给出无需该权限的替代方案。`,
+    en: `${reason} Do not automatically request the same permission again. Tell the user that ${input.actorName} did not run ${input.request.serverName}.${input.request.toolName}, and offer an alternative that does not require this permission.`,
+  });
+}
+
+function createRuntimeToolApprovalRequests(): Map<string, ToolApprovalRequestFactory> {
+  return new Map<string, ToolApprovalRequestFactory>([
+    [
+      "workspace_run_command",
+      (args) => ({
+        serverId: "local-shell",
+        serverName: "Workspace Shell",
+        toolName: "run_workspace_command",
+        operation: "command",
+        riskLevel: "high",
+        args,
+        description: "Run a shell command in the current workspace.",
+        workspaceScoped: true,
+      }),
+    ],
+    [
+      "skill_run_script",
+      (args) => ({
+        serverId: "teamaligned-skills",
+        serverName: "TeamAligned Skills",
+        toolName: "skill_run_script",
+        operation: "skill",
+        riskLevel: "medium",
+        args,
+        description: "Run a bundled script from an allowlisted Skill.",
+      }),
+    ],
+  ]);
+}
+
+function createRuntimeToolApprovalInterruptOn(): ToolApprovalInterruptOn {
+  return {
+    workspace_run_command: createApprovalInterruptConfig(
+      "Run a shell command in the current workspace. Commands require user approval.",
+    ),
+    skill_run_script: createApprovalInterruptConfig(
+      "Run a script bundled with an allowlisted Skill. Skill script execution requires user approval.",
+    ),
+  };
 }
 
 function serializeRuntimeError(error: unknown) {
@@ -428,7 +527,9 @@ export class TeamalignedRuntime extends EventEmitter {
   private readonly storage: AppStorage;
   private readonly activeRuns = new Map<string, ActiveRunController>();
   private readonly pendingToolApprovals = new Map<string, PendingToolApproval>();
-  private readonly toolApprovalTrustedConversationIds = new Set<string>();
+  private readonly approvedToolApprovalFingerprints = new Set<string>();
+  private readonly rememberedToolApprovalFingerprints = new Set<string>();
+  private readonly deniedToolApprovalFingerprints = new Set<string>();
   private readonly memoryCompactions = new Map<string, Promise<void>>();
   private readonly conversationReadPresence = new Map<string, number>();
   private catalogSyncStarted = false;
@@ -917,10 +1018,6 @@ export class TeamalignedRuntime extends EventEmitter {
       return this.getSnapshot();
     }
 
-    if (payload.decision === "approved_for_conversation") {
-      this.toolApprovalTrustedConversationIds.add(pending.conversationId);
-    }
-
     const approvals =
       payload.decision === "approved_for_conversation"
         ? [...this.pendingToolApprovals.values()].filter(
@@ -942,11 +1039,18 @@ export class TeamalignedRuntime extends EventEmitter {
   ) {
     this.pendingToolApprovals.delete(pending.id);
     const approved = decision === "approved" || decision === "approved_for_conversation";
+    if (!approved) {
+      this.deniedToolApprovalFingerprints.add(pending.requestFingerprint);
+    } else if (decision === "approved_for_conversation") {
+      this.rememberedToolApprovalFingerprints.add(pending.requestFingerprint);
+    } else if (pending.allowNextMatchingRequest) {
+      this.approvedToolApprovalFingerprints.add(pending.requestFingerprint);
+    }
     const content = approved
       ? decision === "approved_for_conversation"
         ? byLanguage(pending.responseLanguage, {
-            zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}，并且当前会话后续工具确认将自动允许。`,
-            en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}, and future tool approvals in this conversation will be allowed automatically.`,
+            zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}，当前会话中相同请求将自动允许。`,
+            en: `Allowed ${pending.actorName} to run ${pending.request.serverName}.${pending.request.toolName}; the same request will be allowed automatically in this conversation.`,
           })
         : byLanguage(pending.responseLanguage, {
             zh: `已允许 ${pending.actorName} 执行 ${pending.request.serverName}.${pending.request.toolName}。`,
@@ -1717,6 +1821,243 @@ export class TeamalignedRuntime extends EventEmitter {
     };
   }
 
+  private async requestToolExecutionApproval(input: {
+    conversationId: string;
+    runId: string;
+    actorName: string;
+    responseLanguage: RuntimeLanguage;
+    request: ToolExecutionPolicyRequest;
+    allowNextMatchingRequest?: boolean;
+  }) {
+    const approvalId = `approval-${nanoid(8)}`;
+    const argsPreview = previewToolArgs(input.request.args);
+    const requestFingerprint = createToolApprovalRequestFingerprint(
+      input.conversationId,
+      input.request,
+    );
+    const approvalTitle = byLanguage(input.responseLanguage, {
+      zh: "需要确认工具执行",
+      en: "Tool execution needs approval",
+    });
+    const approvalBody = byLanguage(input.responseLanguage, {
+      zh: `${input.actorName} 想执行 ${input.request.serverName}.${input.request.toolName}，需要你确认。`,
+      en: `${input.actorName} wants to run ${input.request.serverName}.${input.request.toolName}. Please confirm.`,
+    });
+    const message = this.storage.addMessage(
+      {
+        conversationId: input.conversationId,
+        senderId: "system",
+        senderName: "TeamAligned",
+        senderKind: "system",
+        messageType: "notification",
+        visibility: "system",
+        content: approvalBody,
+        mentions: [],
+        runId: input.runId,
+        metadata: {
+          cardType: "tool_approval",
+          approvalId,
+          approvalStatus: "pending",
+          actorName: input.actorName,
+          serverId: input.request.serverId,
+          serverName: input.request.serverName,
+          toolName: input.request.toolName,
+          operation: input.request.operation,
+          riskLevel: input.request.riskLevel,
+          description: input.request.description,
+          argsPreview,
+        },
+        createdAt: Date.now(),
+      },
+      { skipTranscript: true },
+    );
+    this.storage.touchConversation(input.conversationId, approvalBody, true);
+    this.createAppNotification(
+      {
+        type: "system",
+        title: approvalTitle,
+        body: approvalBody,
+        relatedConversationId: input.conversationId,
+        relatedRunId: input.runId,
+      },
+      this.getConversationNotificationChannel(input.conversationId),
+      { bypassReadSuppression: true },
+    );
+    this.emitSnapshot();
+
+    return await new Promise<ToolExecutionPolicyDecision>((resolve) => {
+      this.pendingToolApprovals.set(approvalId, {
+        id: approvalId,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        messageId: message.id,
+        request: input.request,
+        requestFingerprint,
+        actorName: input.actorName,
+        responseLanguage: input.responseLanguage,
+        allowNextMatchingRequest: input.allowNextMatchingRequest ?? false,
+        resolve,
+      });
+    });
+  }
+
+  private resolveToolApprovalStrategy(
+    input: {
+      conversationId: string;
+      runId: string;
+      actorName: string;
+      responseLanguage: RuntimeLanguage;
+    },
+    request: ToolExecutionPolicyRequest,
+  ): ToolExecutionPolicyDecision | null {
+    if (!shouldRequireToolApproval(request)) {
+      return { allow: true };
+    }
+
+    const requestFingerprint = createToolApprovalRequestFingerprint(input.conversationId, request);
+    if (
+      this.deniedToolApprovalFingerprints.has(requestFingerprint)
+    ) {
+      return {
+        allow: false,
+        reason: createToolApprovalRejectMessage({
+          actorName: input.actorName,
+          request,
+          responseLanguage: input.responseLanguage,
+        }),
+      };
+    }
+
+    if (this.isRunTerminal(input.runId)) {
+      return {
+        allow: false,
+        reason: byLanguage(input.responseLanguage, {
+          zh: "当前任务已经结束，无法继续执行工具。",
+          en: "This run has already ended, so the tool cannot continue.",
+        }),
+      };
+    }
+
+    if (this.approvedToolApprovalFingerprints.has(requestFingerprint)) {
+      this.approvedToolApprovalFingerprints.delete(requestFingerprint);
+      return { allow: true };
+    }
+
+    if (this.rememberedToolApprovalFingerprints.has(requestFingerprint)) {
+      return { allow: true };
+    }
+
+    return null;
+  }
+
+  private createToolApprovalInterruptRuntime(input: {
+    conversationId: string;
+    runId: string;
+    actorName: string;
+    responseLanguage: RuntimeLanguage;
+    mcpServers: McpCatalogRecord[];
+    mcpConnections: McpConnectionRecord[];
+  }): ToolApprovalInterruptRuntime {
+    const interruptOn: ToolApprovalInterruptOn = {
+      ...createRuntimeToolApprovalInterruptOn(),
+    };
+    const requestByToolName = createRuntimeToolApprovalRequests();
+    const connectionMap = new Map(input.mcpConnections.map((connection) => [connection.serverId, connection]));
+
+    for (const server of input.mcpServers) {
+      const connection = connectionMap.get(server.id);
+      if (!connection || !connection.enabled || connection.status !== "connected") {
+        continue;
+      }
+      for (const toolItem of connection.discoveredTools) {
+        const sanitizedName = sanitizeMcpToolName(server.slug, toolItem.name);
+        const factory: ToolApprovalRequestFactory = (args) => ({
+          serverId: server.id,
+          serverName: server.name,
+          toolName: toolItem.name,
+          operation: "mcp",
+          riskLevel: server.riskLevel,
+          args,
+          description: toolItem.description?.trim() || `Call MCP tool ${server.name}.${toolItem.name}.`,
+        });
+        const previewRequest = factory({});
+        if (!shouldRequireToolApproval(previewRequest)) {
+          continue;
+        }
+        requestByToolName.set(sanitizedName, factory);
+        interruptOn[sanitizedName] = createApprovalInterruptConfig(
+          `Call MCP tool ${server.name}.${toolItem.name}. MCP tool execution requires user approval.`,
+        );
+      }
+    }
+
+    return {
+      interruptOn,
+      requestByToolName,
+      handler: async (request) =>
+        await this.resolveToolApprovalInterrupt({
+          ...input,
+          request,
+          requestByToolName,
+        }),
+    };
+  }
+
+  private async resolveToolApprovalInterrupt(input: {
+    conversationId: string;
+    runId: string;
+    actorName: string;
+    responseLanguage: RuntimeLanguage;
+    request: HITLRequest;
+    requestByToolName: Map<string, ToolApprovalRequestFactory>;
+  }): Promise<HITLResponse> {
+    const decisions: HITLResponse["decisions"] = [];
+
+    for (const action of input.request.actionRequests) {
+      const args = normalizeToolArgs(action.args);
+      const requestFactory = input.requestByToolName.get(action.name);
+      const toolRequest = requestFactory
+        ? requestFactory(args)
+        : {
+            serverId: "deep-agent",
+            serverName: "DeepAgent",
+            toolName: action.name,
+            operation: "command" as const,
+            riskLevel: "high" as const,
+            args,
+            description: action.description || `Run ${action.name}.`,
+          };
+      const strategyDecision = this.resolveToolApprovalStrategy(input, toolRequest);
+      const decision =
+        strategyDecision ??
+        (await this.requestToolExecutionApproval({
+          conversationId: input.conversationId,
+          runId: input.runId,
+          actorName: input.actorName,
+          responseLanguage: input.responseLanguage,
+          request: toolRequest,
+          allowNextMatchingRequest: true,
+        }));
+
+      if (decision.allow) {
+        decisions.push({ type: "approve" });
+        continue;
+      }
+
+      decisions.push({
+        type: "reject",
+        message: createToolApprovalRejectMessage({
+          actorName: input.actorName,
+          request: toolRequest,
+          responseLanguage: input.responseLanguage,
+          reason: decision.reason,
+        }),
+      });
+    }
+
+    return { decisions };
+  }
+
   private createToolExecutionPolicy(input: {
     conversationId: string;
     runId: string;
@@ -1724,87 +2065,11 @@ export class TeamalignedRuntime extends EventEmitter {
     responseLanguage: RuntimeLanguage;
   }): ToolExecutionPolicy {
     return async (request) => {
-      if (!shouldRequireToolApproval(request)) {
-        return { allow: true };
-      }
-
-      if (this.toolApprovalTrustedConversationIds.has(input.conversationId)) {
-        return { allow: true };
-      }
-
-      if (this.isRunTerminal(input.runId)) {
-        return {
-          allow: false,
-          reason: byLanguage(input.responseLanguage, {
-            zh: "当前任务已经结束，无法继续执行工具。",
-            en: "This run has already ended, so the tool cannot continue.",
-          }),
-        };
-      }
-
-      const approvalId = `approval-${nanoid(8)}`;
-      const argsPreview = previewToolArgs(request.args);
-      const approvalTitle = byLanguage(input.responseLanguage, {
-        zh: "需要确认工具执行",
-        en: "Tool execution needs approval",
-      });
-      const approvalBody = byLanguage(input.responseLanguage, {
-        zh: `${input.actorName} 想执行 ${request.serverName}.${request.toolName}，需要你确认。`,
-        en: `${input.actorName} wants to run ${request.serverName}.${request.toolName}. Please confirm.`,
-      });
-      const message = this.storage.addMessage(
-        {
-          conversationId: input.conversationId,
-          senderId: "system",
-          senderName: "TeamAligned",
-          senderKind: "system",
-          messageType: "notification",
-          visibility: "system",
-          content: approvalBody,
-          mentions: [],
-          runId: input.runId,
-          metadata: {
-            cardType: "tool_approval",
-            approvalId,
-            approvalStatus: "pending",
-            actorName: input.actorName,
-            serverId: request.serverId,
-            serverName: request.serverName,
-            toolName: request.toolName,
-            operation: request.operation,
-            riskLevel: request.riskLevel,
-            description: request.description,
-            argsPreview,
-          },
-          createdAt: Date.now(),
-        },
-        { skipTranscript: true },
-      );
-      this.storage.touchConversation(input.conversationId, approvalBody, true);
-      this.createAppNotification(
-        {
-          type: "system",
-          title: approvalTitle,
-          body: approvalBody,
-          relatedConversationId: input.conversationId,
-          relatedRunId: input.runId,
-        },
-        this.getConversationNotificationChannel(input.conversationId),
-        { bypassReadSuppression: true },
-      );
-      this.emitSnapshot();
-
-      return await new Promise<ToolExecutionPolicyDecision>((resolve) => {
-        this.pendingToolApprovals.set(approvalId, {
-          id: approvalId,
-          conversationId: input.conversationId,
-          runId: input.runId,
-          messageId: message.id,
-          request,
-          actorName: input.actorName,
-          responseLanguage: input.responseLanguage,
-          resolve,
-        });
+      const decision = this.resolveToolApprovalStrategy(input, request);
+      if (decision) return decision;
+      return await this.requestToolExecutionApproval({
+        ...input,
+        request,
       });
     };
   }
@@ -2453,6 +2718,14 @@ export class TeamalignedRuntime extends EventEmitter {
             zh: `工具调用：${removed.removedToolInvocations} 条`,
             en: `Tool invocations: ${removed.removedToolInvocations}`,
           }),
+          byLanguage(responseLanguage, {
+            zh: `工作区隐藏产物：已清理 ${removed.removedWorkspaceArtifactFiles} 个文件`,
+            en: `Workspace internal artifacts: cleared ${removed.removedWorkspaceArtifactFiles} file(s)`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `工作区记忆文件：已重置 ${removed.resetWorkspaceMemoryFiles} 个`,
+            en: `Workspace memory files: reset ${removed.resetWorkspaceMemoryFiles}`,
+          }),
           ...(nonTerminalRuns.length > 0
             ? [
                 byLanguage(responseLanguage, {
@@ -2718,6 +2991,14 @@ export class TeamalignedRuntime extends EventEmitter {
       agent,
       responseLanguage,
     });
+    const approvalInterruptRuntime = this.createToolApprovalInterruptRuntime({
+      conversationId: conversation.id,
+      runId,
+      actorName: agent.name,
+      responseLanguage,
+      mcpServers: availableMcpServers,
+      mcpConnections: availableMcpConnections,
+    });
     const approvalPolicy = this.createToolExecutionPolicy({
       conversationId: conversation.id,
       runId,
@@ -2840,6 +3121,8 @@ export class TeamalignedRuntime extends EventEmitter {
               onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
               onDeepAgentToolInvocation: toolInvocationObserver,
               approvalPolicy,
+              interruptOn: approvalInterruptRuntime.interruptOn,
+              onToolApprovalInterrupt: approvalInterruptRuntime.handler,
               additionalTools: runtimeTools.tools,
               runtimeToolSummary: runtimeTools.summary,
               responseLanguage,
@@ -3159,6 +3442,13 @@ export class TeamalignedRuntime extends EventEmitter {
     const availableMcpServers = this.getAvailableMcpServersForConversation(conversation);
     const availableMcpConnections = this.getAvailableMcpConnectionsForConversation(conversation);
     const attachmentRoots = this.storage.getConversationAttachmentRoots(conversation.id);
+    const createTeamApprovalPolicy = (actor: AgentRecord) =>
+      this.createToolExecutionPolicy({
+        conversationId: conversation.id,
+        runId,
+        actorName: actor.name,
+        responseLanguage,
+      });
     const createTeamRuntimeTools = (input: {
       actor: AgentRecord;
       onInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
@@ -3173,12 +3463,7 @@ export class TeamalignedRuntime extends EventEmitter {
           .listSkillCatalog()
           .filter((skill) => skill.installed && input.actor.skillWhitelist.includes(skill.id)),
         onInvocation: input.onInvocation,
-        approvalPolicy: this.createToolExecutionPolicy({
-          conversationId: conversation.id,
-          runId,
-          actorName: input.actor.name,
-          responseLanguage,
-        }),
+        approvalPolicy: createTeamApprovalPolicy(input.actor),
       });
     let selection: {
       mode: TeamTurnPlan["mode"];
@@ -3588,6 +3873,15 @@ export class TeamalignedRuntime extends EventEmitter {
                       });
                       this.emitSnapshot();
                     }, 60_000);
+                    const approvalInterruptRuntime = this.createToolApprovalInterruptRuntime({
+                      conversationId: conversation.id,
+                      runId,
+                      actorName: item.owner.name,
+                      responseLanguage,
+                      mcpServers: availableMcpServers,
+                      mcpConnections: availableMcpConnections,
+                    });
+                    const approvalPolicy = createTeamApprovalPolicy(item.owner);
                     const content = await executeNaturalTeamWorkItem({
                       provider: provider!,
                       profile: snapshot.profile,
@@ -3610,12 +3904,9 @@ export class TeamalignedRuntime extends EventEmitter {
                       onMcpInvocation: teamToolObserver,
                       onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                       onDeepAgentToolInvocation: teamToolObserver,
-                      approvalPolicy: this.createToolExecutionPolicy({
-                        conversationId: conversation.id,
-                        runId,
-                        actorName: item.owner.name,
-                        responseLanguage,
-                      }),
+                      approvalPolicy,
+                      interruptOn: approvalInterruptRuntime.interruptOn,
+                      onToolApprovalInterrupt: approvalInterruptRuntime.handler,
                       onRuntimeError: (source, error, metadata) => {
                         this.emitRunRuntimeError(source, error, {
                           conversationId: conversation.id,
@@ -3946,6 +4237,15 @@ export class TeamalignedRuntime extends EventEmitter {
                 actor: speaker,
                 onInvocation: teamToolObserver,
               });
+              const approvalInterruptRuntime = this.createToolApprovalInterruptRuntime({
+                conversationId: conversation.id,
+                runId,
+                actorName: speaker.name,
+                responseLanguage,
+                mcpServers: availableMcpServers,
+                mcpConnections: availableMcpConnections,
+              });
+              const approvalPolicy = createTeamApprovalPolicy(speaker);
               const message = await generateNaturalTeamAgentMessage({
                 provider: provider!,
                 profile: snapshot.profile,
@@ -3973,12 +4273,9 @@ export class TeamalignedRuntime extends EventEmitter {
                 onMcpInvocation: teamToolObserver,
                 onMcpConnectionUpdated: (connection) => this.persistMcpConnectionUpdate(connection),
                 onDeepAgentToolInvocation: teamToolObserver,
-                approvalPolicy: this.createToolExecutionPolicy({
-                  conversationId: conversation.id,
-                  runId,
-                  actorName: speaker.name,
-                  responseLanguage,
-                }),
+                approvalPolicy,
+                interruptOn: approvalInterruptRuntime.interruptOn,
+                onToolApprovalInterrupt: approvalInterruptRuntime.handler,
                 onRuntimeError: (source, error, metadata) => {
                   this.emitRunRuntimeError(source, error, {
                     conversationId: conversation.id,

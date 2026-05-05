@@ -9,7 +9,7 @@ import {
   type GrepMatch,
   type WriteResult,
 } from "deepagents";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 const HOST_ABSOLUTE_ROOTS = [
   "/Users",
@@ -44,6 +44,26 @@ function looksLikeHostAbsolutePath(value: string) {
 
 function pathError(filePath: string, workspaceRoot: string) {
   return `Host absolute path is outside the workspace sandbox. Use a workspace-relative path instead. path=${filePath}, workspace=${workspaceRoot}`;
+}
+
+function suggestNonConflictingPath(filePath: string) {
+  const portablePath = filePath.replace(/\\/g, "/");
+  const directory = posix.dirname(portablePath);
+  const extension = posix.extname(portablePath);
+  const basename = posix.basename(portablePath, extension);
+  const suggestedName = `${basename || "untitled"}-2${extension}`;
+  return directory === "." || directory === "/" ? `/${suggestedName}` : `${directory}/${suggestedName}`;
+}
+
+function normalizeWriteError(filePath: string, error: string) {
+  if (!/already exists/i.test(error)) return error;
+  const suggestedPath = suggestNonConflictingPath(filePath);
+  return [
+    error,
+    `This is recoverable. Do not stop after this tool result.`,
+    `If the user did not explicitly ask to overwrite the existing file, call write_file again with a new path such as ${suggestedPath}.`,
+    "If overwrite is intended, read_file first and then use edit_file.",
+  ].join(" ");
 }
 
 function stripDuplicatedWorkspaceRoot(filePath: string, workspaceRoot: string) {
@@ -142,10 +162,18 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
   async write(filePath: string, content: string): Promise<WriteResult> {
     try {
-      return await this.backend.write(this.normalize(filePath), content);
+      const normalizedPath = this.normalize(filePath);
+      const result = await this.backend.write(normalizedPath, content);
+      if (result.error) {
+        return {
+          ...result,
+          error: normalizeWriteError(normalizedPath, result.error),
+        };
+      }
+      return result;
     } catch (error) {
       return {
-        error: error instanceof Error ? error.message : String(error),
+        error: normalizeWriteError(filePath, error instanceof Error ? error.message : String(error)),
         filesUpdate: null,
       };
     }
