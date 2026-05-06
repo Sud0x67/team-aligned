@@ -12,6 +12,11 @@ import {
 import { z } from "zod";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 import { runWebFetch, runWebSearch } from "./web-tools.ts";
+import {
+  createReservedWorkspacePathError,
+  isReservedWorkspacePath,
+  reservedWorkspaceDirNames,
+} from "./workspace-reserved-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const MAX_TEXT_READ = 32_000;
@@ -235,6 +240,13 @@ export function normalizeRuntimeToolErrorMessage(input: {
     });
   }
 
+  if (has(/system directory is reserved|系统保留目录|teamaligned 系统保留|\.teamaligned/)) {
+    return base({
+      zh: `${source} 试图访问 TeamAligned 系统保留目录。请改用普通 workspace 路径，不要读取或写入 .teamaligned。`,
+      en: `${source} tried to access a TeamAligned system-reserved directory. Use a normal workspace path instead of .teamaligned.`,
+    });
+  }
+
   if (has(/oauth|authorize|authorization|unauthorized|401|403|permission|权限|鉴权|授权/)) {
     return base({
       zh: `${source} 的授权或权限不可用。请在扩展页重新授权，或检查 API Key / OAuth 权限后重试。`,
@@ -307,7 +319,15 @@ function isInsideRoot(targetPath: string, rootPath: string) {
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.includes(`..${sep}`));
 }
 
-function resolveAllowedPath(inputPath: string, allowedRoots: string[], defaultRoot: string) {
+function resolveAllowedPath(
+  inputPath: string,
+  allowedRoots: string[],
+  defaultRoot: string,
+  options: {
+    reservedWorkspaceRoot?: string;
+    reservedBypassRoots?: string[];
+  } = {},
+) {
   const candidate = inputPath.trim();
   const resolved = candidate.startsWith("/")
     ? resolve(candidate)
@@ -317,7 +337,41 @@ function resolveAllowedPath(inputPath: string, allowedRoots: string[], defaultRo
     throw new Error("访问路径超出允许范围。");
   }
 
+  if (
+    options.reservedWorkspaceRoot &&
+    isReservedWorkspacePath(resolved, options.reservedWorkspaceRoot)
+  ) {
+    const bypassAllowed = (options.reservedBypassRoots ?? []).some((root) =>
+      isInsideRoot(resolved, resolve(root)),
+    );
+    if (!bypassAllowed) {
+      throw new Error(createReservedWorkspacePathError("zh"));
+    }
+  }
+
   return resolved;
+}
+
+function commandMentionsReservedWorkspaceDirectory(command: string) {
+  return reservedWorkspaceDirNames.some((dirName) => {
+    const escaped = dirName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[\\s"'./])${escaped}($|[\\s"'/])`).test(command);
+  });
+}
+
+function filterReservedWorkspaceSearchOutput(output: string, workspaceRoot: string) {
+  return output
+    .split("\n")
+    .filter((line) => {
+      const match = line.match(/^(.+?):\d+:/);
+      if (!match) return true;
+      const matchedPath = match[1] ?? "";
+      const absolutePath = matchedPath.startsWith("/")
+        ? matchedPath
+        : resolve(workspaceRoot, matchedPath);
+      return !isReservedWorkspacePath(absolutePath, workspaceRoot);
+    })
+    .join("\n");
 }
 
 function listDirEntries(dirPath: string) {
@@ -545,6 +599,10 @@ export function buildRuntimeLangChainTools(input: {
 }) {
   const workspaceRoot = resolve(input.workspacePath);
   const allowedRoots = [workspaceRoot, ...input.attachmentRoots.map((root) => resolve(root))];
+  const reservedPathOptions = {
+    reservedWorkspaceRoot: workspaceRoot,
+    reservedBypassRoots: input.attachmentRoots,
+  };
   const availableSkills = normalizeAvailableSkills([
     ...(input.availableSkills ?? []),
     ...(input.activeSkill ? [input.activeSkill] : []),
@@ -554,7 +612,7 @@ export function buildRuntimeLangChainTools(input: {
   const tools: StructuredToolInterface[] = [
     tool(
       async ({ path }) => {
-        const targetPath = resolveAllowedPath(path, allowedRoots, workspaceRoot);
+        const targetPath = resolveAllowedPath(path, allowedRoots, workspaceRoot, reservedPathOptions);
         return withInvocation(
           {
             invocationId: createInvocationId("local_list"),
@@ -597,7 +655,7 @@ export function buildRuntimeLangChainTools(input: {
     ),
     tool(
       async ({ path }) => {
-        const targetPath = resolveAllowedPath(path, allowedRoots, workspaceRoot);
+        const targetPath = resolveAllowedPath(path, allowedRoots, workspaceRoot, reservedPathOptions);
         return withInvocation(
           {
             invocationId: createInvocationId("local_read"),
@@ -640,7 +698,9 @@ export function buildRuntimeLangChainTools(input: {
     ),
     tool(
       async ({ path, content }) => {
-        const targetPath = resolveAllowedPath(path, [workspaceRoot], workspaceRoot);
+        const targetPath = resolveAllowedPath(path, [workspaceRoot], workspaceRoot, {
+          reservedWorkspaceRoot: workspaceRoot,
+        });
         return withInvocation(
           {
             invocationId: createInvocationId("local_write"),
@@ -700,7 +760,14 @@ export function buildRuntimeLangChainTools(input: {
             },
           },
           async () => {
-            const searchArgs = ["--line-number", "--hidden", "--smart-case", pattern, workspaceRoot];
+            const searchArgs = [
+              "--line-number",
+              "--hidden",
+              "--smart-case",
+              ...reservedWorkspaceDirNames.flatMap((dirName) => ["-g", `!${dirName}/**`]),
+              pattern,
+              workspaceRoot,
+            ];
             if (glob?.trim()) {
               searchArgs.unshift("-g", glob.trim());
             }
@@ -709,7 +776,8 @@ export function buildRuntimeLangChainTools(input: {
                 cwd: workspaceRoot,
                 maxBuffer: 1024 * 1024,
               });
-              const output = trimText((stdout || stderr || "没有搜索结果。").trim(), MAX_SEARCH_OUTPUT);
+              const safeOutput = filterReservedWorkspaceSearchOutput(stdout, workspaceRoot);
+              const output = trimText((safeOutput || stderr || "没有搜索结果。").trim(), MAX_SEARCH_OUTPUT);
               return output || "没有搜索结果。";
             } catch (error) {
               if (
@@ -757,6 +825,9 @@ export function buildRuntimeLangChainTools(input: {
             },
           },
           async () => {
+            if (commandMentionsReservedWorkspaceDirectory(command)) {
+              throw new Error(createReservedWorkspacePathError(input.responseLanguage));
+            }
             try {
               const { stdout, stderr } = await execFileAsync("zsh", ["-lc", command], {
                 cwd: workspaceRoot,

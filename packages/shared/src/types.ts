@@ -466,7 +466,7 @@ export interface WorkspaceReferencePreview {
   token: string;
   path: string | null;
   absolutePath: string | null;
-  status: "resolved" | "missing" | "outside" | "not_file" | "unreadable";
+  status: "resolved" | "missing" | "outside" | "reserved" | "not_file" | "unreadable";
 }
 
 export interface RunControlPayload {

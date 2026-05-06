@@ -20,7 +20,10 @@ import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.t
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
-import { createWorkspaceFilesystemBackend } from "./deep-agent-filesystem.ts";
+import {
+  createWorkspaceFilesystemBackend,
+  deepAgentMemoryFilePath,
+} from "./deep-agent-filesystem.ts";
 
 type TokenUsageSummary = {
   inputTokens: number | null;
@@ -583,6 +586,7 @@ function buildSystemPrompt(input: {
       "默认先直接给出清晰、可执行的答复；只有在确有必要时才使用文件系统或执行工具。",
       "如果需要读取、搜索、写入当前 workspace 的真实文件，请优先使用 workspace_* 工具；这些工具会被 TeamAligned 记录为可见过程。",
       "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
+      ".teamaligned 是 TeamAligned 系统保留目录，不要读取、搜索、写入或编辑其中的文件；用户产物请放在 workspace 根目录或普通子目录。",
       "如果 write_file 返回文件已存在，这不是最终答案：除非用户明确要求覆盖，请换一个描述性新文件名重试；如果需要覆盖，请先 read_file 再 edit_file。",
       "不要仅因为用户没有显式输入 /skill-id 就忽略白名单 Skills；请根据 Skill 描述自动判断是否需要加载。",
       runtimeToolSummary,
@@ -608,6 +612,7 @@ function buildSystemPrompt(input: {
       "Default to clear, actionable answers first; only use filesystem or execution tools when needed.",
       "When reading, searching, or writing real files in the current workspace, prefer the workspace_* tools so TeamAligned can surface visible progress.",
       "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
+      ".teamaligned is the TeamAligned system-reserved directory. Do not read, search, write, or edit files there; place user artifacts in the workspace root or normal subdirectories.",
       "If write_file says the file already exists, that is not a final answer: unless the user explicitly asked to overwrite, retry with a descriptive new filename; if overwriting is intended, read_file first and then edit_file.",
       "Do not ignore allowlisted Skills just because the user did not explicitly type /skill-id; infer relevance from Skill descriptions.",
       runtimeToolSummary,
@@ -915,9 +920,11 @@ export async function invokeSingleChatDeepAgent(input: {
               responseLanguage,
             }),
             tools,
-            backend: createWorkspaceFilesystemBackend(workspacePath),
+            backend: createWorkspaceFilesystemBackend(workspacePath, {
+              reservedReadAllowlist: [deepAgentMemoryFilePath],
+            }),
             checkpointer: new MemorySaver(),
-            memory: ["/.team-aligned/memory/MEMORY.md"],
+            memory: [deepAgentMemoryFilePath],
             interruptOn: input.interruptOn,
           }),
         }

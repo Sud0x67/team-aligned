@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createWorkspaceFilesystemBackend,
+  deepAgentMemoryFilePath,
   normalizeDeepAgentWorkspacePath,
 } from "./deep-agent-filesystem.ts";
 
@@ -128,6 +129,65 @@ test("workspace filesystem backend rejects host absolute writes outside the work
     const result = await backend.write("/Users/someone/other-workspace/file.md", "nope");
 
     assert.match(result.error ?? "", /outside the workspace sandbox/);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace filesystem backend rejects user file operations in reserved system directories", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const backend = createWorkspaceFilesystemBackend(workspacePath);
+
+    const writeResult = await backend.write("/.teamaligned/memory/MEMORY.md", "nope");
+    assert.match(writeResult.error ?? "", /system directory is reserved/);
+
+    const editResult = await backend.edit("/.teamaligned/config.json", "old", "new");
+    assert.match(editResult.error ?? "", /system directory is reserved/);
+
+    const readResult = await backend.read("/.teamaligned/memory/MEMORY.md");
+    assert.match(readResult, /system directory is reserved/);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace filesystem backend hides reserved system directories from list, glob, and grep", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    mkdirSync(join(workspacePath, ".teamaligned"), { recursive: true });
+    writeFileSync(join(workspacePath, "visible.md"), "needle", "utf8");
+    writeFileSync(join(workspacePath, ".teamaligned", "internal.md"), "needle", "utf8");
+
+    const backend = createWorkspaceFilesystemBackend(workspacePath);
+    const listing = await backend.lsInfo("/");
+    const globbed = await backend.globInfo("**/*", "/");
+    const grep = await backend.grepRaw("needle");
+
+    assert.deepEqual(listing.map((item) => item.path), ["/visible.md"]);
+    assert.equal(globbed.some((item) => item.path.includes(".team")), false);
+    assert.equal(Array.isArray(grep), true);
+    assert.deepEqual(
+      Array.isArray(grep) ? grep.map((match) => match.path) : [],
+      ["/visible.md"],
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace filesystem backend can explicitly allow runtime memory reads without allowing writes", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    mkdirSync(join(workspacePath, ".teamaligned", "memory"), { recursive: true });
+    writeFileSync(join(workspacePath, ".teamaligned", "memory", "MEMORY.md"), "runtime memory", "utf8");
+    const backend = createWorkspaceFilesystemBackend(workspacePath, {
+      reservedReadAllowlist: [deepAgentMemoryFilePath],
+    });
+    const readResult = await backend.read(deepAgentMemoryFilePath);
+    const writeResult = await backend.write(deepAgentMemoryFilePath, "runtime memory");
+    assert.match(readResult, /runtime memory/);
+    assert.match(writeResult.error ?? "", /system directory is reserved/);
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }

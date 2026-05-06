@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import type { HITLRequest, HITLResponse, InterruptOnConfig } from "langchain";
@@ -202,7 +203,7 @@ function trimHeadline(text: string, max = 120) {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
 }
 
-const workspaceInternalDirName = ".team-aligned";
+const workspaceInternalDirName = ".teamaligned";
 
 function previewToolArgs(args: Record<string, unknown>, max = 1400) {
   try {
@@ -265,6 +266,10 @@ function createToolApprovalRequestFingerprint(
     operation: request.operation,
     args: request.args,
   });
+}
+
+function createToolApprovalFingerprintHash(fingerprint: string) {
+  return createHash("sha256").update(fingerprint).digest("hex");
 }
 
 function createToolApprovalRejectMessage(input: {
@@ -528,7 +533,6 @@ export class TeamalignedRuntime extends EventEmitter {
   private readonly activeRuns = new Map<string, ActiveRunController>();
   private readonly pendingToolApprovals = new Map<string, PendingToolApproval>();
   private readonly approvedToolApprovalFingerprints = new Set<string>();
-  private readonly rememberedToolApprovalFingerprints = new Set<string>();
   private readonly deniedToolApprovalFingerprints = new Set<string>();
   private readonly memoryCompactions = new Map<string, Promise<void>>();
   private readonly conversationReadPresence = new Map<string, number>();
@@ -1018,16 +1022,7 @@ export class TeamalignedRuntime extends EventEmitter {
       return this.getSnapshot();
     }
 
-    const approvals =
-      payload.decision === "approved_for_conversation"
-        ? [...this.pendingToolApprovals.values()].filter(
-            (item) => item.conversationId === pending.conversationId,
-          )
-        : [pending];
-
-    for (const item of approvals) {
-      this.resolvePendingToolApproval(item, payload.decision);
-    }
+    this.resolvePendingToolApproval(pending, payload.decision);
 
     this.emitSnapshot();
     return this.getSnapshot();
@@ -1042,7 +1037,10 @@ export class TeamalignedRuntime extends EventEmitter {
     if (!approved) {
       this.deniedToolApprovalFingerprints.add(pending.requestFingerprint);
     } else if (decision === "approved_for_conversation") {
-      this.rememberedToolApprovalFingerprints.add(pending.requestFingerprint);
+      this.storage.rememberToolApprovalForConversation(
+        pending.conversationId,
+        createToolApprovalFingerprintHash(pending.requestFingerprint),
+      );
     } else if (pending.allowNextMatchingRequest) {
       this.approvedToolApprovalFingerprints.add(pending.requestFingerprint);
     }
@@ -1943,7 +1941,12 @@ export class TeamalignedRuntime extends EventEmitter {
       return { allow: true };
     }
 
-    if (this.rememberedToolApprovalFingerprints.has(requestFingerprint)) {
+    if (
+      this.storage.hasRememberedToolApprovalForConversation(
+        input.conversationId,
+        createToolApprovalFingerprintHash(requestFingerprint),
+      )
+    ) {
       return { allow: true };
     }
 
@@ -2072,6 +2075,20 @@ export class TeamalignedRuntime extends EventEmitter {
         request,
       });
     };
+  }
+
+  private clearToolApprovalRuntimeStateForConversation(conversationId: string) {
+    const conversationMarker = `"conversationId":"${conversationId}"`;
+    for (const fingerprint of [...this.approvedToolApprovalFingerprints]) {
+      if (fingerprint.includes(conversationMarker)) {
+        this.approvedToolApprovalFingerprints.delete(fingerprint);
+      }
+    }
+    for (const fingerprint of [...this.deniedToolApprovalFingerprints]) {
+      if (fingerprint.includes(conversationMarker)) {
+        this.deniedToolApprovalFingerprints.delete(fingerprint);
+      }
+    }
   }
 
   private cancelPendingToolApprovalsForRun(
@@ -2694,6 +2711,7 @@ export class TeamalignedRuntime extends EventEmitter {
       }
 
       const removed = this.storage.clearConversationHistory(conversation.id);
+      this.clearToolApprovalRuntimeStateForConversation(conversation.id);
       this.singleChatSessions.delete(conversation.id);
       this.addSlashFeedbackMessage(conversation, {
         title: byLanguage(responseLanguage, { zh: "会话已清空", en: "Conversation cleared" }),
@@ -2725,6 +2743,10 @@ export class TeamalignedRuntime extends EventEmitter {
           byLanguage(responseLanguage, {
             zh: `工作区记忆文件：已重置 ${removed.resetWorkspaceMemoryFiles} 个`,
             en: `Workspace memory files: reset ${removed.resetWorkspaceMemoryFiles}`,
+          }),
+          byLanguage(responseLanguage, {
+            zh: `会话审批记忆：已清理 ${removed.removedRememberedToolApprovals} 条`,
+            en: `Conversation approval memory: cleared ${removed.removedRememberedToolApprovals}`,
           }),
           ...(nonTerminalRuns.length > 0
             ? [

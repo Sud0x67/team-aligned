@@ -19,14 +19,10 @@ test("searchWorkspaceFiles supports fuzzy matching and skips internal workspace 
   try {
     mkdirSync(join(workspacePath, "src", "chat"), { recursive: true });
     mkdirSync(join(workspacePath, "docs"), { recursive: true });
-    mkdirSync(join(workspacePath, ".team-aligned", "memory"), { recursive: true });
+    mkdirSync(join(workspacePath, ".teamaligned"), { recursive: true });
     writeFileSync(join(workspacePath, "src", "chat", "composer.tsx"), "composer", "utf8");
     writeFileSync(join(workspacePath, "docs", "chat-reference.md"), "chat", "utf8");
-    writeFileSync(
-      join(workspacePath, ".team-aligned", "memory", "internal.md"),
-      "ignore",
-      "utf8",
-    );
+    writeFileSync(join(workspacePath, ".teamaligned", "internal.md"), "ignore", "utf8");
 
     const results = searchWorkspaceFiles({
       workspacePath,
@@ -38,7 +34,7 @@ test("searchWorkspaceFiles supports fuzzy matching and skips internal workspace 
     assert.equal(results.some((item) => item.path === "docs/chat-reference.md"), true);
     assert.equal(results.some((item) => item.path === "src/chat/composer.tsx"), true);
     assert.equal(
-      results.some((item) => item.path.includes(".team-aligned")),
+      results.some((item) => item.path.includes(".teamaligned")),
       false,
     );
   } finally {
@@ -77,15 +73,39 @@ test("resolveWorkspaceReferences resolves readable files and reports unresolved 
   }
 });
 
+test("resolveWorkspaceReferences treats TeamAligned system directories as unresolved", () => {
+  const workspacePath = createWorkspace();
+  try {
+    mkdirSync(join(workspacePath, ".teamaligned"), { recursive: true });
+    writeFileSync(join(workspacePath, "README.md"), "hello", "utf8");
+    writeFileSync(join(workspacePath, ".teamaligned", "settings.json"), "{}", "utf8");
+
+    const result = resolveWorkspaceReferences({
+      workspacePath,
+      content: "请看 #README.md #.teamaligned/settings.json",
+    });
+
+    assert.deepEqual(
+      result.resolved.map((item) => item.path),
+      ["README.md"],
+    );
+    assert.deepEqual(result.unresolved, [".teamaligned/settings.json"]);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
 test("previewWorkspaceReferences returns per-token status for resolved and unresolved references", () => {
   const workspacePath = createWorkspace();
   try {
     mkdirSync(join(workspacePath, "docs"), { recursive: true });
+    mkdirSync(join(workspacePath, ".teamaligned", "memory"), { recursive: true });
     writeFileSync(join(workspacePath, "README.md"), "hello", "utf8");
+    writeFileSync(join(workspacePath, ".teamaligned", "memory", "MEMORY.md"), "memory", "utf8");
 
     const preview = previewWorkspaceReferences({
       workspacePath,
-      content: "check #README.md #missing.md #../outside.md #docs",
+      content: "check #README.md #missing.md #../outside.md #.teamaligned/memory/MEMORY.md #docs",
     });
 
     assert.deepEqual(preview, [
@@ -106,6 +126,12 @@ test("previewWorkspaceReferences returns per-token status for resolved and unres
         path: null,
         absolutePath: null,
         status: "outside",
+      },
+      {
+        token: ".teamaligned/memory/MEMORY.md",
+        path: null,
+        absolutePath: null,
+        status: "reserved",
       },
       {
         token: "docs",

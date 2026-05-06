@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -110,6 +111,15 @@ type SettingsFilePayload = {
   profile?: Partial<UserProfile>;
 };
 
+type ConversationSettingsFilePayload = {
+  schemaVersion: 1;
+  conversationId: string;
+  updatedAt: number;
+  toolApprovals: {
+    rememberedFingerprints: string[];
+  };
+};
+
 type SnapshotOptions = {
   conversationIds?: string[];
   messageLimit?: number;
@@ -124,7 +134,7 @@ type StoredAttachmentRecord = AttachmentAssetRecord & {
 };
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-const workspaceInternalDirName = ".team-aligned";
+const workspaceInternalDirName = ".teamaligned";
 
 const placeholderApiKeys = new Set(["sk-qwen-demo-key", "sk-openai-demo-key"]);
 
@@ -149,6 +159,7 @@ type ClearConversationHistoryResult = {
   removedToolInvocations: number;
   removedRunSteps: number;
   removedNotifications: number;
+  removedRememberedToolApprovals: number;
 };
 
 function countFilesRecursively(path: string): number {
@@ -921,6 +932,7 @@ export class AppStorage {
         removedToolInvocations: 0,
         removedRunSteps: 0,
         removedNotifications: 0,
+        removedRememberedToolApprovals: 0,
       };
     }
 
@@ -981,6 +993,7 @@ export class AppStorage {
     conversation.lastActivityAt = now();
 
     const workspaceRuntimeReset = this.resetConversationWorkspaceRuntimeFiles(conversation);
+    const removedRememberedToolApprovals = this.clearConversationToolApprovalSettings(conversationId);
 
     if (conversation.kind === "team") {
       const team = this.getTeam(conversation.targetId);
@@ -1037,7 +1050,47 @@ export class AppStorage {
       removedToolInvocations,
       removedRunSteps,
       removedNotifications,
+      removedRememberedToolApprovals,
     };
+  }
+
+  rememberToolApprovalForConversation(conversationId: string, fingerprintHash: string) {
+    if (!fingerprintHash.trim()) return;
+    const settings = this.readConversationSettingsFile(conversationId);
+    const remembered = new Set(settings.toolApprovals.rememberedFingerprints);
+    if (remembered.has(fingerprintHash)) return;
+
+    remembered.add(fingerprintHash);
+    this.writeConversationSettingsFile({
+      ...settings,
+      updatedAt: now(),
+      toolApprovals: {
+        rememberedFingerprints: [...remembered].sort(),
+      },
+    });
+  }
+
+  hasRememberedToolApprovalForConversation(conversationId: string, fingerprintHash: string) {
+    if (!fingerprintHash.trim()) return false;
+    const settings = this.readConversationSettingsFile(conversationId);
+    return settings.toolApprovals.rememberedFingerprints.includes(fingerprintHash);
+  }
+
+  clearConversationToolApprovalSettings(conversationId: string) {
+    const settings = this.readConversationSettingsFile(conversationId);
+    const removedRememberedToolApprovals = settings.toolApprovals.rememberedFingerprints.length;
+    if (removedRememberedToolApprovals === 0) {
+      return 0;
+    }
+
+    this.writeConversationSettingsFile({
+      ...settings,
+      updatedAt: now(),
+      toolApprovals: {
+        rememberedFingerprints: [],
+      },
+    });
+    return removedRememberedToolApprovals;
   }
 
   private resetConversationWorkspaceRuntimeFiles(conversation: ConversationRecord) {
@@ -2841,6 +2894,60 @@ export class AppStorage {
     const layout = this.getConversationWorkspaceLayout(conversationId);
     if (!layout) return null;
     return join(layout.sessionsPath, `${conversationId}.jsonl`);
+  }
+
+  private getConversationSettingsPath(conversationId: string) {
+    const layout = this.getConversationWorkspaceLayout(conversationId);
+    if (!layout) return null;
+    return join(layout.sessionsPath, `${conversationId}.settings.json`);
+  }
+
+  private createDefaultConversationSettings(conversationId: string): ConversationSettingsFilePayload {
+    return {
+      schemaVersion: 1,
+      conversationId,
+      updatedAt: now(),
+      toolApprovals: {
+        rememberedFingerprints: [],
+      },
+    };
+  }
+
+  private readConversationSettingsFile(conversationId: string): ConversationSettingsFilePayload {
+    const settingsPath = this.getConversationSettingsPath(conversationId);
+    const fallback = this.createDefaultConversationSettings(conversationId);
+    if (!settingsPath || !existsSync(settingsPath)) {
+      return fallback;
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as Partial<ConversationSettingsFilePayload>;
+      const rememberedFingerprints = Array.isArray(parsed.toolApprovals?.rememberedFingerprints)
+        ? parsed.toolApprovals.rememberedFingerprints.filter(
+            (item): item is string => typeof item === "string" && item.trim().length > 0,
+          )
+        : [];
+
+      return {
+        schemaVersion: 1,
+        conversationId,
+        updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : now(),
+        toolApprovals: {
+          rememberedFingerprints: [...new Set(rememberedFingerprints)].sort(),
+        },
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  private writeConversationSettingsFile(settings: ConversationSettingsFilePayload) {
+    const settingsPath = this.getConversationSettingsPath(settings.conversationId);
+    if (!settingsPath) return;
+
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(`${settingsPath}.tmp`, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    renameSync(`${settingsPath}.tmp`, settingsPath);
   }
 
   private getConversationAttachmentsPath(conversationId: string) {

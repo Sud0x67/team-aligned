@@ -10,6 +10,11 @@ import {
   type WriteResult,
 } from "deepagents";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+import {
+  createReservedWorkspacePathError,
+  isReservedVirtualWorkspacePath,
+  normalizeVirtualWorkspacePath,
+} from "./workspace-reserved-paths.ts";
 
 const HOST_ABSOLUTE_ROOTS = [
   "/Users",
@@ -56,6 +61,7 @@ function suggestNonConflictingPath(filePath: string) {
 }
 
 function normalizeWriteError(filePath: string, error: string) {
+  if (/TeamAligned system directory is reserved/i.test(error)) return error;
   if (!/already exists/i.test(error)) return error;
   const suggestedPath = suggestNonConflictingPath(filePath);
   return [
@@ -103,25 +109,60 @@ export function normalizeDeepAgentWorkspacePath(filePath: string, workspaceRoot:
   return filePath;
 }
 
+export const deepAgentMemoryFilePath = "/.teamaligned/memory/MEMORY.md";
+
+type WorkspaceFilesystemOperation = "read" | "write" | "list" | "search" | "upload" | "download";
+
+type WorkspaceFilesystemBackendOptions = {
+  reservedReadAllowlist?: string[];
+};
+
 class WorkspaceFilesystemBackend implements BackendProtocol {
   private readonly backend: FilesystemBackend;
   private readonly workspaceRoot: string;
+  private readonly reservedReadAllowlist: Set<string>;
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, options: WorkspaceFilesystemBackendOptions = {}) {
     this.workspaceRoot = workspaceRoot;
+    this.reservedReadAllowlist = new Set(
+      (options.reservedReadAllowlist ?? []).map((pathValue) =>
+        normalizeVirtualWorkspacePath(pathValue),
+      ),
+    );
     this.backend = new FilesystemBackend({
       rootDir: workspaceRoot,
       virtualMode: true,
     });
   }
 
-  private normalize(filePath: string) {
-    return normalizeDeepAgentWorkspacePath(filePath, this.workspaceRoot);
+  private normalize(filePath: string, operation: WorkspaceFilesystemOperation) {
+    const normalizedPath = normalizeDeepAgentWorkspacePath(filePath, this.workspaceRoot);
+    this.assertSystemPathAllowed(normalizedPath, operation);
+    return normalizedPath;
+  }
+
+  private assertSystemPathAllowed(filePath: string, operation: WorkspaceFilesystemOperation) {
+    if (!isReservedVirtualWorkspacePath(filePath)) return;
+    if (
+      operation === "read" &&
+      this.reservedReadAllowlist.has(normalizeVirtualWorkspacePath(filePath))
+    ) {
+      return;
+    }
+    throw new Error(createReservedWorkspacePathError("en"));
+  }
+
+  private filterVisibleFileInfo(items: FileInfo[]) {
+    return items.filter((item) => !isReservedVirtualWorkspacePath(item.path));
+  }
+
+  private filterVisibleGrepMatches(matches: GrepMatch[]) {
+    return matches.filter((match) => !isReservedVirtualWorkspacePath(match.path));
   }
 
   async lsInfo(path: string): Promise<FileInfo[]> {
     try {
-      return await this.backend.lsInfo(this.normalize(path));
+      return this.filterVisibleFileInfo(await this.backend.lsInfo(this.normalize(path, "list")));
     } catch {
       return [];
     }
@@ -129,7 +170,7 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
   async read(filePath: string, offset?: number, limit?: number): Promise<string> {
     try {
-      return await this.backend.read(this.normalize(filePath), offset, limit);
+      return await this.backend.read(this.normalize(filePath, "read"), offset, limit);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return `Error reading file '${filePath}': ${message}`;
@@ -137,7 +178,7 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
   }
 
   async readRaw(filePath: string): Promise<FileData> {
-    return this.backend.readRaw(this.normalize(filePath));
+    return this.backend.readRaw(this.normalize(filePath, "read"));
   }
 
   async grepRaw(
@@ -146,7 +187,12 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
     glob?: string | null,
   ): Promise<GrepMatch[] | string> {
     try {
-      return await this.backend.grepRaw(pattern, path ? this.normalize(path) : undefined, glob);
+      const result = await this.backend.grepRaw(
+        pattern,
+        path ? this.normalize(path, "search") : undefined,
+        glob,
+      );
+      return Array.isArray(result) ? this.filterVisibleGrepMatches(result) : result;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
@@ -154,7 +200,9 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
   async globInfo(pattern: string, path?: string): Promise<FileInfo[]> {
     try {
-      return await this.backend.globInfo(pattern, path ? this.normalize(path) : path);
+      return this.filterVisibleFileInfo(
+        await this.backend.globInfo(pattern, path ? this.normalize(path, "search") : path),
+      );
     } catch {
       return [];
     }
@@ -162,7 +210,7 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
   async write(filePath: string, content: string): Promise<WriteResult> {
     try {
-      const normalizedPath = this.normalize(filePath);
+      const normalizedPath = this.normalize(filePath, "write");
       const result = await this.backend.write(normalizedPath, content);
       if (result.error) {
         return {
@@ -186,7 +234,12 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
     replaceAll?: boolean,
   ): Promise<EditResult> {
     try {
-      return await this.backend.edit(this.normalize(filePath), oldString, newString, replaceAll);
+      return await this.backend.edit(
+        this.normalize(filePath, "write"),
+        oldString,
+        newString,
+        replaceAll,
+      );
     } catch (error) {
       return {
         error: error instanceof Error ? error.message : String(error),
@@ -201,7 +254,7 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
     for (const [filePath, content] of files) {
       try {
-        normalizedFiles.push([this.normalize(filePath), content]);
+        normalizedFiles.push([this.normalize(filePath, "upload"), content]);
       } catch {
         responses.push({ path: filePath, error: "invalid_path" });
       }
@@ -218,7 +271,7 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
 
     for (const filePath of paths) {
       try {
-        const normalized = this.normalize(filePath);
+        const normalized = this.normalize(filePath, "download");
         normalizedPaths.push(normalized);
         pathByNormalizedPath.set(normalized, filePath);
       } catch {
@@ -239,6 +292,9 @@ class WorkspaceFilesystemBackend implements BackendProtocol {
   }
 }
 
-export function createWorkspaceFilesystemBackend(workspaceRoot: string): BackendProtocol {
-  return new WorkspaceFilesystemBackend(workspaceRoot);
+export function createWorkspaceFilesystemBackend(
+  workspaceRoot: string,
+  options?: WorkspaceFilesystemBackendOptions,
+): BackendProtocol {
+  return new WorkspaceFilesystemBackend(workspaceRoot, options);
 }

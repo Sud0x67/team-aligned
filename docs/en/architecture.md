@@ -287,11 +287,12 @@ Main directories:
 Agent / Team workspace runtime files live under:
 
 ```text
-${workspace}/.team-aligned/
+${workspace}/.teamaligned/
 ├─ artifacts/
-├─ attachments/
+│  └─ attachments/
 ├─ memory/
-└─ sessions/
+├─ sessions/
+└─ shared-memory.md
 ```
 
 The workspace root itself is reserved for user-visible generated files.

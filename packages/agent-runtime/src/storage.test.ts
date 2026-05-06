@@ -93,7 +93,7 @@ test("init leaves default provider api keys empty for first-time setup", () => {
   }
 });
 
-test("workspace runtime files are created under .team-aligned only", () => {
+test("workspace runtime files are created under .teamaligned only", () => {
   const root = createTempRoot();
   try {
     const storage = new AppStorage(root);
@@ -102,11 +102,10 @@ test("workspace runtime files are created under .team-aligned only", () => {
     const team = snapshot.teams.find((item) => item.id === "team-product") ?? snapshot.teams[0];
     assert.ok(team);
 
-    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "artifacts")), true);
-    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md")), true);
-    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "sessions")), true);
-    assert.equal(existsSync(join(team.workspacePath, ".team-aligned", "shared-memory.md")), true);
-
+    assert.equal(existsSync(join(team.workspacePath, ".teamaligned", "artifacts")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".teamaligned", "memory", "MEMORY.md")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".teamaligned", "sessions")), true);
+    assert.equal(existsSync(join(team.workspacePath, ".teamaligned", "shared-memory.md")), true);
     assert.equal(existsSync(join(team.workspacePath, "artifacts")), false);
     assert.equal(existsSync(join(team.workspacePath, "memory")), false);
     assert.equal(existsSync(join(team.workspacePath, "sessions")), false);
@@ -414,8 +413,8 @@ test("clearConversationHistory resets team context and team memory files for gro
         updatedAt: Date.now(),
       },
     });
-    writeFileSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md"), "old team memory", "utf8");
-    writeFileSync(join(team.workspacePath, ".team-aligned", "shared-memory.md"), "old shared memory", "utf8");
+    writeFileSync(join(team.workspacePath, ".teamaligned", "memory", "MEMORY.md"), "old team memory", "utf8");
+    writeFileSync(join(team.workspacePath, ".teamaligned", "shared-memory.md"), "old shared memory", "utf8");
 
     storage.clearConversationHistory(conversationId);
 
@@ -434,13 +433,13 @@ test("clearConversationHistory resets team context and team memory files for gro
     assert.equal((nextTeam.context.handoff?.reason ?? "").includes("/clear"), true);
     assert.equal((nextTeam.context.handoff?.revision ?? 0) > 8, true);
     assert.equal(
-      readFileSync(join(team.workspacePath, ".team-aligned", "memory", "MEMORY.md"), "utf8").includes(
+      readFileSync(join(team.workspacePath, ".teamaligned", "memory", "MEMORY.md"), "utf8").includes(
         "会话上下文已通过 /clear 重置",
       ),
       true,
     );
     assert.equal(
-      readFileSync(join(team.workspacePath, ".team-aligned", "shared-memory.md"), "utf8").includes(
+      readFileSync(join(team.workspacePath, ".teamaligned", "shared-memory.md"), "utf8").includes(
         "会话上下文已通过 /clear 重置",
       ),
       true,
@@ -467,7 +466,7 @@ test("clearConversationHistory clears hidden workspace artifacts and resets agen
     const conversation = snapshot.conversations.find((item) => item.kind === "agent" && item.targetId === agent.id);
     assert.ok(conversation);
 
-    const internalPath = join(agent.workspacePath, ".team-aligned");
+    const internalPath = join(agent.workspacePath, ".teamaligned");
     const artifactsPath = join(internalPath, "artifacts");
     const attachmentsPath = join(artifactsPath, "attachments");
     const memoryPath = join(internalPath, "memory");
@@ -506,6 +505,49 @@ test("clearConversationHistory clears hidden workspace artifacts and resets agen
     assert.equal(readFileSync(memoryFilePath, "utf8").includes("会话上下文已通过 /clear 重置"), true);
     assert.equal(existsSync(userWorkspaceFilePath), true);
     assert.equal(readFileSync(userWorkspaceFilePath, "utf8"), "keep me");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("conversation approval memory is stored in workspace settings and cleared with history", () => {
+  const root = createTempRoot();
+  try {
+    const storage = new AppStorage(root);
+    storage.init();
+    const agent = storage.createAgent({
+      name: "Approver",
+      role: "Test Agent",
+      description: "Used to verify approval settings.",
+      capabilities: ["test"],
+      workspacePath: join(root, "workspaces", "agents", "agent-approver"),
+      avatarPath: null,
+    });
+    const conversation = storage
+      .getSnapshot()
+      .conversations.find((item) => item.kind === "agent" && item.targetId === agent.id);
+    assert.ok(conversation);
+
+    const settingsPath = join(
+      agent.workspacePath,
+      ".teamaligned",
+      "sessions",
+      `${conversation.id}.settings.json`,
+    );
+    storage.rememberToolApprovalForConversation(conversation.id, "approval-hash-1");
+
+    assert.equal(storage.hasRememberedToolApprovalForConversation(conversation.id, "approval-hash-1"), true);
+    assert.equal(existsSync(settingsPath), true);
+    assert.match(readFileSync(settingsPath, "utf8"), /approval-hash-1/);
+
+    const removed = storage.clearConversationHistory(conversation.id);
+
+    assert.equal(removed.removedRememberedToolApprovals, 1);
+    assert.equal(storage.hasRememberedToolApprovalForConversation(conversation.id, "approval-hash-1"), false);
+    assert.deepEqual(
+      JSON.parse(readFileSync(settingsPath, "utf8")).toolApprovals.rememberedFingerprints,
+      [],
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -711,7 +753,7 @@ test("saveAttachmentAsset stores valid files under conversation attachment direc
     assert.equal(attachment.mimeType, "text/plain");
     assert.equal(attachment.sizeBytes, 5);
     assert.ok(existsSync(attachment.path));
-    assert.equal(attachment.path.includes(join(".team-aligned", "artifacts", "attachments")), true);
+    assert.equal(attachment.path.includes(join(".teamaligned", "artifacts", "attachments")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

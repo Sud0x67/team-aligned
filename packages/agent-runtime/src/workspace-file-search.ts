@@ -1,9 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import { isReservedWorkspacePath, reservedWorkspaceDirNames } from "./workspace-reserved-paths.ts";
 
 const ignoredDirNames = new Set([
   ".git",
-  ".team-aligned",
+  ...reservedWorkspaceDirNames,
   "node_modules",
 ]);
 const maxScannedFiles = 6000;
@@ -31,7 +32,7 @@ export type WorkspaceReferencePreview = {
   token: string;
   path: string | null;
   absolutePath: string | null;
-  status: "resolved" | "missing" | "outside" | "not_file" | "unreadable";
+  status: "resolved" | "missing" | "outside" | "reserved" | "not_file" | "unreadable";
 };
 
 function normalizeSeparators(pathValue: string) {
@@ -252,6 +253,16 @@ export function previewWorkspaceReferences(input: {
         path: null,
         absolutePath: null,
         status: "outside",
+      });
+      continue;
+    }
+
+    if (isReservedWorkspacePath(candidatePath, workspaceRoot)) {
+      previews.push({
+        token,
+        path: null,
+        absolutePath: null,
+        status: "reserved",
       });
       continue;
     }

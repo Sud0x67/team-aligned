@@ -458,3 +458,98 @@ test("remembered command approvals do not bypass different shell commands", asyn
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("clearing a conversation resets remembered tool approvals", async () => {
+  const root = createTempRoot();
+  try {
+    const runtime = new TeamalignedRuntime(root);
+    const runtimeInternals = runtime as unknown as {
+      storage: {
+        init: () => void;
+        clearConversationHistory: (conversationId: string) => void;
+        createRun: (input: {
+          id: string;
+          conversationId: string;
+          title: string;
+          kind: "agent";
+          status: "running";
+          actorId: string;
+          stepIndex: number;
+          totalSteps: number;
+          metadata: Record<string, unknown>;
+        }) => void;
+      };
+      createToolExecutionPolicy: (input: {
+        conversationId: string;
+        runId: string;
+        actorName: string;
+        responseLanguage: "zh" | "en";
+      }) => ToolExecutionPolicy;
+    };
+
+    runtimeInternals.storage.init();
+    const conversationId = runtime.getSnapshot().conversations[0]?.id;
+    assert.ok(conversationId);
+    const createRun = (runId: string) =>
+      runtimeInternals.storage.createRun({
+        id: runId,
+        conversationId,
+        title: "Clear remembered approval",
+        kind: "agent",
+        status: "running",
+        actorId: "agent-coder",
+        stepIndex: 0,
+        totalSteps: 1,
+        metadata: { responseLanguage: "zh" },
+      });
+    const createPolicy = (runId: string) =>
+      runtimeInternals.createToolExecutionPolicy({
+        conversationId,
+        runId,
+        actorName: "Coder",
+        responseLanguage: "zh",
+      });
+    const request = {
+      serverId: "local-shell",
+      serverName: "Workspace Shell",
+      toolName: "run_workspace_command",
+      operation: "command" as const,
+      riskLevel: "high" as const,
+      args: { command: "echo remembered" },
+      description: "Run a shell command in the current workspace.",
+      workspaceScoped: true,
+    };
+
+    createRun("run-remember-before-clear");
+    const firstDecisionPromise = createPolicy("run-remember-before-clear")(request);
+    const firstApproval = runtime
+      .getSnapshot()
+      .messages[conversationId]?.find(
+        (message) => message.metadata?.cardType === "tool_approval" && message.metadata?.approvalStatus === "pending",
+      );
+    assert.ok(firstApproval);
+    await runtime.resolveToolExecutionApproval({
+      approvalId: String(firstApproval.metadata?.approvalId),
+      decision: "approved_for_conversation",
+    });
+    assert.equal((await firstDecisionPromise).allow, true);
+    assert.equal((await createPolicy("run-remember-before-clear")(request)).allow, true);
+
+    runtimeInternals.storage.clearConversationHistory(conversationId);
+    createRun("run-remember-after-clear");
+    const secondDecisionPromise = createPolicy("run-remember-after-clear")(request);
+    const secondApproval = runtime
+      .getSnapshot()
+      .messages[conversationId]?.find(
+        (message) => message.metadata?.cardType === "tool_approval" && message.metadata?.approvalStatus === "pending",
+      );
+    assert.ok(secondApproval);
+    await runtime.resolveToolExecutionApproval({
+      approvalId: String(secondApproval.metadata?.approvalId),
+      decision: "denied",
+    });
+    assert.equal((await secondDecisionPromise).allow, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

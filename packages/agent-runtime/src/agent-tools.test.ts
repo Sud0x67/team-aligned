@@ -90,6 +90,99 @@ test("workspace_write_text_file rejects paths outside the workspace", async () =
   }
 });
 
+test("workspace tools reject reserved TeamAligned system directories", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    mkdirSync(join(workspacePath, ".teamaligned", "memory"), { recursive: true });
+    writeFileSync(join(workspacePath, ".teamaligned", "memory", "MEMORY.md"), "system memory", "utf8");
+
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+    });
+    const listTool = tools.find((tool) => tool.name === "workspace_list_directory");
+    const readTool = tools.find((tool) => tool.name === "workspace_read_text_file");
+    const writeTool = tools.find((tool) => tool.name === "workspace_write_text_file");
+    assert.ok(listTool);
+    assert.ok(readTool);
+    assert.ok(writeTool);
+
+    await assert.rejects(
+      () => listTool.invoke({ path: ".teamaligned" }),
+      /系统保留目录/,
+    );
+    await assert.rejects(
+      () => readTool.invoke({ path: ".teamaligned/memory/MEMORY.md" }),
+      /系统保留目录/,
+    );
+    await assert.rejects(
+      () =>
+        writeTool.invoke({
+          path: ".teamaligned/out.md",
+          content: "nope",
+        }),
+      /系统保留目录/,
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace read tool still allows uploaded attachments under internal storage", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const attachmentRoot = join(workspacePath, ".teamaligned", "artifacts", "attachments");
+    mkdirSync(attachmentRoot, { recursive: true });
+    const attachmentPath = join(attachmentRoot, "upload.txt");
+    writeFileSync(attachmentPath, "uploaded attachment", "utf8");
+
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [attachmentRoot],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+    });
+    const readTool = tools.find((tool) => tool.name === "workspace_read_text_file");
+    assert.ok(readTool);
+
+    const output = await readTool.invoke({ path: attachmentPath });
+
+    assert.equal(output, "uploaded attachment");
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace_search_rg skips reserved TeamAligned system directories", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    mkdirSync(join(workspacePath, ".teamaligned"), { recursive: true });
+    writeFileSync(join(workspacePath, "notes.md"), "needle in user file", "utf8");
+    writeFileSync(join(workspacePath, ".teamaligned", "internal.md"), "needle internal", "utf8");
+
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+    });
+    const searchTool = tools.find((tool) => tool.name === "workspace_search_rg");
+    assert.ok(searchTool);
+
+    const output = String(await searchTool.invoke({ pattern: "needle" }));
+
+    assert.match(output, /notes\.md/);
+    assert.doesNotMatch(output, /\.teamaligned/);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
 test("workspace tools honor the generic execution policy before running", async () => {
   const workspacePath = createTempWorkspace();
   try {
@@ -153,6 +246,31 @@ test("workspace command tool requires approval before executing simple commands"
 
     assert.deepEqual(requests, ["run_workspace_command:command"]);
     assert.equal(existsSync(markerPath), false);
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+  }
+});
+
+test("workspace command tool rejects explicit access to reserved system directories", async () => {
+  const workspacePath = createTempWorkspace();
+  try {
+    const { tools } = buildRuntimeLangChainTools({
+      workspacePath,
+      attachmentRoots: [],
+      provider: null,
+      responseLanguage: "zh",
+      activeSkill: null,
+    });
+    const commandTool = tools.find((tool) => tool.name === "workspace_run_command");
+    assert.ok(commandTool);
+
+    await assert.rejects(
+      () =>
+        commandTool.invoke({
+          command: "ls .teamaligned",
+        }),
+      /系统保留目录/,
+    );
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
   }

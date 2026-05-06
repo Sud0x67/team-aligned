@@ -287,11 +287,12 @@ TeamAligned 的本地数据固定在 `~/.teamaligned`。
 Agent / Team workspace 内部运行文件放在：
 
 ```text
-${workspace}/.team-aligned/
+${workspace}/.teamaligned/
 ├─ artifacts/
-├─ attachments/
+│  └─ attachments/
 ├─ memory/
-└─ sessions/
+├─ sessions/
+└─ shared-memory.md
 ```
 
 workspace 根目录留给用户生成和管理真实文件。

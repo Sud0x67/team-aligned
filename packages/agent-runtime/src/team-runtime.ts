@@ -30,7 +30,10 @@ import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.t
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
-import { createWorkspaceFilesystemBackend } from "./deep-agent-filesystem.ts";
+import {
+  createWorkspaceFilesystemBackend,
+  deepAgentMemoryFilePath,
+} from "./deep-agent-filesystem.ts";
 
 export const TEAM_MEMBER_LIMIT = 5;
 export const MAX_AGENT_MESSAGES_PER_TURN = 10;
@@ -768,7 +771,9 @@ function createEphemeralWorker(input: {
     model: createProviderModel(input.provider),
     systemPrompt: input.systemPrompt,
     tools: [...(input.additionalTools ?? []), ...tools],
-    backend: createWorkspaceFilesystemBackend(input.workspacePath),
+    backend: createWorkspaceFilesystemBackend(input.workspacePath, {
+      reservedReadAllowlist: [deepAgentMemoryFilePath],
+    }),
     checkpointer: new MemorySaver(),
     memory: input.memoryPaths ?? [],
     interruptOn: input.interruptOn,
@@ -1641,6 +1646,7 @@ export async function executeNaturalTeamWorkItem(input: {
       "如果只是读取或修改当前 workspace 内的本地文件，请优先使用 Workspace 工具，不要优先使用同名的 MCP 文件工具。",
       "请只在当前 workspace 内工作。",
       "使用 DeepAgent 内置 read_file/write_file/edit_file 时，请使用 workspace 相对路径或 /file 虚拟路径，不要把完整 workspace 绝对路径拼进文件名。",
+      ".teamaligned 是 TeamAligned 系统保留目录，不要读取、搜索、写入或编辑其中的文件；用户产物请放在 workspace 根目录或普通子目录。",
       "如果 write_file 返回文件已存在，这不是最终答案：除非用户明确要求覆盖，请换一个描述性新文件名重试；如果需要覆盖，请先 read_file 再 edit_file。",
       "如果本次任务是创建 writeTargets 中的新文件，且 readTargets 为空，不要先读取或列出目标文件/父目录；直接调用写入工具创建文件。",
       "不要读取你正要创建的新文件，除非它明确出现在读取范围里。",
@@ -1671,6 +1677,7 @@ export async function executeNaturalTeamWorkItem(input: {
       "When the task only needs local workspace files, prefer Workspace tools over similarly named MCP file tools.",
       "Only work inside the current workspace.",
       "When using DeepAgent built-in read_file/write_file/edit_file, use workspace-relative paths or /file virtual paths. Do not include the full workspace absolute path in filenames.",
+      ".teamaligned is the TeamAligned system-reserved directory. Do not read, search, write, or edit files there; place user artifacts in the workspace root or normal subdirectories.",
       "If write_file says the file already exists, that is not a final answer: unless the user explicitly asked to overwrite, retry with a descriptive new filename; if overwriting is intended, read_file first and then edit_file.",
       "If this task creates new writeTargets and readTargets is empty, do not read or list the target file/parent directory first; call a write tool directly to create the file.",
       "Do not read a file you are about to create unless it is explicitly listed in the read scope.",
@@ -1939,7 +1946,7 @@ export async function generateNaturalTeamAgentMessage(input: {
           message,
           attachments: input.attachments,
           threadId: `${input.conversationId}:${input.runId}:${input.speaker.id}:chat:${input.roundIndex}`,
-          memoryPaths: ["/.team-aligned/memory/MEMORY.md"],
+          memoryPaths: [deepAgentMemoryFilePath],
           mcpServers: input.mcpServers,
           mcpConnections: input.mcpConnections,
           onMcpInvocation: input.onMcpInvocation,
