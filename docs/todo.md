@@ -2,7 +2,7 @@
 
 [English version](./en/todo.md)
 
-更新时间：2026-05-04
+更新时间：2026-05-08
 
 当前版本：`0.6.0-beta`
 
@@ -33,6 +33,7 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 - [x] MCP OAuth 未授权失败会在聊天过程消息里引导用户授权，扩展页也提供授权入口。
 - [x] MCP OAuth token 过期或需要重新授权时会清理过期 token，并提示用户重新授权。
 - [x] 统一失败态文案：Provider 失败、MCP 失败、命令失败、图片理解失败、网络工具失败。
+- [x] 统一单聊与群聊 worker 的 DeepAgent streaming adapter，集中处理文本流、reasoning、工具事件和审批中断恢复。
 - [x] 验证最近消息摘要、未读数、通知中心与已读状态在单聊/群聊中一致。
 
 ## P1：工具权限与可解释性
@@ -50,7 +51,8 @@ TeamAligned 已经从“功能接线”进入“可发布 beta 打磨”阶段�
 
 目标：长任务失败或被取消后，用户仍然知道已经完成了什么、卡在哪里、下一步怎么继续。
 
-- [ ] 设计最小 checkpoint 记录：任务阶段、已完成步骤、失败点、可重试建议。
+- [x] 增加文件持久化 DeepAgent checkpoint，并让 `/clear` 清理当前会话相关 checkpoint。
+- [ ] 设计更高层的 run checkpoint 记录：任务阶段、已完成步骤、失败点、可重试建议。
 - [ ] 将 run、run steps、tool invocations、artifacts、transcript 的跳转关系整理成一致体验。
 - [x] 为群聊执行补充“等待谁 / 谁完成了什么 / 下一步由谁继续”的更稳定表达。
 - [ ] 继续过滤内部过程消息，避免污染下一轮 orchestrator 意图识别。

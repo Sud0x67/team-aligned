@@ -77,7 +77,7 @@ Current supported MCP types:
 
 Current boundary:
 
-- OAuth MCP is not supported yet.
+- OAuth MCP is supported for compatible HTTP MCP servers. Some services require manual Client ID/Secret setup when they do not support dynamic client registration; re-auth and token-expiry recovery are still beta polish areas.
 
 If an MCP call times out, check whether the command starts, whether npx needs first-time installation, whether cwd exists, whether env/header auth is missing, and whether the server is waiting for interactive input.
 

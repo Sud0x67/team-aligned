@@ -112,6 +112,7 @@ import {
   formatMemoryEntry,
   type MemoryCompactionSummaryInput,
 } from "./memory-compaction.ts";
+import { FileBackedMemorySaver } from "./persistent-checkpointer.ts";
 
 type RunStep = {
   label: string;
@@ -536,6 +537,7 @@ export class TeamalignedRuntime extends EventEmitter {
   private readonly deniedToolApprovalFingerprints = new Set<string>();
   private readonly memoryCompactions = new Map<string, Promise<void>>();
   private readonly conversationReadPresence = new Map<string, number>();
+  private readonly deepAgentCheckpointer: FileBackedMemorySaver;
   private catalogSyncStarted = false;
   private static readonly notificationPresenceWindowMs = 15_000;
   private readonly singleChatSessions = new Map<
@@ -551,6 +553,9 @@ export class TeamalignedRuntime extends EventEmitter {
     super();
     mkdirSync(dataDir, { recursive: true });
     this.storage = new AppStorage(dataDir);
+    this.deepAgentCheckpointer = new FileBackedMemorySaver(
+      join(dataDir, "checkpoints", "deep-agent.json"),
+    );
   }
 
   async init() {
@@ -1171,6 +1176,8 @@ export class TeamalignedRuntime extends EventEmitter {
       );
     }
 
+    await this.clearDeepAgentCheckpointsForConversation(conversationId);
+    this.singleChatSessions.delete(conversationId);
     this.storage.deleteAgent(agent.id);
     this.emitSnapshot();
     return this.getSnapshot();
@@ -1204,6 +1211,7 @@ export class TeamalignedRuntime extends EventEmitter {
       );
     }
 
+    await this.clearDeepAgentCheckpointsForConversation(conversationId);
     this.storage.deleteTeam(team.id);
     this.emitSnapshot();
     return this.getSnapshot();
@@ -1236,6 +1244,8 @@ export class TeamalignedRuntime extends EventEmitter {
       );
     }
 
+    await this.clearDeepAgentCheckpointsForConversation(conversation.id);
+    this.singleChatSessions.delete(conversation.id);
     this.storage.deleteConversation(conversation.id);
     this.emitSnapshot();
     return this.getSnapshot();
@@ -2091,6 +2101,11 @@ export class TeamalignedRuntime extends EventEmitter {
     }
   }
 
+  private async clearDeepAgentCheckpointsForConversation(conversationId: string) {
+    await this.deepAgentCheckpointer.deleteThread(conversationId);
+    await this.deepAgentCheckpointer.deleteThreadPrefix(`${conversationId}:`);
+  }
+
   private cancelPendingToolApprovalsForRun(
     runId: string,
     responseLanguage: RuntimeLanguage,
@@ -2712,6 +2727,7 @@ export class TeamalignedRuntime extends EventEmitter {
 
       const removed = this.storage.clearConversationHistory(conversation.id);
       this.clearToolApprovalRuntimeStateForConversation(conversation.id);
+      await this.clearDeepAgentCheckpointsForConversation(conversation.id);
       this.singleChatSessions.delete(conversation.id);
       this.addSlashFeedbackMessage(conversation, {
         title: byLanguage(responseLanguage, { zh: "会话已清空", en: "Conversation cleared" }),
@@ -3128,6 +3144,8 @@ export class TeamalignedRuntime extends EventEmitter {
             response = await invokeSingleChatDeepAgent({
               sessions: this.singleChatSessions,
               conversationId: conversation.id,
+              checkpointer: this.deepAgentCheckpointer,
+              hasExistingCheckpoint: (threadId) => this.deepAgentCheckpointer.hasThread(threadId),
               provider: provider!,
               agent,
               profile: snapshot.profile,
@@ -3928,6 +3946,7 @@ export class TeamalignedRuntime extends EventEmitter {
                       onDeepAgentToolInvocation: teamToolObserver,
                       approvalPolicy,
                       interruptOn: approvalInterruptRuntime.interruptOn,
+                      checkpointer: this.deepAgentCheckpointer,
                       onToolApprovalInterrupt: approvalInterruptRuntime.handler,
                       onRuntimeError: (source, error, metadata) => {
                         this.emitRunRuntimeError(source, error, {
@@ -4297,6 +4316,7 @@ export class TeamalignedRuntime extends EventEmitter {
                 onDeepAgentToolInvocation: teamToolObserver,
                 approvalPolicy,
                 interruptOn: approvalInterruptRuntime.interruptOn,
+                checkpointer: this.deepAgentCheckpointer,
                 onToolApprovalInterrupt: approvalInterruptRuntime.handler,
                 onRuntimeError: (source, error, metadata) => {
                   this.emitRunRuntimeError(source, error, {

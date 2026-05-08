@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { createDeepAgent } from "deepagents";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { Command, MemorySaver } from "@langchain/langgraph";
-import type { HITLRequest } from "langchain";
 import { z } from "zod";
 import type {
   AgentRecord,
@@ -26,7 +25,7 @@ import {
   type ToolApprovalInterruptOn,
 } from "./deep-agent.ts";
 import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-tools.ts";
-import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
+import { runDeepAgentStreamWithInterrupts } from "./deep-agent-streaming.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, formatList, type RuntimeLanguage } from "./runtime-language.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
@@ -756,6 +755,7 @@ function createEphemeralWorker(input: {
   onMcpConnectionUpdated?: (connection: McpConnectionRecord) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   interruptOn?: ToolApprovalInterruptOn;
+  checkpointer?: MemorySaver;
   additionalTools?: StructuredToolInterface[];
 }) {
   const tools = buildMcpLangChainTools({
@@ -774,7 +774,7 @@ function createEphemeralWorker(input: {
     backend: createWorkspaceFilesystemBackend(input.workspacePath, {
       reservedReadAllowlist: [deepAgentMemoryFilePath],
     }),
-    checkpointer: new MemorySaver(),
+    checkpointer: input.checkpointer ?? new MemorySaver(),
     memory: input.memoryPaths ?? [],
     interruptOn: input.interruptOn,
   });
@@ -796,6 +796,7 @@ async function invokeWorkerText(input: {
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   interruptOn?: ToolApprovalInterruptOn;
+  checkpointer?: MemorySaver;
   onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
@@ -815,85 +816,35 @@ async function invokeWorkerText(input: {
   ];
 
   if (
-    ((input.provider.supportsStreaming && input.onTextStream) || input.onDeepAgentToolInvocation) &&
+    ((input.provider.supportsStreaming && (input.onTextStream || input.onReasoningStream)) ||
+      input.onDeepAgentToolInvocation) &&
     typeof (worker as { streamEvents?: unknown }).streamEvents === "function"
   ) {
     const streamStartedAt = Date.now();
     try {
-      let streamedText = "";
-      let reasoningText = "";
-      let finalOutput: unknown = null;
-      const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
-        input.onDeepAgentToolInvocation,
-      );
-      let invocationInput: unknown = { messages };
-      while (true) {
-        finalOutput = null;
-        let interruptRequest: HITLRequest | null = null;
-        const stream = await (worker as {
+      const result = await runDeepAgentStreamWithInterrupts({
+        runner: worker as {
           streamEvents: (
             input: unknown,
             options?: Record<string, unknown>,
           ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
-        }).streamEvents(
-          invocationInput,
-          { configurable: { thread_id: input.threadId }, version: "v2" },
-        );
+        },
+        initialInput: { messages },
+        threadId: input.threadId,
+        extractHitlRequest,
+        extractTextDelta: extractStreamText,
+        extractReasoningDelta: extractStreamReasoningText,
+        onToolApprovalInterrupt: input.onToolApprovalInterrupt,
+        onToolInvocation: input.onDeepAgentToolInvocation,
+        onTextStream: input.onTextStream,
+        onReasoningStream: input.onReasoningStream,
+        shouldStreamText: input.provider.supportsStreaming && Boolean(input.onTextStream),
+        shouldStreamReasoning: input.provider.supportsStreaming && Boolean(input.onReasoningStream),
+        nextEventTimeoutMs: getTeamWorkerStreamIdleTimeoutMs(),
+        nextEventTimeoutMessage: "Team worker stream stalled",
+      });
 
-        const iterator = stream[Symbol.asyncIterator]();
-        while (true) {
-          const { value: event, done } = await withRuntimeTimeout(
-            iterator.next(),
-            getTeamWorkerStreamIdleTimeoutMs(),
-            "Team worker stream stalled",
-          );
-          if (done) break;
-          if (!event || typeof event !== "object") continue;
-          await emitDeepAgentToolInvocation(event);
-          interruptRequest = extractHitlRequest(event) ?? interruptRequest;
-          if (event.event === "on_chat_model_stream") {
-            const chunk =
-              "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
-                ? event.data.chunk
-                : null;
-            const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
-            if (input.provider.supportsStreaming && input.onReasoningStream && reasoningDelta) {
-              reasoningText += reasoningDelta;
-              await input.onReasoningStream(reasoningText, reasoningDelta);
-            }
-            if (!input.provider.supportsStreaming || !input.onTextStream) {
-              continue;
-            }
-            const delta = extractStreamText(chunk);
-            if (!delta) continue;
-            streamedText += delta;
-            await input.onTextStream(streamedText, delta);
-            continue;
-          }
-
-          if (event.event === "on_chain_end" || event.event === "on_graph_end") {
-            finalOutput =
-              "data" in event && event.data && typeof event.data === "object" && "output" in event.data
-                ? event.data.output
-                : finalOutput;
-          }
-        }
-
-        interruptRequest = extractHitlRequest(finalOutput) ?? interruptRequest;
-        if (interruptRequest) {
-          if (!input.onToolApprovalInterrupt) {
-            throw new Error("Tool approval interrupt was not handled.");
-          }
-          invocationInput = new Command({
-            resume: await input.onToolApprovalInterrupt(interruptRequest),
-          });
-          continue;
-        }
-
-        break;
-      }
-
-      const finalText = extractAgentText(finalOutput) || streamedText.trim();
+      const finalText = extractAgentText(result.finalOutput) || result.streamedText.trim();
       if (finalText) {
         return finalText;
       }
@@ -1620,6 +1571,7 @@ export async function executeNaturalTeamWorkItem(input: {
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   interruptOn?: ToolApprovalInterruptOn;
+  checkpointer?: MemorySaver;
   onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onUpdate?: (event: {
     phase: "started" | "streaming" | "completed" | "failed";
@@ -1748,6 +1700,7 @@ export async function executeNaturalTeamWorkItem(input: {
       onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
       approvalPolicy: input.approvalPolicy,
       interruptOn: input.interruptOn,
+      checkpointer: input.checkpointer,
       onToolApprovalInterrupt: input.onToolApprovalInterrupt,
       onReasoningStream: input.onReasoningStream,
       onRuntimeError: input.onRuntimeError,
@@ -1836,6 +1789,7 @@ export async function generateNaturalTeamAgentMessage(input: {
   onDeepAgentToolInvocation?: (event: RuntimeToolInvocationEvent) => void | Promise<void>;
   approvalPolicy?: ToolExecutionPolicy;
   interruptOn?: ToolApprovalInterruptOn;
+  checkpointer?: MemorySaver;
   onToolApprovalInterrupt?: ToolApprovalInterruptHandler;
   onTextStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
   onReasoningStream?: (aggregatedText: string, deltaText: string) => void | Promise<void>;
@@ -1954,6 +1908,7 @@ export async function generateNaturalTeamAgentMessage(input: {
           onDeepAgentToolInvocation: input.onDeepAgentToolInvocation,
           approvalPolicy: input.approvalPolicy,
           interruptOn: input.interruptOn,
+          checkpointer: input.checkpointer,
           onToolApprovalInterrupt: input.onToolApprovalInterrupt,
           onTextStream: input.onTextStream,
           onReasoningStream: input.onReasoningStream,

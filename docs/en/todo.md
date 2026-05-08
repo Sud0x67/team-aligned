@@ -2,7 +2,7 @@
 
 [中文版本](../todo.md)
 
-Updated: 2026-05-04
+Updated: 2026-05-08
 
 Current version: `0.6.0-beta`
 
@@ -33,6 +33,7 @@ Goal: users should clearly feel that Agents are working, cancellable, and recove
 - [x] MCP OAuth authorization failures now surface in chat process messages, and Extensions provides an authorization entry point.
 - [x] MCP OAuth token-expiry or re-auth failures now clear stale tokens and guide users back through authorization.
 - [x] Unify failure copy for Provider, MCP, command, image-understanding, and web-tool failures.
+- [x] Unify the DeepAgent streaming adapter for direct chat and team workers, covering text streaming, reasoning, tool events, and approval interrupt resume.
 - [x] Verify recent-message summaries, unread counts, notification center state, and read state across direct and team chats.
 
 ## P1: Tool Permissions And Explainability
@@ -50,7 +51,8 @@ Goal: users should understand what each Agent can use and when high-risk tools a
 
 Goal: when a long task fails or is cancelled, users still know what completed, where it stopped, and how to continue.
 
-- [ ] Design a minimal checkpoint record: task phase, completed steps, failure point, and retry suggestion.
+- [x] Add file-backed DeepAgent checkpoints and clear conversation-related checkpoints from `/clear`.
+- [ ] Design a higher-level run checkpoint record: task phase, completed steps, failure point, and retry suggestion.
 - [ ] Make run, run steps, tool invocations, artifacts, and transcripts link together consistently.
 - [x] Improve team execution messages for “who is waiting,” “who completed what,” and “who continues next.”
 - [ ] Continue filtering internal process messages from orchestrator history so tool chatter does not pollute intent detection.

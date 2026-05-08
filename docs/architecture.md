@@ -2,7 +2,7 @@
 
 [English version](./en/architecture.md)
 
-更新时间：2026-05-04
+更新时间：2026-05-08
 
 当前版本：`0.6.0-beta`
 
@@ -91,6 +91,7 @@ teamaligned
 - 注入 Provider、Skills、MCP 和本地工具。
 - 处理流式输出、取消、重试、`/clear`。
 - 写入 messages、runs、attachments、artifacts、tool invocations、run steps。
+- 维护统一 DeepAgent streaming adapter、工具审批中断恢复和文件持久化 LangGraph checkpoint。
 - 向 UI 推送最新 snapshot。
 
 ## 单聊 Agent
@@ -98,10 +99,12 @@ teamaligned
 单聊已经接入真实模型调用链：
 
 - Provider：OpenAI 与 Qwen（DashScope OpenAI-compatible）。
-- Agent runtime：DeepAgents、LangChain、LangGraph MemorySaver。
+- Agent runtime：DeepAgents、LangChain、文件持久化 LangGraph checkpoint。
 - Prompt：系统提示、用户身份、会话历史、当前 Skill、MCP/工具说明。
 - 输入：文本、附件、图片、多模态内容。
 - 输出：流式消息、自然过程消息、工具调用记录、artifact。
+
+单聊和群聊 worker 共用统一的 DeepAgent streaming adapter：同一处处理文本流、显式 reasoning/thinking delta、工具事件、Human-in-the-loop interrupt 与恢复，避免两条聊天链路的流式行为继续漂移。
 
 单聊可用工具包括：
 
@@ -151,7 +154,7 @@ teamaligned
 - 群聊图片附件。
 - 群聊执行过程输出。
 - 群聊取消。
-- 群聊 `/clear` 清理消息、run、transcript、team memory 和 handoff。
+- 群聊 `/clear` 清理消息、run、transcript、team memory、DeepAgent checkpoint 和 handoff。
 
 当前真实 Provider 回放已覆盖：
 
@@ -334,7 +337,7 @@ workspace 根目录留给用户生成和管理真实文件。
 当前架构还需要继续增强：
 
 - 群聊真实 Provider 回放已覆盖主链路，但复杂长链路仍需要持续观察。
-- 长任务 checkpoint / failure recovery 仍不完整。
+- DeepAgent 图状态已落到文件型 checkpoint；更高层的 run 级阶段恢复、失败点和可重试建议仍不完整。
 - MCP tool 级白名单尚未实现，且暂不作为近期主线。
 - OAuth 型 MCP 已具备基础授权闭环和聊天内审批队列，但 scope 变化、用户主动 revoke 等重授权状态还需要更细打磨。
 - transcript / artifact / attachment 的项目包导出仍需完善。

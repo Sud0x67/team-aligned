@@ -16,7 +16,7 @@ import type {
   UserProfile,
 } from "@teamaligned/shared";
 import type { RuntimeToolInvocationEvent, ToolExecutionPolicy } from "./agent-tools.ts";
-import { createDeepAgentToolInvocationEmitter } from "./deep-agent-tool-events.ts";
+import { runDeepAgentStreamWithInterrupts } from "./deep-agent-streaming.ts";
 import { buildMcpLangChainTools, type McpInvocationEvent } from "./mcp-tools.ts";
 import { byLanguage, type RuntimeLanguage } from "./runtime-language.ts";
 import { getRuntimeTimeouts } from "./runtime-timeouts.ts";
@@ -818,6 +818,8 @@ export async function testProviderConnection(
 export async function invokeSingleChatDeepAgent(input: {
   sessions: Map<string, DeepAgentSession>;
   conversationId: string;
+  checkpointer?: MemorySaver;
+  hasExistingCheckpoint?: (threadId: string) => boolean;
   provider: ProviderConfig;
   agent: AgentRecord;
   profile: UserProfile;
@@ -923,7 +925,7 @@ export async function invokeSingleChatDeepAgent(input: {
             backend: createWorkspaceFilesystemBackend(workspacePath, {
               reservedReadAllowlist: [deepAgentMemoryFilePath],
             }),
-            checkpointer: new MemorySaver(),
+            checkpointer: input.checkpointer ?? new MemorySaver(),
             memory: [deepAgentMemoryFilePath],
             interruptOn: input.interruptOn,
           }),
@@ -936,7 +938,11 @@ export async function invokeSingleChatDeepAgent(input: {
   const historyMessages = toAgentMessages(history);
   const previousMessages =
     historyMessages.at(-1)?.role === "user" ? historyMessages.slice(0, -1) : historyMessages;
-  const messages = session.initialized ? [latestUserMessage] : [...previousMessages, latestUserMessage];
+  const hasExistingCheckpoint = input.hasExistingCheckpoint?.(conversationId) ?? false;
+  const messages =
+    session.initialized || hasExistingCheckpoint
+      ? [latestUserMessage]
+      : [...previousMessages, latestUserMessage];
 
   if (
     ((provider.supportsStreaming && (onTextStream || onReasoningStream)) ||
@@ -945,78 +951,32 @@ export async function invokeSingleChatDeepAgent(input: {
   ) {
     const streamStartedAt = Date.now();
     try {
-      let streamedText = "";
-      let reasoningText = "";
-      let finalOutput: unknown = null;
-      const emitDeepAgentToolInvocation = createDeepAgentToolInvocationEmitter(
-        input.onDeepAgentToolInvocation,
-      );
-      let invocationInput: unknown = { messages };
-      while (true) {
-        finalOutput = null;
-        let interruptRequest: HITLRequest | null = null;
-        const stream = await (session.agent as {
+      const result = await runDeepAgentStreamWithInterrupts({
+        runner: session.agent as {
           streamEvents: (
             input: unknown,
             options?: Record<string, unknown>,
           ) => Promise<AsyncIterable<Record<string, unknown>>> | AsyncIterable<Record<string, unknown>>;
-        }).streamEvents(
-          invocationInput,
-          { configurable: { thread_id: conversationId }, version: "v2" },
-        );
-
-        for await (const event of stream) {
-          if (!event || typeof event !== "object") continue;
-          await emitDeepAgentToolInvocation(event);
-          interruptRequest = extractHitlRequest(event) ?? interruptRequest;
-          if (event.event === "on_chat_model_stream") {
-            const chunk =
-              "data" in event && event.data && typeof event.data === "object" && "chunk" in event.data
-                ? event.data.chunk
-                : null;
-            const reasoningDelta = extractStreamReasoningText(chunk) || extractStreamReasoningText(event);
-            if (provider.supportsStreaming && onReasoningStream && reasoningDelta) {
-              reasoningText += reasoningDelta;
-              await onReasoningStream(reasoningText, reasoningDelta);
-            }
-            if (!provider.supportsStreaming || !onTextStream) {
-              continue;
-            }
-            const delta = extractStreamText(chunk);
-            if (!delta) continue;
-            streamedText += delta;
-            await onTextStream(streamedText, delta);
-            continue;
-          }
-
-          if (event.event === "on_chain_end" || event.event === "on_graph_end") {
-            finalOutput =
-              "data" in event && event.data && typeof event.data === "object" && "output" in event.data
-                ? event.data.output
-                : finalOutput;
-          }
-        }
-
-        interruptRequest = extractHitlRequest(finalOutput) ?? interruptRequest;
-        if (interruptRequest) {
-          if (!input.onToolApprovalInterrupt) {
-            throw new Error("Tool approval interrupt was not handled.");
-          }
-          invocationInput = new Command({
-            resume: await input.onToolApprovalInterrupt(interruptRequest),
-          });
-          continue;
-        }
-
-        break;
-      }
+        },
+        initialInput: { messages },
+        threadId: conversationId,
+        extractHitlRequest,
+        extractTextDelta: extractStreamText,
+        extractReasoningDelta: extractStreamReasoningText,
+        onToolApprovalInterrupt: input.onToolApprovalInterrupt,
+        onToolInvocation: input.onDeepAgentToolInvocation,
+        onTextStream,
+        onReasoningStream,
+        shouldStreamText: provider.supportsStreaming && Boolean(onTextStream),
+        shouldStreamReasoning: provider.supportsStreaming && Boolean(onReasoningStream),
+      });
 
       session.initialized = true;
-      const finalText = extractAgentText(finalOutput) || streamedText.trim();
+      const finalText = extractAgentText(result.finalOutput) || result.streamedText.trim();
       if (finalText) {
         return {
           text: finalText,
-          usage: extractTokenUsage(finalOutput),
+          usage: extractTokenUsage(result.finalOutput),
         };
       }
     } catch (error) {

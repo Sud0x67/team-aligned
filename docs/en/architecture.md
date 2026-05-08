@@ -2,7 +2,7 @@
 
 [中文版本](../architecture.md)
 
-Updated: 2026-05-04
+Updated: 2026-05-08
 
 Current version: `0.6.0-beta`
 
@@ -91,6 +91,7 @@ It is responsible for:
 - Injecting Providers, Skills, MCP, and local tools.
 - Handling streaming output, cancel, retry, and `/clear`.
 - Persisting messages, runs, attachments, artifacts, tool invocations, and run steps.
+- Maintaining the shared DeepAgent streaming adapter, tool-approval interrupt recovery, and file-backed LangGraph checkpoints.
 - Emitting fresh snapshots to the UI.
 
 ## Direct Agent Chat
@@ -98,10 +99,12 @@ It is responsible for:
 Direct chat is connected to real model execution:
 
 - Providers: OpenAI and Qwen through DashScope OpenAI-compatible endpoints.
-- Agent runtime: DeepAgents, LangChain, and LangGraph MemorySaver.
+- Agent runtime: DeepAgents, LangChain, and file-backed LangGraph checkpoints.
 - Prompt inputs: system prompt, user profile, conversation history, active Skill, and available MCP/tool instructions.
 - User input: text, attachments, images, and multimodal content.
 - Output: streaming messages, natural process messages, tool records, and artifacts.
+
+Direct chat and team workers share one DeepAgent streaming adapter. The adapter handles text streaming, explicit reasoning/thinking deltas, tool events, human-in-the-loop interrupts, and resume behavior in one place so direct and team chat do not drift.
 
 Available direct-chat tools include:
 
@@ -151,7 +154,7 @@ Team chat currently supports:
 - Team image attachments.
 - Visible execution process messages.
 - Team cancel.
-- Team `/clear`, which clears messages, runs, transcripts, team memory, and handoff state.
+- Team `/clear`, which clears messages, runs, transcripts, team memory, DeepAgent checkpoints, and handoff state.
 
 Current real-provider replay covers:
 
@@ -334,7 +337,7 @@ Diagnostics are redacted by default:
 The architecture still needs improvement in:
 
 - Real-provider team-chat replay covers the main paths, while complex long-running chains still need observation.
-- Long-task checkpoint / failure recovery.
+- DeepAgent graph state is now persisted through a file-backed checkpoint; higher-level run recovery with phase, failure point, and retry advice still needs polish.
 - MCP tool-level allowlists are not implemented and are not a near-term mainline priority.
 - OAuth MCP now has a foundational authorization loop and in-chat approval queue, but scope changes and user-initiated revocation still need more polish.
 - Project-package export for transcripts, artifacts, and attachments.
