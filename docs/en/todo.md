@@ -4,7 +4,7 @@
 
 Updated: 2026-05-08
 
-Current version: `0.6.0-beta`
+Current version: `0.6.1-beta`
 
 ## Current State
 
